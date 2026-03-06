@@ -4,28 +4,6 @@ namespace cslightdbgen.sqlitegen.tests;
 
 public class LdgSQLiteUtils_Tests
 {
-    [Theory]
-    [InlineData(LdgSQLiteUtilsFixture.LdgNumericOperatorCodes.Equals, "=")]
-    [InlineData(LdgSQLiteUtilsFixture.LdgNumericOperatorCodes.NotEquals, "!=")]
-    [InlineData(LdgSQLiteUtilsFixture.LdgNumericOperatorCodes.GreaterThan, ">")]
-    [InlineData(LdgSQLiteUtilsFixture.LdgNumericOperatorCodes.GreaterThanOrEquals, ">=")]
-    [InlineData(LdgSQLiteUtilsFixture.LdgNumericOperatorCodes.LessThan, "<")]
-    [InlineData(LdgSQLiteUtilsFixture.LdgNumericOperatorCodes.LessThanOrEquals, "<=")]
-    public void GetSqlOperator_MapsAllEnumValues(LdgSQLiteUtilsFixture.LdgNumericOperatorCodes op, string expected)
-    {
-        LdgSQLiteUtilsFixture.GetSqlOperator(op).Should().Be(expected);
-    }
-
-    [Fact]
-    public void GetSqlOperator_Throws_ForUnsupportedEnumValue()
-    {
-        var unsupported = (LdgSQLiteUtilsFixture.LdgNumericOperatorCodes)999;
-
-        var act = () => LdgSQLiteUtilsFixture.GetSqlOperator(unsupported);
-
-        act.Should().Throw<NotSupportedException>();
-    }
-
     [Fact]
     public void TrySerializeForDb_Object_ReturnsFalseAndNull_ForNull()
     {

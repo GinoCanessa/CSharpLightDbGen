@@ -48,10 +48,6 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             "LdgSQLiteGeneratorAttributes.g.cs",
             SourceText.From(GeneratorAttributes.LdgAttributes, Encoding.UTF8)));
 
-        context.RegisterPostInitializationOutput(ctx => ctx.AddSource(
-            "LdgSQLiteUtils.g.cs",
-            SourceText.From(GeneratorJsonUtils.LdgSQLiteUtils, Encoding.UTF8)));
-
         IncrementalValuesProvider<ClassDeclarationSyntax> cDeclarations = context.SyntaxProvider
             .CreateSyntaxProvider(
                 predicate: static (s, _) => IsSyntaxTargetClassDec(s),
@@ -680,6 +676,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                     using System.Collections.Generic;
                     using System.Data;
+                    using System.Diagnostics.CodeAnalysis;
                     using System.Text;
                     using System.Text.Json;
                                     
@@ -1329,6 +1326,90 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                 transaction.Commit();
                             }
                         }
+
+
+                        
+                        private static string getNumericOperator(string requested) => requested switch
+                        {
+                            "Equal" => "=",
+                            "Equals" => "=",
+                            "=" => "=",
+                            "DoesNotEqual" => "!=",
+                            "NotEquals" => "!=",
+                            "!=" => "!=",
+                            "GreaterThan" => ">",
+                            ">" => ">",
+                            "GreaterThanOrEqual" => ">=",
+                            "GreaterThanOrEquals" => ">=",
+                            ">=" => ">=",
+                            "LessThan" => "<",
+                            "<" => "<",
+                            "LessThanOrEqual" => "<=",
+                            "LessThanOrEquals" => "<=",
+                            "<=" => "<=",
+                            _ => "=",
+                        };
+
+                        private static readonly JsonSerializerOptions _options = new()
+                        {
+                            WriteIndented = false,
+                        };
+
+                        private static System.Text.RegularExpressions.Regex _htmlStripRegex = new("<.*?>", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+                        private static bool TrySerializeForDb<T>(T? instance, [NotNullWhen(true)]out string? json) where T : class
+                        {
+                            if (instance == null)
+                            {
+                                json = null;
+                                return false;
+                            }
+
+                            json = JsonSerializer.Serialize(instance, _options);
+                            return true;
+                        }
+
+                        private static bool TrySerializeForDb<T>(List<T>? instances, [NotNullWhen(true)] out string? json) where T : class
+                        {
+                            if ((instances == null) || (instances.Count == 0))
+                            {
+                                json = null;
+                                return false;
+                            }
+
+                            json = JsonSerializer.Serialize(instances, _options);
+                            return true;
+                        }
+
+                        private static T? ParseFromDb<T>(string json) where T : class
+                        {
+                            if (string.IsNullOrWhiteSpace(json))
+                            {
+                                return null;
+                            }
+
+                            return JsonSerializer.Deserialize<T>(json, _options);
+                        }
+
+                        private static List<T> ParseArrayFromDb<T>(string json) where T : class
+                        {
+                            if (string.IsNullOrWhiteSpace(json))
+                            {
+                                return new List<T>();
+                            }
+
+                            return JsonSerializer.Deserialize<List<T>>(json, _options) ?? [];
+                        }
+
+                        private static string StripHtml(string? input)
+                        {
+                            if (string.IsNullOrWhiteSpace(input))
+                            {
+                                return string.Empty;
+                            }
+
+                            return _htmlStripRegex.Replace(input, string.Empty).Trim();
+                        }
                     }
 
                     [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
@@ -1561,7 +1642,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     case "long":
                     case "decimal":
                     case "double":
-                        yield return $"LdgSQLiteUtils.LdgNumericOperatorCodes {rec.name}Operator = LdgSQLiteUtils.LdgNumericOperatorCodes.Equals";
+                        yield return $"string {rec.name}Operator = \"=\"";
                         break;
                 }
                 
@@ -1619,7 +1700,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     case "long":
                     case "decimal":
                     case "double":
-                        conditionComparator = $$$"""{LdgSQLiteUtils.GetSqlOperator({{{rec.name}}}Operator)}""";
+                        conditionComparator = $$$"""{getNumericOperator({{{rec.name}}}Operator)}""";
                         break;
                     case "string":
                         conditionComparator = allowsStringLike ? "{stringComparator}" : "=";
@@ -1646,29 +1727,14 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 }
                 else if (rec.useJson)
                 {
-                    //yield return $"    {name}Param.Value = JsonSerializer.Serialize({name});";
-                    //if (rec.isArray)
-                    //{
-                    //    if (rec.isNullable)
-                    //    {
-                    //        yield return $"    {rec.name}Param.Value = LdgSQLiteUtils.SerializeArrayForDb({rec.name}, true);";
-                    //    }
-                    //    else
-                    //    {
-                    //        yield return $"    {rec.name}Param.Value = LdgSQLiteUtils.SerializeArrayForDb({rec.name}, false);";
-                    //    }
-                    //}
-                    //else
-                    //{
-                        if (rec.isNullable)
-                        {
-                            yield return $"    {rec.name}Param.Value = LdgSQLiteUtils.TrySerializeForDb({rec.name}, out dbJson) ? dbJson : DBNull.Value;";
-                        }
-                        else
-                        {
-                            yield return $"    {rec.name}Param.Value = LdgSQLiteUtils.TrySerializeForDb({rec.name}, out dbJson) ? dbJson : string.Empty;";
-                        }
-                    //}
+                    if (rec.isNullable)
+                    {
+                        yield return $"    {rec.name}Param.Value = TrySerializeForDb({rec.name}, out dbJson) ? dbJson : DBNull.Value;";
+                    }
+                    else
+                    {
+                        yield return $"    {rec.name}Param.Value = TrySerializeForDb({rec.name}, out dbJson) ? dbJson : string.Empty;";
+                    }
                 }
                 else
                 {
@@ -1801,17 +1867,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                         }
                         else if (rec.useJson)
                         {
-                            //yield return $"{rec.name}Param.Value = (value.{rec.name} == null) ? DBNull.Value : JsonSerializer.Serialize(value.{rec.name});";
-                            //if (rec.isArray)
-                            //{
-                            //    yield return $"{rec.name}Param.Value = ((value.{rec.name} == null) || !value.{rec.name}.Any()) ? DBNull.Value : LdgSQLiteUtils.SerializeArrayForDb(value.{rec.name}, true);";
-                            //}
-                            //else
-                            //{
-                                //yield return $"{rec.name}Param.Value = (value.{rec.name} == null) ? DBNull.Value : (LdgSQLiteUtils.SerializeForDb(value.{rec.name}, true) ?? DBNull.Value);";
-                                yield return $"{rec.name}Param.Value = LdgSQLiteUtils.TrySerializeForDb(value.{rec.name}, out dbJson) ? dbJson : DBNull.Value;";
-                            //}
-
+                            yield return $"{rec.name}Param.Value = TrySerializeForDb(value.{rec.name}, out dbJson) ? dbJson : DBNull.Value;";
                         }
                         else
                         {
@@ -1826,17 +1882,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                         }
                         else if (rec.useJson)
                         {
-                            //yield return $"{rec.name}Param.Value = JsonSerializer.Serialize(value.{rec.name});";
-
-                            //if (rec.isArray)
-                            //{
-                            //    yield return $"{rec.name}Param.Value = LdgSQLiteUtils.SerializeArrayForDb(value.{rec.name}, false);";
-                            //}
-                            //else
-                            //{
-                                //yield return $"{rec.name}Param.Value = LdgSQLiteUtils.SerializeForDb(value.{rec.name}, false);";
-                                yield return $"{rec.name}Param.Value = LdgSQLiteUtils.TrySerializeForDb(value.{rec.name}, out dbJson) ? dbJson : string.Empty;";
-                            //}
+                            yield return $"{rec.name}Param.Value = TrySerializeForDb(value.{rec.name}, out dbJson) ? dbJson : string.Empty;";
                         }
                         else
                         {
@@ -2368,6 +2414,18 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                             return -1;
                         }
+
+                        private static readonly System.Text.RegularExpressions.Regex _htmlStripRegex = new("<.*?>", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+                        private static string StripHtml(string? input)
+                        {
+                            if (string.IsNullOrWhiteSpace(input))
+                            {
+                                return string.Empty;
+                            }
+
+                            return _htmlStripRegex.Replace(input, string.Empty).Trim();
+                        }
                     }
 
                     [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
@@ -2420,8 +2478,8 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 if (rec.propType.StartsWith("string", StringComparison.OrdinalIgnoreCase))
                 {
                     assignment = (assignmentIndex == -1)
-                        ? $"{rec.name}Param.Value = LdgSQLiteUtils.StripHtml({rec.readerDirective})"
-                        : $"{rec.name}Param.Value = LdgSQLiteUtils.StripHtml({rec.readerDirective.Substring(assignmentIndex + 2)})";
+                        ? $"{rec.name}Param.Value = StripHtml({rec.readerDirective})"
+                        : $"{rec.name}Param.Value = StripHtml({rec.readerDirective.Substring(assignmentIndex + 2)})";
                 }
 
                 if (addValue)
@@ -2500,10 +2558,10 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         { "uint", "(uint){0} = {1}.GetInt32({2})" },
         { "ulong", "(ulong){0} = {1}.GetInt64({2})" },
         { "Uri", "{0} = new Uri({1}.GetString({2}))" },
-        { "JSON", "{0} = LdgSQLiteUtils.ParseFromDb<{3}>({1}.GetString({2})) ?? new {3}()" },
-        //{ "JSON", "{0} = LdgSQLiteUtils.ParseFromDb({1}.GetString({2}), typeof({3})) ?? new {3}()" },
-        { "JSON[]", "{0} = LdgSQLiteUtils.ParseArrayFromDb<{3}>({1}.GetString({2})) ?? new List<{3}>()" },
-        //{ "JSON[]", "{0} = LdgSQLiteUtils.ParseArrayFromDb({1}.GetString({2}), typeof({3})) ?? new List<{3}>()" },
+        { "JSON", "{0} = ParseFromDb<{3}>({1}.GetString({2})) ?? new {3}()" },
+        //{ "JSON", "{0} = ParseFromDb({1}.GetString({2}), typeof({3})) ?? new {3}()" },
+        { "JSON[]", "{0} = ParseArrayFromDb<{3}>({1}.GetString({2})) ?? new List<{3}>()" },
+        //{ "JSON[]", "{0} = ParseArrayFromDb({1}.GetString({2}), typeof({3})) ?? new List<{3}>()" },
     };
 
     private static Dictionary<string, string> _sqliteNullableReadDirectives = new()
@@ -2530,10 +2588,10 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         { "uint", "(uint){0} = {1}.IsDBNull({2}) ? null : {1}.GetInt32({2})" },
         { "ulong", "(ulong){0} = {1}.IsDBNull({2}) ? null : {1}.GetInt64({2})" },
         { "Uri", "{0} = {1}.IsDBNull({2}) ? null : new Uri({1}.GetString({2}))" },
-        { "JSON", "{0} = {1}.IsDBNull({2}) ? null : LdgSQLiteUtils.ParseFromDb<{3}>({1}.GetString({2}))" },
-        //{ "JSON", "{0} = {1}.IsDBNull({2}) ? null : LdgSQLiteUtils.ParseFromDb({1}.GetString({2}), typeof({3}))" },
-        { "JSON[]", "{0} = {1}.IsDBNull({2}) ? null : LdgSQLiteUtils.ParseArrayFromDb<{3}>({1}.GetString({2}))" },
-        //{ "JSON[]", "{0} = {1}.IsDBNull({2}) ? null : LdgSQLiteUtils.ParseArrayFromDb({1}.GetString({2}), typeof({3}))" },
+        { "JSON", "{0} = {1}.IsDBNull({2}) ? null : ParseFromDb<{3}>({1}.GetString({2}))" },
+        //{ "JSON", "{0} = {1}.IsDBNull({2}) ? null : ParseFromDb({1}.GetString({2}), typeof({3}))" },
+        { "JSON[]", "{0} = {1}.IsDBNull({2}) ? null : ParseArrayFromDb<{3}>({1}.GetString({2}))" },
+        //{ "JSON[]", "{0} = {1}.IsDBNull({2}) ? null : ParseArrayFromDb({1}.GetString({2}), typeof({3}))" },
     };
 
     // Mapping pulled from https://learn.microsoft.com/en-us/dotnet/standard/data/sqlite/types

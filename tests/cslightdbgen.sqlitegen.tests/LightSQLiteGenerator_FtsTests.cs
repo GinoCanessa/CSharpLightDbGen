@@ -18,7 +18,7 @@ public class LightSQLiteGenerator_FtsTests
         source.Should().Contain("RawHtml UNINDEXED");
         source.Should().Contain("MATCH $matchTerm{index}");
         source.Should().Contain("matchParam.ParameterName = $\"$matchTerm{index}\"");
-        source.Should().Contain("LdgSQLiteUtils.StripHtml(");
+        source.Should().Contain("StripHtml(");
     }
 
     [Fact]

@@ -28,8 +28,8 @@ public class LightSQLiteGenerator_FilterParityTests
 
         source.Should().Contain("bool? OptionalScoreIsNull = null");
         source.Should().Contain("List<int>? ParentKeyValues = null");
-        source.Should().Contain("LdgSQLiteUtils.LdgNumericOperatorCodes ParentKeyOperator");
-        source.Should().Contain("LdgSQLiteUtils.GetSqlOperator(ParentKeyOperator)");
+        source.Should().Contain("string ParentKeyOperator");
+        source.Should().Contain("getNumericOperator(ParentKeyOperator)");
         source.Should().Contain("ParentKey IN ");
         source.Should().Contain("vParamNames");
     }

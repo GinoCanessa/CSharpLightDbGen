@@ -13,7 +13,7 @@ public class LightSQLiteGenerator_GenerationTests
         var run = GeneratorTestHost.Run("namespace T; public class Placeholder { }");
 
         run.GeneratedSources.Keys.Should().Contain("LdgSQLiteGeneratorAttributes.g.cs");
-        run.GeneratedSources.Keys.Should().Contain("LdgSQLiteUtils.g.cs");
+        // run.GeneratedSources.Keys.Should().Contain("LdgSQLiteUtils.g.cs");
     }
 
     [Fact]
@@ -69,11 +69,11 @@ public class LightSQLiteGenerator_GenerationTests
         var run = GeneratorTestHost.Run(FixtureSources.TableWithJsonFixture);
         var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "JsonEntitySQLite.g.cs");
 
-        source.Should().Contain("LdgSQLiteUtils.TrySerializeForDb(Payload");
-        source.Should().Contain("LdgSQLiteUtils.TrySerializeForDb(PayloadTags");
-        source.Should().Contain("LdgSQLiteUtils.ParseFromDb<");
+        source.Should().Contain("TrySerializeForDb(Payload");
+        source.Should().Contain("TrySerializeForDb(PayloadTags");
+        source.Should().Contain("ParseFromDb<");
         source.Should().Contain("JsonPayload>");
-        source.Should().Contain("LdgSQLiteUtils.ParseArrayFromDb<");
+        source.Should().Contain("ParseArrayFromDb<");
         source.Should().Contain("JsonTag>");
     }
 
