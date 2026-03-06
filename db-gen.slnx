@@ -1,1 +1,12 @@
-<Solution />
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path=".gitignore" />
+    <File Path="LICENSE" />
+    <File Path="README.md" />
+    <File Path="src/common.props" />
+  </Folder>
+  <Project Path="src/cslightdbgen.sqlitegen/cslightdbgen.sqlitegen.csproj" Id="d264b869-0bad-4213-855c-e85c09347fe1" />
+  <Project Path="tests/cslightdbgen.sqlitegen.tests/cslightdbgen.sqlitegen.tests.csproj" />
+  <Project Path="tests/cslightdbgen.sqlitegen.integration/cslightdbgen.sqlitegen.integration.csproj" />
+  <Project Path="tests/cslightdbgen.performance/cslightdbgen.performance.csproj" />
+</Solution>
