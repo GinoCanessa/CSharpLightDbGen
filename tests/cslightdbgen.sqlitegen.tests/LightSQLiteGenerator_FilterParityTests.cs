@@ -1,6 +1,6 @@
 using cslightdbgen.sqlitegen.tests.TestFixtures;
 using cslightdbgen.sqlitegen.tests.TestInfrastructure;
-using FluentAssertions;
+using Shouldly;
 
 namespace cslightdbgen.sqlitegen.tests;
 
@@ -12,12 +12,12 @@ public class LightSQLiteGenerator_FilterParityTests
         var run = GeneratorTestHost.Run(FixtureSources.BasicTableFixture);
         var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntitySQLite.g.cs");
 
-        source.Should().Contain("SelectSingle(");
-        source.Should().Contain("SelectList(");
-        source.Should().Contain("SelectEnumerable(");
-        source.Should().Contain("SelectCount(");
-        source.Should().Contain("Delete(");
-        source.Should().Contain("bool compareStringsWithLike = false");
+        source.ShouldContain("SelectSingle(");
+        source.ShouldContain("SelectList(");
+        source.ShouldContain("SelectEnumerable(");
+        source.ShouldContain("SelectCount(");
+        source.ShouldContain("Delete(");
+        source.ShouldContain("bool compareStringsWithLike = false");
     }
 
     [Fact]
@@ -26,12 +26,12 @@ public class LightSQLiteGenerator_FilterParityTests
         var run = GeneratorTestHost.Run(FixtureSources.BasicTableFixture);
         var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntitySQLite.g.cs");
 
-        source.Should().Contain("bool? OptionalScoreIsNull = null");
-        source.Should().Contain("List<int>? ParentKeyValues = null");
-        source.Should().Contain("string ParentKeyOperator");
-        source.Should().Contain("getNumericOperator(ParentKeyOperator)");
-        source.Should().Contain("ParentKey IN ");
-        source.Should().Contain("vParamNames");
+        source.ShouldContain("bool? OptionalScoreIsNull = null");
+        source.ShouldContain("List<int>? ParentKeyValues = null");
+        source.ShouldContain("string ParentKeyOperator");
+        source.ShouldContain("getNumericOperator(ParentKeyOperator)");
+        source.ShouldContain("ParentKey IN ");
+        source.ShouldContain("vParamNames");
     }
 
     [Fact]
@@ -40,8 +40,8 @@ public class LightSQLiteGenerator_FilterParityTests
         var run = GeneratorTestHost.Run(FixtureSources.BasicTableFixture);
         var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntitySQLite.g.cs");
 
-        source.Should().Contain("public static IEnumerable<BasicEntity> SelectEnumerable(");
-        source.Should().Contain("public static IEnumerable<BasicEntity> SelectEnumerable<T>(");
-        source.Should().Contain("return BasicEntity.SelectEnumerable(");
+        source.ShouldContain("public static IEnumerable<BasicEntity> SelectEnumerable(");
+        source.ShouldContain("public static IEnumerable<BasicEntity> SelectEnumerable<T>(");
+        source.ShouldContain("return BasicEntity.SelectEnumerable(");
     }
 }

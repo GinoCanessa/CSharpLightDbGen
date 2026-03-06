@@ -10,16 +10,16 @@ public class LightSQLiteGenerator_IntegrationTests
     {
         using var db = OpenInMemory();
 
-        Customer.DefaultTableName.Should().Be("customers");
-        Customer.CreateTable(db).Should().BeTrue();
+        Customer.DefaultTableName.ShouldBe("customers");
+        Customer.CreateTable(db).ShouldBeTrue();
 
         Customer.LoadMaxKey(db);
-        Customer.SelectMaxKey(db).Should().BeNull();
+        Customer.SelectMaxKey(db).ShouldBeNull();
 
         var alpha = NewCustomer("Alpha", 30, 10, 90);
         var returnedId = Customer.Insert(db, alpha);
-        returnedId.Should().Be(alpha.CustomerId);
-        alpha.CustomerId.Should().BeGreaterThan(0);
+        returnedId.ShouldBe(alpha.CustomerId);
+        alpha.CustomerId.ShouldBeGreaterThan(0);
 
         Customer.Insert(db, new List<Customer>
         {
@@ -45,30 +45,30 @@ public class LightSQLiteGenerator_IntegrationTests
         new List<Customer> { kappa, lambda }.Insert(db);
         ((IEnumerable<Customer>)new[] { NewCustomer("Mu", 36, 90, 99) }).Insert(db);
 
-        Customer.SelectCount(db).Should().BeGreaterThan(0);
-        Customer.SelectCount(db, Name: "A%", compareStringsWithLike: true).Should().Be(1);
+        Customer.SelectCount(db).ShouldBeGreaterThan(0);
+        Customer.SelectCount(db, Name: "A%", compareStringsWithLike: true).ShouldBe(1);
 
         var single = Customer.SelectSingle(db, Name: "Alpha");
-        single.Should().NotBeNull();
-        single!.Name.Should().Be("Alpha");
+        single.ShouldNotBeNull();
+        single!.Name.ShouldBe("Alpha");
 
         var list = Customer.SelectList(
             db,
             orderByProperties: new[] { "CustomerId" },
             orderByDirection: "asc",
             SegmentKeyValues: new List<int> { 10, 20, 30 });
-        list.Should().NotBeEmpty();
+        list.ShouldNotBeEmpty();
 
         var enumerable = Customer.SelectEnumerable(db, resultLimit: 3).ToList();
-        enumerable.Count.Should().Be(3);
+        enumerable.Count.ShouldBe(3);
 
         var dict = Customer.SelectDict(db, Age: 20, AgeOperator: ">=");
-        dict.Should().NotBeEmpty();
+        dict.ShouldNotBeEmpty();
 
-        db.SelectSingle<Customer>(Name: "Alpha").Should().NotBeNull();
-        db.SelectList<Customer>(resultLimit: 2).Count.Should().Be(2);
-        db.SelectEnumerable<Customer>(resultLimit: 2).Count().Should().Be(2);
-        db.SelectCount<Customer>().Should().BeGreaterThan(0);
+        db.SelectSingle<Customer>(Name: "Alpha").ShouldNotBeNull();
+        db.SelectList<Customer>(resultLimit: 2).Count.ShouldBe(2);
+        db.SelectEnumerable<Customer>(resultLimit: 2).Count().ShouldBe(2);
+        db.SelectCount<Customer>().ShouldBeGreaterThan(0);
 
         single.Score = 95;
         Customer.Update(db, single);
@@ -83,9 +83,8 @@ public class LightSQLiteGenerator_IntegrationTests
         ((IEnumerable<Customer>)updateBatch).Update(db);
 
         var deleteOne = Customer.SelectSingle(db, Name: "Mu");
-        deleteOne.Should().NotBeNull();
-        Action deleteSingle = () => Customer.Delete(db, deleteOne!);
-        deleteSingle.Should().Throw<InvalidOperationException>();
+        deleteOne.ShouldNotBeNull();
+        Should.Throw<InvalidOperationException>(() => Customer.Delete(db, deleteOne!));
 
         var deleteMany = Customer.SelectList(db, resultLimit: 2);
         Customer.Delete(db, deleteMany);
@@ -96,21 +95,19 @@ public class LightSQLiteGenerator_IntegrationTests
         var xi = NewCustomer("Xi", 35, 110, 73);
         Customer.Insert(db, new List<Customer> { nu, xi });
 
-        Action dbDeleteSingle = () => db.Delete(nu);
-        dbDeleteSingle.Should().Throw<InvalidOperationException>();
+        Should.Throw<InvalidOperationException>(() => db.Delete(nu));
         db.Delete((IEnumerable<Customer>)new[] { xi });
 
         var omicron = NewCustomer("Omicron", 37, 120, 68);
         var pi = NewCustomer("Pi", 38, 130, 72);
         Customer.Insert(db, new List<Customer> { omicron, pi });
 
-        Action modelDeleteSingle = () => omicron.Delete(db);
-        modelDeleteSingle.Should().Throw<InvalidOperationException>();
+        Should.Throw<InvalidOperationException>(() => omicron.Delete(db));
         ((IEnumerable<Customer>)new[] { pi }).Delete(db);
 
         db.Delete(compareStringsWithLike: true, Name: "T%");
 
-        Customer.DropTable(db).Should().BeTrue();
+        Customer.DropTable(db).ShouldBeTrue();
     }
 
     [Fact]
@@ -118,26 +115,25 @@ public class LightSQLiteGenerator_IntegrationTests
     {
         using var db = OpenInMemory();
 
-        Order.CreateTable(db).Should().BeTrue();
+        Order.CreateTable(db).ShouldBeTrue();
 
         var first = new Order { CustomerKey = 101, Description = "starter" };
         var key = Order.Insert(db, first);
-        key.Should().Be(first.OrderId);
+        key.ShouldBe(first.OrderId);
 
         var loaded = Order.SelectSingle(db, OrderId: first.OrderId);
-        loaded.Should().NotBeNull();
+        loaded.ShouldNotBeNull();
 
         loaded!.Description = "updated";
         Order.Update(db, loaded);
 
-        Order.SelectCount(db, Description: "updated").Should().Be(1);
-        Action deleteRecordSingle = () => Order.Delete(db, loaded);
-        deleteRecordSingle.Should().Throw<InvalidOperationException>();
+        Order.SelectCount(db, Description: "updated").ShouldBe(1);
+        Should.Throw<InvalidOperationException>(() => Order.Delete(db, loaded));
 
         Order.Delete(db, Description: "updated");
-        Order.SelectCount(db).Should().Be(0);
+        Order.SelectCount(db).ShouldBe(0);
 
-        Order.DropTable(db).Should().BeTrue();
+        Order.DropTable(db).ShouldBeTrue();
     }
 
     [Fact]
@@ -147,30 +143,30 @@ public class LightSQLiteGenerator_IntegrationTests
 
         CreateArticleSource(db);
 
-        ArticleSearch.CreateTable(db).Should().BeTrue();
-        ArticleSearch.Populate(db).Should().Be(3);
+        ArticleSearch.CreateTable(db).ShouldBeTrue();
+        ArticleSearch.Populate(db).ShouldBe(3);
 
         var exactMatches = ArticleSearch.Select(db, new List<string> { "alpha" });
-        exactMatches.Should().NotBeEmpty();
-        ArticleSearch.SelectCount(db, new List<string> { "alpha" }).Should().BeGreaterThan(0);
+        exactMatches.ShouldNotBeEmpty();
+        ArticleSearch.SelectCount(db, new List<string> { "alpha" }).ShouldBeGreaterThan(0);
 
-        db.Select<ArticleSearch>(new List<string> { "beta" }).Should().NotBeEmpty();
-        db.SelectCount<ArticleSearch>(new List<string> { "beta" }).Should().BeGreaterThan(0);
+        db.Select<ArticleSearch>(new List<string> { "beta" }).ShouldNotBeEmpty();
+        db.SelectCount<ArticleSearch>(new List<string> { "beta" }).ShouldBeGreaterThan(0);
 
-        ArticleSearch.CreateTable(db, "article_search_clean").Should().BeTrue();
+        ArticleSearch.CreateTable(db, "article_search_clean").ShouldBeTrue();
         ArticleSearch.Populate(
             db,
             dbTableName: "article_search_clean",
             sourceTableName: "article_source",
-            sanitizeText: true).Should().Be(3);
+            sanitizeText: true).ShouldBe(3);
 
         ArticleSearch.Select(
             db,
             new List<string> { "alpha" },
-            dbTableName: "article_search_clean").Should().NotBeEmpty();
+            dbTableName: "article_search_clean").ShouldNotBeEmpty();
 
-        ArticleSearch.DropTable(db).Should().BeTrue();
-        ArticleSearch.DropTable(db, "article_search_clean").Should().BeTrue();
+        ArticleSearch.DropTable(db).ShouldBeTrue();
+        ArticleSearch.DropTable(db, "article_search_clean").ShouldBeTrue();
     }
 
     private static SqliteConnection OpenInMemory()

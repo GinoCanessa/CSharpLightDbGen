@@ -1,6 +1,6 @@
 using cslightdbgen.sqlitegen.tests.TestFixtures;
 using cslightdbgen.sqlitegen.tests.TestInfrastructure;
-using FluentAssertions;
+using Shouldly;
 using Microsoft.CodeAnalysis;
 
 namespace cslightdbgen.sqlitegen.tests;
@@ -12,8 +12,8 @@ public class LightSQLiteGenerator_GenerationTests
     {
         var run = GeneratorTestHost.Run("namespace T; public class Placeholder { }");
 
-        run.GeneratedSources.Keys.Should().Contain("LdgSQLiteGeneratorAttributes.g.cs");
-        // run.GeneratedSources.Keys.Should().Contain("LdgSQLiteUtils.g.cs");
+        run.GeneratedSources.Keys.ShouldContain("LdgSQLiteGeneratorAttributes.g.cs");
+        // run.GeneratedSources.Keys.ShouldContain("LdgSQLiteUtils.g.cs");
     }
 
     [Fact]
@@ -22,13 +22,13 @@ public class LightSQLiteGenerator_GenerationTests
         var run = GeneratorTestHost.Run(FixtureSources.BasicTableFixture);
         var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntitySQLite.g.cs");
 
-        source.Should().Contain("CREATE TABLE IF NOT EXISTS");
-        source.Should().Contain("UNIQUE");
-        source.Should().Contain("ParentForeignKey");
-        source.Should().Contain("REFERENCES");
-        source.Should().Contain("_indexValue");
-        source.Should().Contain("GetIndex() => Interlocked.Increment(ref _indexValue)");
-        source.Should().NotContain("IgnoredNote");
+        source.ShouldContain("CREATE TABLE IF NOT EXISTS");
+        source.ShouldContain("UNIQUE");
+        source.ShouldContain("ParentForeignKey");
+        source.ShouldContain("REFERENCES");
+        source.ShouldContain("_indexValue");
+        source.ShouldContain("GetIndex() => Interlocked.Increment(ref _indexValue)");
+        source.ShouldNotContain("IgnoredNote");
     }
 
     [Fact]
@@ -37,10 +37,10 @@ public class LightSQLiteGenerator_GenerationTests
         var run = GeneratorTestHost.Run(FixtureSources.TableWithIndexFixture);
         var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "IndexedEntitySQLite.g.cs");
 
-        source.Should().Contain("CREATE INDEX IF NOT EXISTS");
-        source.Should().Contain("IDX_{dbTableName}_");
-        source.Should().Contain("\"ColA\"");
-        source.Should().Contain("\"ColB\"");
+        source.ShouldContain("CREATE INDEX IF NOT EXISTS");
+        source.ShouldContain("IDX_{dbTableName}_");
+        source.ShouldContain("\"ColA\"");
+        source.ShouldContain("\"ColB\"");
     }
 
     [Fact]
@@ -49,8 +49,8 @@ public class LightSQLiteGenerator_GenerationTests
         var run = GeneratorTestHost.Run(FixtureSources.RecordTableFixture);
         var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "RecordEntitySQLite.g.cs");
 
-        source.Should().Contain("public partial record class RecordEntity");
-        run.Errors.Should().BeEmpty();
+        source.ShouldContain("public partial record class RecordEntity");
+        run.Errors.ShouldBeEmpty();
     }
 
     [Fact]
@@ -59,8 +59,8 @@ public class LightSQLiteGenerator_GenerationTests
         var run = GeneratorTestHost.Run(FixtureSources.InheritanceFixture);
         var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "DerivedEntitySQLite.g.cs");
 
-        source.Should().Contain("BaseName");
-        source.Should().Contain("DerivedName");
+        source.ShouldContain("BaseName");
+        source.ShouldContain("DerivedName");
     }
 
     [Fact]
@@ -69,12 +69,12 @@ public class LightSQLiteGenerator_GenerationTests
         var run = GeneratorTestHost.Run(FixtureSources.TableWithJsonFixture);
         var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "JsonEntitySQLite.g.cs");
 
-        source.Should().Contain("TrySerializeForDb(Payload");
-        source.Should().Contain("TrySerializeForDb(PayloadTags");
-        source.Should().Contain("ParseFromDb<");
-        source.Should().Contain("JsonPayload>");
-        source.Should().Contain("ParseArrayFromDb<");
-        source.Should().Contain("JsonTag>");
+        source.ShouldContain("TrySerializeForDb(Payload");
+        source.ShouldContain("TrySerializeForDb(PayloadTags");
+        source.ShouldContain("ParseFromDb<");
+        source.ShouldContain("JsonPayload>");
+        source.ShouldContain("ParseArrayFromDb<");
+        source.ShouldContain("JsonTag>");
     }
 
     [Fact]
@@ -82,7 +82,7 @@ public class LightSQLiteGenerator_GenerationTests
     {
         var run = GeneratorTestHost.Run(FixtureSources.BasicTableFixture);
 
-        run.OutputCompilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).Should().BeEmpty();
+        run.OutputCompilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ShouldBeEmpty();
     }
 
     [Fact]
@@ -90,7 +90,7 @@ public class LightSQLiteGenerator_GenerationTests
     {
         var run = GeneratorTestHost.Run(FixtureSources.RecordTableFixture);
 
-        run.OutputCompilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).Should().BeEmpty();
+        run.OutputCompilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ShouldBeEmpty();
     }
 
     [Fact]
@@ -98,6 +98,6 @@ public class LightSQLiteGenerator_GenerationTests
     {
         var run = GeneratorTestHost.Run(FixtureSources.InheritanceFixture);
 
-        run.OutputCompilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).Should().BeEmpty();
+        run.OutputCompilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ShouldBeEmpty();
     }
 }

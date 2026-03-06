@@ -1,4 +1,4 @@
-using FluentAssertions;
+using Shouldly;
 
 namespace cslightdbgen.sqlitegen.tests;
 
@@ -9,8 +9,8 @@ public class LdgSQLiteUtils_Tests
     {
         var ok = LdgSQLiteUtilsFixture.TrySerializeForDb((TestObj?)null, out var json);
 
-        ok.Should().BeFalse();
-        json.Should().BeNull();
+        ok.ShouldBeFalse();
+        json.ShouldBeNull();
     }
 
     [Fact]
@@ -18,9 +18,9 @@ public class LdgSQLiteUtils_Tests
     {
         var ok = LdgSQLiteUtilsFixture.TrySerializeForDb(new TestObj { Name = "abc" }, out var json);
 
-        ok.Should().BeTrue();
-        json.Should().NotBeNullOrWhiteSpace();
-        json.Should().Contain("\"Name\":\"abc\"");
+        ok.ShouldBeTrue();
+        json.ShouldNotBeNullOrWhiteSpace();
+        json.ShouldContain("\"Name\":\"abc\"");
     }
 
     [Fact]
@@ -29,10 +29,10 @@ public class LdgSQLiteUtils_Tests
         var nullOk = LdgSQLiteUtilsFixture.TrySerializeForDb((List<TestObj>?)null, out var nullJson);
         var emptyOk = LdgSQLiteUtilsFixture.TrySerializeForDb(new List<TestObj>(), out var emptyJson);
 
-        nullOk.Should().BeFalse();
-        emptyOk.Should().BeFalse();
-        nullJson.Should().BeNull();
-        emptyJson.Should().BeNull();
+        nullOk.ShouldBeFalse();
+        emptyOk.ShouldBeFalse();
+        nullJson.ShouldBeNull();
+        emptyJson.ShouldBeNull();
     }
 
     [Fact]
@@ -40,20 +40,20 @@ public class LdgSQLiteUtils_Tests
     {
         var ok = LdgSQLiteUtilsFixture.TrySerializeForDb(new List<TestObj> { new() { Name = "x" } }, out var json);
 
-        ok.Should().BeTrue();
-        json.Should().Contain("\"Name\":\"x\"");
+        ok.ShouldBeTrue();
+        json!.ShouldContain("\"Name\":\"x\"");
     }
 
     [Fact]
     public void ParseFromDb_ReturnsNull_ForWhitespace()
     {
-        LdgSQLiteUtilsFixture.ParseFromDb<TestObj>("   ").Should().BeNull();
+        LdgSQLiteUtilsFixture.ParseFromDb<TestObj>("   ").ShouldBeNull();
     }
 
     [Fact]
     public void ParseArrayFromDb_ReturnsEmpty_ForWhitespace()
     {
-        LdgSQLiteUtilsFixture.ParseArrayFromDb<TestObj>("\t").Should().BeEmpty();
+        LdgSQLiteUtilsFixture.ParseArrayFromDb<TestObj>("\t").ShouldBeEmpty();
     }
 
     [Fact]
@@ -61,7 +61,7 @@ public class LdgSQLiteUtils_Tests
     {
         var clean = LdgSQLiteUtilsFixture.StripHtml("  <p>Hello <strong>world</strong></p>  ");
 
-        clean.Should().Be("Hello world");
+        clean.ShouldBe("Hello world");
     }
 
     private sealed class TestObj

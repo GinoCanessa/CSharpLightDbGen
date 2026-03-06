@@ -28,7 +28,7 @@ Provides Roslyn APIs for incremental syntax/semantic analysis and source emissio
 - `Microsoft.NET.Test.Sdk` `17.14.1`
 - `xunit` `2.7.1`
 - `xunit.runner.visualstudio` `2.5.8`
-- `FluentAssertions` `8.3.0`
+- `Shouldly` `4.3.0`
 - `Microsoft.CodeAnalysis.CSharp` `4.14.0`
 
 ### Purpose
@@ -39,7 +39,7 @@ Compiles test fixtures, runs generator in-memory, and validates generated source
 
 ### NuGet Packages
 
-- `FluentAssertions` `8.3.0`
+- `Shouldly` `4.3.0`
 - `Microsoft.Data.Sqlite` `9.0.10`
 - `Microsoft.NET.Test.Sdk` `17.14.1`
 - `xunit` `2.7.1`

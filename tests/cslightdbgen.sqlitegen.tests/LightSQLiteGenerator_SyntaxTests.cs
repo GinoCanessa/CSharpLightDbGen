@@ -1,5 +1,5 @@
 using CsLightDbGen.SQLiteGenerator;
-using FluentAssertions;
+using Shouldly;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
@@ -12,7 +12,7 @@ public class LightSQLiteGenerator_SyntaxTests
     {
         var classNode = ParseSingleClass("[LdgSQLiteTable] public class A { }");
 
-        LightSQLiteGenerator.IsSyntaxTargetClassDec(classNode).Should().BeTrue();
+        LightSQLiteGenerator.IsSyntaxTargetClassDec(classNode).ShouldBeTrue();
     }
 
     [Fact]
@@ -20,7 +20,7 @@ public class LightSQLiteGenerator_SyntaxTests
     {
         var classNode = ParseSingleClass("[LdgSQLiteFtsTable(\"src\")] public class A { }");
 
-        LightSQLiteGenerator.IsSyntaxTargetClassDec(classNode).Should().BeTrue();
+        LightSQLiteGenerator.IsSyntaxTargetClassDec(classNode).ShouldBeTrue();
     }
 
     [Fact]
@@ -28,7 +28,7 @@ public class LightSQLiteGenerator_SyntaxTests
     {
         var classNode = ParseSingleClass("public class A { }");
 
-        LightSQLiteGenerator.IsSyntaxTargetClassDec(classNode).Should().BeFalse();
+        LightSQLiteGenerator.IsSyntaxTargetClassDec(classNode).ShouldBeFalse();
     }
 
     [Fact]
@@ -36,7 +36,7 @@ public class LightSQLiteGenerator_SyntaxTests
     {
         var classNode = ParseSingleClass("[Obsolete] public class A { }");
 
-        LightSQLiteGenerator.IsSyntaxTargetClassDec(classNode).Should().BeFalse();
+        LightSQLiteGenerator.IsSyntaxTargetClassDec(classNode).ShouldBeFalse();
     }
 
     [Fact]
@@ -44,7 +44,7 @@ public class LightSQLiteGenerator_SyntaxTests
     {
         var recordNode = ParseSingleRecord("[LdgSQLiteTable] public record A;");
 
-        LightSQLiteGenerator.IsSyntaxTargetRecordDec(recordNode).Should().BeTrue();
+        LightSQLiteGenerator.IsSyntaxTargetRecordDec(recordNode).ShouldBeTrue();
     }
 
     [Fact]
@@ -52,7 +52,7 @@ public class LightSQLiteGenerator_SyntaxTests
     {
         var recordNode = ParseSingleRecord("[LdgSQLiteFtsTable(\"src\")] public record A;");
 
-        LightSQLiteGenerator.IsSyntaxTargetRecordDec(recordNode).Should().BeTrue();
+        LightSQLiteGenerator.IsSyntaxTargetRecordDec(recordNode).ShouldBeTrue();
     }
 
     [Fact]
@@ -60,7 +60,7 @@ public class LightSQLiteGenerator_SyntaxTests
     {
         var recordNode = ParseSingleRecord("public record A;");
 
-        LightSQLiteGenerator.IsSyntaxTargetRecordDec(recordNode).Should().BeFalse();
+        LightSQLiteGenerator.IsSyntaxTargetRecordDec(recordNode).ShouldBeFalse();
     }
 
     [Fact]
@@ -68,7 +68,7 @@ public class LightSQLiteGenerator_SyntaxTests
     {
         var recordNode = ParseSingleRecord("[Serializable] public record A;");
 
-        LightSQLiteGenerator.IsSyntaxTargetRecordDec(recordNode).Should().BeFalse();
+        LightSQLiteGenerator.IsSyntaxTargetRecordDec(recordNode).ShouldBeFalse();
     }
 
     private static ClassDeclarationSyntax ParseSingleClass(string declaration)
