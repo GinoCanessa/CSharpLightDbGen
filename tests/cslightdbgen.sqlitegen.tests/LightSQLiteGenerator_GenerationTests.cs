@@ -28,6 +28,11 @@ public class LightSQLiteGenerator_GenerationTests
         source.ShouldContain("REFERENCES");
         source.ShouldContain("_indexValue");
         source.ShouldContain("GetIndex() => Interlocked.Increment(ref _indexValue)");
+        source.ShouldContain("public static HashSet<string> SQLiteColumnNames");
+        source.ShouldContain("\"Id\"");
+        source.ShouldContain("\"UniqueCode\"");
+        source.ShouldContain("ResolveOrderByProperties");
+        source.ShouldContain("SQLiteColumnNames.Contains(orderByProperty)");
         source.ShouldNotContain("IgnoredNote");
     }
 

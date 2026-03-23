@@ -103,12 +103,13 @@ customer.Delete(db);
 - `IN`-list filters for `*Key` properties (`SegmentKeyValues: [1, 2, 3]`)
 - `LIKE` matching for strings (`compareStringsWithLike: true`)
 - Paging (`resultLimit`, `resultOffset`) and ordering (`orderByProperties`, `orderByDirection`)
+- Unknown `orderByProperties` values are ignored; generated models expose `SQLiteColumnNames` for the valid SQLite column names
 
 **Writes:** `Insert`, `Update`, `Delete` — single value, list, or enumerable overloads
 - `ignoreDuplicates` → `INSERT OR IGNORE`
 - `insertPrimaryKey` → include PK in insert
 
-**Utilities:** `LoadMaxKey`, `SelectMaxKey`
+**Utilities:** `LoadMaxKey`, `SelectMaxKey`, `SQLiteColumnNames`
 
 **Extensions:** convenience methods on `IDbConnection`, model instances, and collections
 
@@ -116,6 +117,7 @@ customer.Delete(db);
 
 `CreateTable`, `DropTable`, `Populate`, `Select` (via `MATCH`), `SelectCount`
 - Optional HTML stripping during `Populate(..., sanitizeText: true)`
+- Generated FTS models also expose `SQLiteColumnNames`, and invalid `orderByProperties` values are ignored
 
 ## Full-Text Search Example
 

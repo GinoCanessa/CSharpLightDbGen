@@ -684,17 +684,42 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 
                     [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
                     [global::System.Runtime.CompilerServices.CompilerGeneratedAttribute()]
-                    public partial {{{decForGenCategory(genCategory)}}} {{{className}}}
-                    {
-                        public static string DefaultTableName => "{{{tableName}}}";
-                        {{{(pkPropType != "long" ? "internal static int _indexValue = 0;" : string.Empty)}}}
-                        {{{(pkPropType != "long" ? "public static int GetIndex() => Interlocked.Increment(ref _indexValue);" : string.Empty)}}}
-                        {{{(pkPropType == "long" ? "internal static long _indexValue = 0;" : string.Empty)}}}
-                        {{{(pkPropType == "long" ? "public static long GetIndex() => Interlocked.Increment(ref _indexValue);" : string.Empty)}}}
+                     public partial {{{decForGenCategory(genCategory)}}} {{{className}}}
+                     {
+                         public static string DefaultTableName => "{{{tableName}}}";
+                         public static HashSet<string> SQLiteColumnNames { get; } = new HashSet<string>(global::System.StringComparer.OrdinalIgnoreCase)
+                         {
+                             {{{string.Join(_comma_line_5, tableColInfo.Select(c => $"\"{c.name}\""))}}}
+                         };
+                         {{{(pkPropType != "long" ? "internal static int _indexValue = 0;" : string.Empty)}}}
+                         {{{(pkPropType != "long" ? "public static int GetIndex() => Interlocked.Increment(ref _indexValue);" : string.Empty)}}}
+                         {{{(pkPropType == "long" ? "internal static long _indexValue = 0;" : string.Empty)}}}
+                         {{{(pkPropType == "long" ? "public static long GetIndex() => Interlocked.Increment(ref _indexValue);" : string.Empty)}}}
 
-                        public static bool CreateTable(IDbConnection dbConnection, string? dbTableName = null)
-                        {
-                            dbTableName ??= "{{{tableName}}}";
+                         private static string[]? ResolveOrderByProperties(string[]? orderByProperties)
+                         {
+                             if ((orderByProperties == null) || (orderByProperties.Length == 0))
+                             {
+                                 return null;
+                             }
+
+                             List<string> resolvedOrderByProperties = new(orderByProperties.Length);
+                             foreach (string orderByProperty in orderByProperties)
+                             {
+                                 if (!string.IsNullOrWhiteSpace(orderByProperty) && SQLiteColumnNames.Contains(orderByProperty))
+                                 {
+                                     resolvedOrderByProperties.Add(orderByProperty);
+                                 }
+                             }
+
+                             return resolvedOrderByProperties.Count > 0
+                                 ? resolvedOrderByProperties.ToArray()
+                                 : null;
+                         }
+ 
+                         public static bool CreateTable(IDbConnection dbConnection, string? dbTableName = null)
+                         {
+                             dbTableName ??= "{{{tableName}}}";
 
                             IDbCommand command = dbConnection.CreateCommand();
                             command.CommandText = $"""
@@ -819,19 +844,20 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             IDbCommand command = dbConnection.CreateCommand();
                             command.CommandText = $"SELECT {{{string.Join(", ", tableColInfo.Select(p => p.name))}}} FROM {dbTableName}";
                     
-                            string joiner = orJoinConditions ? " OR " : " AND ";
-                            string stringComparator = compareStringsWithLike ? " LIKE " : " = ";
-                            bool addedCondition = false;
-                            {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
-                                        
-                            {{{string.Join(_line_2, getConditionLines(true, true, true, true))}}}
+                             string joiner = orJoinConditions ? " OR " : " AND ";
+                             string stringComparator = compareStringsWithLike ? " LIKE " : " = ";
+                             bool addedCondition = false;
+                             string[]? resolvedOrderByProperties = ResolveOrderByProperties(orderByProperties);
+                             {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
+                                         
+                             {{{string.Join(_line_2, getConditionLines(true, true, true, true))}}}
 
-                            if ((orderByProperties != null) && (orderByProperties.Length > 0))
-                            {
-                                command.CommandText += $" ORDER BY {string.Join(", ", orderByProperties)}";
-                                if (orderByDirection?.StartsWith("d", StringComparison.OrdinalIgnoreCase) == true)
-                                {
-                                    command.CommandText += $" DESC";
+                             if ((resolvedOrderByProperties != null) && (resolvedOrderByProperties.Length > 0))
+                             {
+                                 command.CommandText += $" ORDER BY {string.Join(", ", resolvedOrderByProperties)}";
+                                 if (orderByDirection?.StartsWith("d", StringComparison.OrdinalIgnoreCase) == true)
+                                 {
+                                     command.CommandText += $" DESC";
                                 }
                                 else
                                 {
@@ -877,19 +903,20 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             IDbCommand command = dbConnection.CreateCommand();
                             command.CommandText = $"SELECT {{{string.Join(", ", tableColInfo.Select(p => p.name))}}} FROM {dbTableName}";
 
-                            string joiner = orJoinConditions ? " OR " : " AND ";
-                            string stringComparator = compareStringsWithLike ? " LIKE " : " = ";
-                            bool addedCondition = false;
-                            {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
-
-                            {{{string.Join(_line_2, getConditionLines(true, true, true, true))}}}
-
-                            if ((orderByProperties != null) && (orderByProperties.Length > 0))
-                            {
-                                command.CommandText += $" ORDER BY {string.Join(", ", orderByProperties)}";
-                                if (orderByDirection?.StartsWith("d", StringComparison.OrdinalIgnoreCase) == true)
-                                {
-                                    command.CommandText += $" DESC";
+                             string joiner = orJoinConditions ? " OR " : " AND ";
+                             string stringComparator = compareStringsWithLike ? " LIKE " : " = ";
+                             bool addedCondition = false;
+                             string[]? resolvedOrderByProperties = ResolveOrderByProperties(orderByProperties);
+                             {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
+ 
+                             {{{string.Join(_line_2, getConditionLines(true, true, true, true))}}}
+ 
+                             if ((resolvedOrderByProperties != null) && (resolvedOrderByProperties.Length > 0))
+                             {
+                                 command.CommandText += $" ORDER BY {string.Join(", ", resolvedOrderByProperties)}";
+                                 if (orderByDirection?.StartsWith("d", StringComparison.OrdinalIgnoreCase) == true)
+                                 {
+                                     command.CommandText += $" DESC";
                                 }
                                 else
                                 {
@@ -2231,14 +2258,39 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 
                     [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
                     [global::System.Runtime.CompilerServices.CompilerGeneratedAttribute()]
-                    public partial {{{decForGenCategory(genCategory)}}} {{{className}}}
-                    {
-                        public static string DefaultTableName => "{{{tableName}}}";
-                        public static string SourceTableName => "{{{sourceTableName}}}";
-                    
-                        public static bool CreateTable(IDbConnection dbConnection, string? dbTableName = null)
-                        {
-                            dbTableName ??= "{{{tableName}}}";
+                     public partial {{{decForGenCategory(genCategory)}}} {{{className}}}
+                     {
+                         public static string DefaultTableName => "{{{tableName}}}";
+                         public static string SourceTableName => "{{{sourceTableName}}}";
+                         public static HashSet<string> SQLiteColumnNames { get; } = new HashSet<string>(global::System.StringComparer.OrdinalIgnoreCase)
+                         {
+                             {{{string.Join(_comma_line_5, tableColInfo.Select(c => $"\"{c.name}\""))}}}
+                         };
+
+                         private static string[]? ResolveOrderByProperties(string[]? orderByProperties)
+                         {
+                             if ((orderByProperties == null) || (orderByProperties.Length == 0))
+                             {
+                                 return null;
+                             }
+
+                             List<string> resolvedOrderByProperties = new(orderByProperties.Length);
+                             foreach (string orderByProperty in orderByProperties)
+                             {
+                                 if (!string.IsNullOrWhiteSpace(orderByProperty) && SQLiteColumnNames.Contains(orderByProperty))
+                                 {
+                                     resolvedOrderByProperties.Add(orderByProperty);
+                                 }
+                             }
+
+                             return resolvedOrderByProperties.Count > 0
+                                 ? resolvedOrderByProperties.ToArray()
+                                 : null;
+                         }
+                     
+                         public static bool CreateTable(IDbConnection dbConnection, string? dbTableName = null)
+                         {
+                             dbTableName ??= "{{{tableName}}}";
 
                             IDbCommand command = dbConnection.CreateCommand();
                             command.CommandText = $"""
@@ -2326,12 +2378,13 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             string[]? orderByProperties = null,
                             string? orderByDirection = null)
                         {
-                            dbTableName ??= "{{{tableName}}}";
-
-                            List<{{{className}}}> results = new();
-
-                            IDbCommand command = dbConnection.CreateCommand();
-                            command.CommandText = $"SELECT {{{string.Join(", ", tableColInfo.Select(p => p.name))}}} FROM {dbTableName}";
+                             dbTableName ??= "{{{tableName}}}";
+ 
+                             List<{{{className}}}> results = new();
+                             string[]? resolvedOrderByProperties = ResolveOrderByProperties(orderByProperties);
+ 
+                             IDbCommand command = dbConnection.CreateCommand();
+                             command.CommandText = $"SELECT {{{string.Join(", ", tableColInfo.Select(p => p.name))}}} FROM {dbTableName}";
                     
                             bool addedCondition = false;
                             int index = 0;
@@ -2349,12 +2402,12 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                 }
                             }
                     
-                            if ((orderByProperties != null) && (orderByProperties.Length > 0))
-                            {
-                                command.CommandText += $" ORDER BY {string.Join(", ", orderByProperties)}";
-                                if (orderByDirection?.StartsWith("d", StringComparison.OrdinalIgnoreCase) == true)
-                                {
-                                    command.CommandText += $" DESC";
+                             if ((resolvedOrderByProperties != null) && (resolvedOrderByProperties.Length > 0))
+                             {
+                                 command.CommandText += $" ORDER BY {string.Join(", ", resolvedOrderByProperties)}";
+                                 if (orderByDirection?.StartsWith("d", StringComparison.OrdinalIgnoreCase) == true)
+                                 {
+                                     command.CommandText += $" DESC";
                                 }
                                 else
                                 {
