@@ -18,6 +18,10 @@ public class LightSQLiteGenerator_FtsTests
         source.ShouldContain("RawHtml UNINDEXED");
         source.ShouldContain("MATCH $matchTerm{index}");
         source.ShouldContain("matchParam.ParameterName = $\"$matchTerm{index}\"");
+        source.ShouldContain("public static HashSet<string> SQLiteColumnNames");
+        source.ShouldContain("\"Title\"");
+        source.ShouldContain("\"RawHtml\"");
+        source.ShouldContain("ResolveOrderByProperties");
         source.ShouldContain("StripHtml(");
     }
 

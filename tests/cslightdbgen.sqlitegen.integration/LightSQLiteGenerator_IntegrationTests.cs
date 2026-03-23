@@ -58,9 +58,28 @@ public class LightSQLiteGenerator_IntegrationTests
             orderByDirection: "asc",
             SegmentKeyValues: new List<int> { 10, 20, 30 });
         list.ShouldNotBeEmpty();
+        Customer.SQLiteColumnNames.ShouldContain("CustomerId");
+        Customer.SQLiteColumnNames.ShouldContain("Name");
+
+        var filteredOrderedList = Customer.SelectList(
+            db,
+            orderByProperties: new[] { "MissingColumn", "Name" },
+            orderByDirection: "desc");
+        filteredOrderedList.Select(c => c.Name).ToList()
+            .ShouldBe(filteredOrderedList.Select(c => c.Name).OrderByDescending(name => name).ToList());
+
+        Customer.SelectList(db, orderByProperties: new[] { "MissingColumn" }).ShouldNotBeEmpty();
 
         var enumerable = Customer.SelectEnumerable(db, resultLimit: 3).ToList();
         enumerable.Count.ShouldBe(3);
+
+        var filteredEnumerable = Customer.SelectEnumerable(
+            db,
+            orderByProperties: new[] { "MissingColumn", "CustomerId" },
+            orderByDirection: "desc",
+            resultLimit: 3).ToList();
+        filteredEnumerable.Select(c => c.CustomerId).ToList()
+            .ShouldBe(filteredEnumerable.Select(c => c.CustomerId).OrderByDescending(id => id).ToList());
 
         var dict = Customer.SelectDict(db, Age: 20, AgeOperator: ">=");
         dict.ShouldNotBeEmpty();
@@ -149,9 +168,24 @@ public class LightSQLiteGenerator_IntegrationTests
         var exactMatches = ArticleSearch.Select(db, new List<string> { "alpha" });
         exactMatches.ShouldNotBeEmpty();
         ArticleSearch.SelectCount(db, new List<string> { "alpha" }).ShouldBeGreaterThan(0);
+        ArticleSearch.SQLiteColumnNames.ShouldContain("Title");
+        ArticleSearch.SQLiteColumnNames.ShouldContain("RawHtml");
 
         db.Select<ArticleSearch>(new List<string> { "beta" }).ShouldNotBeEmpty();
         db.SelectCount<ArticleSearch>(new List<string> { "beta" }).ShouldBeGreaterThan(0);
+
+        var filteredFtsResults = ArticleSearch.Select(
+            db,
+            new List<string> { "entry" },
+            orderByProperties: new[] { "MissingColumn", "Title" },
+            orderByDirection: "desc");
+        filteredFtsResults.Select(a => a.Title).ToList()
+            .ShouldBe(filteredFtsResults.Select(a => a.Title).OrderByDescending(title => title).ToList());
+
+        ArticleSearch.Select(
+            db,
+            new List<string> { "entry" },
+            orderByProperties: new[] { "MissingColumn" }).ShouldNotBeEmpty();
 
         ArticleSearch.CreateTable(db, "article_search_clean").ShouldBeTrue();
         ArticleSearch.Populate(
