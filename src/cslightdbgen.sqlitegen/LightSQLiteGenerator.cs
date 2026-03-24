@@ -2008,6 +2008,10 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             ? ftsTableArgs[1].Value?.ToString() ?? (className + "_fts")
             : (className + "_fts");
 
+        string? tokenizer = ftsTableArgs.Count > 2
+            ? ftsTableArgs[2].Value?.ToString()
+            : null;
+
         List<string> createColLines = [];
         List<string> createForeignKeyLines = [];
         List<TableColInfoRec> tableColInfo = [];
@@ -2295,7 +2299,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             IDbCommand command = dbConnection.CreateCommand();
                             command.CommandText = $"""
                                 CREATE VIRTUAL TABLE IF NOT EXISTS {dbTableName} using fts5 (
-                                    {{{string.Join(_comma_line_4, createColLines)}}}
+                                    {{{string.Join(_comma_line_4, createColLines)}}}{{{(tokenizer != null ? $",\n                tokenize='{tokenizer}'" : "")}}}
                                 )
                                 """;
 

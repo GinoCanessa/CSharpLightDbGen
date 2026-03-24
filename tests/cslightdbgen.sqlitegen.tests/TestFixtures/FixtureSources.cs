@@ -142,4 +142,19 @@ public partial class FtsEntity
     public string? RawHtml { get; set; }
 }
 """;
+
+    public const string FtsTokenizerFixture = """
+using CsLightDbGen.SQLiteGenerator;
+
+namespace CsLightDbGen.SQLiteGenerator;
+
+[LdgSQLiteFtsTable("source_table", tokenizer: "porter ascii")]
+public partial class FtsTokenizerEntity
+{
+    public string Title { get; set; } = string.Empty;
+
+    [LdgSQLiteFtsUnindexed]
+    public string? RawHtml { get; set; }
+}
+""";
 }

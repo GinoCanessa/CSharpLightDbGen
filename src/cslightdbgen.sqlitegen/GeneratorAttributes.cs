@@ -116,11 +116,13 @@ public class GeneratorAttributes
             {
                 public string? TableName { get; set; }
                 public string? SourceTableName { get; set; }
+                public string? Tokenizer { get; set; }
         
-                public {{{_ldgSQLiteFtsTable}}}(string sourceTable, string? tableName = null)
+                public {{{_ldgSQLiteFtsTable}}}(string sourceTable, string? tableName = null, string? tokenizer = null)
                 {
                     SourceTableName = sourceTable;
                     TableName = tableName == null ? (sourceTable + "_fts") : tableName;
+                    Tokenizer = tokenizer;
                 }
             }
         
