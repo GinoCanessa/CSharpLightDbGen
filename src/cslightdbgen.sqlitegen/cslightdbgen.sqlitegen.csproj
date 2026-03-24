@@ -9,14 +9,12 @@
 		<EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
 		<IncludeBuildOutput>false</IncludeBuildOutput>
 		<IsRoslynComponent>true</IsRoslynComponent>
-		<TargetFrameworks>netstandard2.0</TargetFrameworks>
+		<NoWarn>$(NoWarn);NU5128</NoWarn>
 
 		<!-- NuGet metadata -->
 		<PackageOutputPath>..\..\nupkg</PackageOutputPath>
 		<IsPackable>true</IsPackable>
-		<DebugSymbols>true</DebugSymbols>
-		<IncludeSymbols>true</IncludeSymbols>
-		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
+		<DebugType>embedded</DebugType>
 		<Deterministic>true</Deterministic>
 		<ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
 	</PropertyGroup>
