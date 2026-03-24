@@ -24,5 +24,6 @@ jobs:
     - name: Build and Publish
       run: |
         dotnet restore src/cslightdbgen.sqlitegen/cslightdbgen.sqlitegen.csproj
-        dotnet pack -c Release ./src/cslightdbgen.sqlitegen/cslightdbgen.sqlitegen.csproj -o ./nupkg
+        dotnet build -c Release ./src/cslightdbgen.sqlitegen/cslightdbgen.sqlitegen.csproj
+        dotnet pack -c Release --no-build ./src/cslightdbgen.sqlitegen/cslightdbgen.sqlitegen.csproj -o ./nupkg
         dotnet nuget push ./nupkg/*.nupkg --api-key ${{ secrets.GINOC_NUGET }} --source https://api.nuget.org/v3/index.json

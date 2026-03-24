@@ -32,4 +32,32 @@ public class LightSQLiteGenerator_FtsTests
 
         run.OutputCompilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ShouldBeEmpty();
     }
+
+    [Fact]
+    public void FtsPath_WithTokenizer_IncludesTokenizeClause()
+    {
+        var run = GeneratorTestHost.Run(FixtureSources.FtsTokenizerFixture);
+        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "FtsTokenizerEntitySQLite.g.cs");
+
+        source.ShouldContain("CREATE VIRTUAL TABLE IF NOT EXISTS");
+        source.ShouldContain("using fts5");
+        source.ShouldContain("tokenize='porter ascii'");
+    }
+
+    [Fact]
+    public void FtsPath_WithoutTokenizer_DoesNotIncludeTokenizeClause()
+    {
+        var run = GeneratorTestHost.Run(FixtureSources.FtsFixture);
+        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "FtsEntitySQLite.g.cs");
+
+        source.ShouldNotContain("tokenize=");
+    }
+
+    [Fact]
+    public void CompileContract_FtsTokenizerFixture_HasNoErrors()
+    {
+        var run = GeneratorTestHost.Run(FixtureSources.FtsTokenizerFixture);
+
+        run.OutputCompilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ShouldBeEmpty();
+    }
 }

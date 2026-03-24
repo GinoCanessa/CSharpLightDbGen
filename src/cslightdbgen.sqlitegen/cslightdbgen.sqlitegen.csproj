@@ -10,6 +10,15 @@
 		<IncludeBuildOutput>false</IncludeBuildOutput>
 		<IsRoslynComponent>true</IsRoslynComponent>
 		<TargetFrameworks>netstandard2.0</TargetFrameworks>
+
+		<!-- NuGet metadata -->
+		<PackageOutputPath>..\..\nupkg</PackageOutputPath>
+		<IsPackable>true</IsPackable>
+		<DebugSymbols>true</DebugSymbols>
+		<IncludeSymbols>true</IncludeSymbols>
+		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
+		<Deterministic>true</Deterministic>
+		<ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
 	</PropertyGroup>
 
 	<ItemGroup>

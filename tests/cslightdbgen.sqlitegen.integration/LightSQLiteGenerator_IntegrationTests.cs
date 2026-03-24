@@ -203,6 +203,25 @@ public class LightSQLiteGenerator_IntegrationTests
         ArticleSearch.DropTable(db, "article_search_clean").ShouldBeTrue();
     }
 
+    [Fact]
+    public void FtsModel_WithTokenizer_CreatesAndSearches()
+    {
+        using var db = OpenInMemory();
+
+        CreateArticleSource(db);
+
+        ArticleSearchPorter.CreateTable(db).ShouldBeTrue();
+        ArticleSearchPorter.Populate(db).ShouldBe(3);
+
+        ArticleSearchPorter.Select(db, new List<string> { "alpha" }).ShouldNotBeEmpty();
+        ArticleSearchPorter.SelectCount(db, new List<string> { "alpha" }).ShouldBeGreaterThan(0);
+
+        // Porter stemming: "entries" should match "entry"
+        ArticleSearchPorter.Select(db, new List<string> { "entries" }).ShouldNotBeEmpty();
+
+        ArticleSearchPorter.DropTable(db).ShouldBeTrue();
+    }
+
     private static SqliteConnection OpenInMemory()
     {
         var connection = new SqliteConnection("Data Source=:memory:");

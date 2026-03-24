@@ -38,3 +38,14 @@ public partial class ArticleSearch
     [LdgSQLiteFtsUnindexed]
     public string? RawHtml { get; set; }
 }
+
+[LdgSQLiteFtsTable("article_source", tokenizer: "porter ascii")]
+public partial class ArticleSearchPorter
+{
+    public string Title { get; set; } = string.Empty;
+
+    public string Body { get; set; } = string.Empty;
+
+    [LdgSQLiteFtsUnindexed]
+    public string? RawHtml { get; set; }
+}
