@@ -21,6 +21,7 @@ This document summarizes the generated API surface developers should expect for 
 - `LdgSQLiteForeignKey(string? referenceTable = null, string? referenceColumn = null, string? modelTypeName = null)`
 - `LdgSQLiteIgnore()`
 - `LdgSQLiteUnique()`
+- `LdgSQLiteMultiSelect()`
 - `LdgSQLiteFtsUnindexed()`
 
 ## Standard Table Model APIs (`[LdgSQLiteTable]`)

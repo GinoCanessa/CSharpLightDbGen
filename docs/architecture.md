@@ -30,6 +30,7 @@ Provides attribute source text injected into consuming compilations:
 - `LdgSQLiteForeignKey`
 - `LdgSQLiteIgnore`
 - `LdgSQLiteUnique`
+- `LdgSQLiteMultiSelect`
 - `LdgSQLiteFtsTable`
 - `LdgSQLiteFtsUnindexed`
 
