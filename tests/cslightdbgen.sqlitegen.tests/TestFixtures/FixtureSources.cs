@@ -46,6 +46,28 @@ public sealed class MetaTag
 }
 """;
 
+    public const string MultiSelectFixture = """
+using System.Collections.Generic;
+using CsLightDbGen.SQLiteGenerator;
+
+namespace CsLightDbGen.SQLiteGenerator;
+
+[LdgSQLiteTable("MultiSelectTargets")]
+public partial class MultiSelectTarget
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+
+    [LdgSQLiteMultiSelect]
+    public string Slug { get; set; } = string.Empty;
+
+    public int? ParentKey { get; set; }
+
+    [LdgSQLiteMultiSelect]
+    public List<string> Tags { get; set; } = new();
+}
+""";
+
     public const string TableWithIndexFixture = """
 using CsLightDbGen.SQLiteGenerator;
 

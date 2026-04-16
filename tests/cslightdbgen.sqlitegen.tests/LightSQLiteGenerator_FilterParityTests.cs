@@ -27,7 +27,7 @@ public class LightSQLiteGenerator_FilterParityTests
         var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntitySQLite.g.cs");
 
         source.ShouldContain("bool? OptionalScoreIsNull = null");
-        source.ShouldContain("List<int>? ParentKeyValues = null");
+        source.ShouldContain("IEnumerable<int>? ParentKeyValues = null");
         source.ShouldContain("string ParentKeyOperator");
         source.ShouldContain("getNumericOperator(ParentKeyOperator)");
         source.ShouldContain("ParentKey IN ");

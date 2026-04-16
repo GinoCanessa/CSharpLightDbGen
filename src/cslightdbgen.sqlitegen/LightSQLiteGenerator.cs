@@ -308,6 +308,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         bool useJson,
         bool isArray,
         bool isUnique,
+        bool isMultiSelect = false,
         string? foreignTable = null,
         string? foreignColumn = null,
         string? foreignModelType = null);
@@ -399,6 +400,8 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             }
 
             bool isUnique = pds.AttributeLists.Any(al => al.Attributes.Any(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteUnique));
+
+            bool hasMultiSelectAttr = pds.AttributeLists.Any(al => al.Attributes.Any(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteMultiSelect));
 
             // check for any kind of non-scalar type
             bool memberIsNonScalar = memberType.IsArray || (memberType.IsGenericType && typeof(IEnumerable<object>).IsAssignableFrom(memberType));
@@ -499,6 +502,14 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
             bool useJson = !memberIsEnum && !_sqliteTypeMap.ContainsKey(propTypeName);
 
+            // isMultiSelect enables the "{Name}Values" IEnumerable<T> IN-clause parameter on
+            // filter/delete methods. Triggers: explicit [LdgSQLiteMultiSelect] attribute, a
+            // primary key ([LdgSQLiteKey]), or the legacy name-ends-with-"Key" heuristic.
+            // Non-scalar / JSON / array columns are excluded.
+            bool isMultiSelect =
+                !memberIsNonScalar &&
+                (hasMultiSelectAttr || isPrimaryKey || propName.EndsWith("Key"));
+
             // add our column line
             createColLines.Add(
                 $"{pds.Identifier.ToString()} {getSqlType(propTypeName, memberIsEnum, useJson, memberIsNonScalar)}" +
@@ -552,6 +563,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     useJson,
                     memberIsNonScalar,
                     isUnique,
+                    isMultiSelect,
                     foreignTable,
                     foreignColumn,
                     foreignModelType));
@@ -570,6 +582,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     useJson,
                     memberIsNonScalar,
                         isUnique,
+                        isMultiSelect,
                         foreignTable,
                         foreignColumn,
                         foreignModelType));
@@ -595,6 +608,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     useJson,
                     memberIsNonScalar,
                     isUnique,
+                    isMultiSelect,
                     foreignTable,
                     foreignColumn,
                     foreignModelType));
@@ -619,6 +633,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     useJson,
                     memberIsNonScalar,
                         isUnique,
+                        isMultiSelect,
                         foreignTable,
                         foreignColumn,
                         foreignModelType));
@@ -654,6 +669,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     useJson,
                     memberIsNonScalar,
                     isUnique,
+                    isMultiSelect,
                     foreignTable,
                     foreignColumn,
                     foreignModelType));
@@ -1678,9 +1694,9 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     yield return $"bool? {rec.name}IsNull = null";
                 }
 
-                if (allowKeysIn && (!rec.isArray) && rec.name.EndsWith("Key"))
+                if (allowKeysIn && rec.isMultiSelect)
                 {
-                    yield return $"List<{rec.propType}>? {rec.name}Values = null";
+                    yield return $"IEnumerable<{rec.propType}>? {rec.name}Values = null";
                 }
             }
         }
@@ -1706,7 +1722,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     yield return $"{rec.name}IsNull";
                 }
 
-                if (allowKeysIn && (!rec.isArray) && rec.name.EndsWith("Key"))
+                if (allowKeysIn && rec.isMultiSelect)
                 {
                     yield return $"{rec.name}Values";
                 }
@@ -1807,37 +1823,41 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     yield return string.Empty;
                 }
 
-                if (allowKeysIn && (!rec.isArray) && rec.name.EndsWith("Key"))
+                if (allowKeysIn && rec.isMultiSelect)
                 {
-                    yield return $"if (({rec.name}Values is not null) && ({rec.name}Values.Count != 0))";
+                    yield return $"if ({rec.name}Values is not null)";
                     yield return "{";
+                    yield return $"    List<{rec.propType}> {rec.name}ValuesList = {rec.name}Values as List<{rec.propType}> ?? new List<{rec.propType}>({rec.name}Values);";
+                    yield return $"    if ({rec.name}ValuesList.Count != 0)";
+                    yield return "    {";
 
                     if (allowsOrJoining)
                     {
-                        yield return $$$"""    command.CommandText += (addedCondition ? $" {joiner} " : " WHERE ") + $"{{{rec.name}}} IN ";""";
+                        yield return $$$"""        command.CommandText += (addedCondition ? $" {joiner} " : " WHERE ") + $"{{{rec.name}}} IN ";""";
                     }
                     else
                     {
-                        yield return $$$"""    command.CommandText += (addedCondition ? " AND " : " WHERE ") + $"{{{rec.name}}} IN ";""";
+                        yield return $$$"""        command.CommandText += (addedCondition ? " AND " : " WHERE ") + $"{{{rec.name}}} IN ";""";
                     }
 
-                    yield return "    addedCondition = true;";
-                    yield return "    List<string> vParamNames = new();";
+                    yield return "        addedCondition = true;";
+                    yield return "        List<string> vParamNames = new();";
                     yield return string.Empty;
 
-                    yield return $"    for (int vIndex = 0; vIndex < {rec.name}Values.Count; vIndex++)";
-                    yield return "    {";
-                    yield return $$$"""        string vParamName = "{{{rec.name}}}Param" + vIndex.ToString();""";
-                    yield return "        vParamNames.Add(\"@\" + vParamName);";
+                    yield return $"        for (int vIndex = 0; vIndex < {rec.name}ValuesList.Count; vIndex++)";
+                    yield return "        {";
+                    yield return $$$"""            string vParamName = "{{{rec.name}}}Param" + vIndex.ToString();""";
+                    yield return "            vParamNames.Add(\"@\" + vParamName);";
                     yield return string.Empty;
-                    yield return "        IDbDataParameter vp = command.CreateParameter();";
-                    yield return "        vp.ParameterName = vParamName;";
-                    yield return $"        vp.Value = {rec.name}Values[vIndex];";
-                    yield return "        command.Parameters.Add(vp);";
+                    yield return "            IDbDataParameter vp = command.CreateParameter();";
+                    yield return "            vp.ParameterName = vParamName;";
+                    yield return $"            vp.Value = {rec.name}ValuesList[vIndex];";
+                    yield return "            command.Parameters.Add(vp);";
+                    yield return "        }";
+                    yield return string.Empty;
+
+                    yield return "        command.CommandText += \"(\" + string.Join(',', vParamNames) + \")\";";
                     yield return "    }";
-                    yield return string.Empty;
-
-                    yield return "    command.CommandText += \"(\" + string.Join(',', vParamNames) + \")\";";
                     yield return "}";
                 }
             }
