@@ -107,7 +107,7 @@ customer.Delete(db);
 - Filter by any property via named parameters
 - Numeric operator filters (`Age`, `AgeOperator: ">="`)
 - Nullable tri-state filters (`ScoreIsNull: true`)
-- `IN`-list filters for `*Key` properties (`SegmentKeyValues: [1, 2, 3]`)
+- `IN` / `NOT IN` list filters (`SegmentKeyValues: [1, 2, 3]`, `StatusNotInValues: ["complete", "failed"]`) — generated for any property marked `[LdgSQLiteMultiSelect]`, the primary key, or (legacy heuristic) a name ending in `Key`
 - `LIKE` matching for strings (`compareStringsWithLike: true`)
 - Paging (`resultLimit`, `resultOffset`) and ordering (`orderByProperties`, `orderByDirection`)
 - Unknown `orderByProperties` values are ignored; generated models expose `SQLiteColumnNames` for the valid SQLite column names

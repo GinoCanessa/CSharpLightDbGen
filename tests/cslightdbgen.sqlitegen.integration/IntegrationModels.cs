@@ -39,6 +39,7 @@ public partial class Job
     [LdgSQLiteDefault(0)]
     public int RetryCount { get; set; }
 
+    [LdgSQLiteMultiSelect]
     [LdgSQLiteDefault("queued")]
     public string Status { get; set; } = string.Empty;
 

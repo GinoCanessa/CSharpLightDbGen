@@ -624,6 +624,37 @@ public class LightSQLiteGenerator_IntegrationTests
         Customer.DropTable(db).ShouldBeTrue();
     }
 
+    [Fact]
+    public void MultiSelect_InAndNotIn_FilterOnNonKeyScalarColumn()
+    {
+        using var db = OpenInMemory();
+        Job.CreateTable(db).ShouldBeTrue();
+
+        Job.Insert(db, new Job { JobName = "a", Status = "queued" });
+        Job.Insert(db, new Job { JobName = "b", Status = "running" });
+        Job.Insert(db, new Job { JobName = "c", Status = "complete" });
+        Job.Insert(db, new Job { JobName = "d", Status = "failed" });
+        Job.Insert(db, new Job { JobName = "e", Status = "queued" });
+
+        // IN over a non-key scalar column.
+        List<Job> active = Job.SelectList(db, StatusValues: new[] { "queued", "running" });
+        active.Select(j => j.JobName).OrderBy(n => n).ToList().ShouldBe(new List<string> { "a", "b", "e" });
+
+        // NOT IN over the same non-key scalar column.
+        List<Job> notTerminal = Job.SelectList(db, StatusNotInValues: new[] { "complete", "failed" });
+        notTerminal.Select(j => j.JobName).OrderBy(n => n).ToList().ShouldBe(new List<string> { "a", "b", "e" });
+
+        // IN + NOT IN combined on the same column must not collide on bound parameter names.
+        List<Job> queuedOnly = Job.SelectList(db, StatusValues: new[] { "queued", "running" }, StatusNotInValues: new[] { "running" });
+        queuedOnly.Select(j => j.JobName).OrderBy(n => n).ToList().ShouldBe(new List<string> { "a", "e" });
+
+        // The extension wrapper threads the new NOT IN argument.
+        List<Job> viaExtension = db.SelectList<Job>(StatusNotInValues: new[] { "queued" });
+        viaExtension.Select(j => j.JobName).OrderBy(n => n).ToList().ShouldBe(new List<string> { "b", "c", "d" });
+
+        Job.DropTable(db).ShouldBeTrue();
+    }
+
     private static SqliteConnection OpenInMemory()
     {
         var connection = new SqliteConnection("Data Source=:memory:");

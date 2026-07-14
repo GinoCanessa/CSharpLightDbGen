@@ -17,6 +17,37 @@ public class LightSQLiteGenerator_MultiSelectTests
     }
 
     [Fact]
+    public void ExplicitAttribute_EmitsNotInValuesParameter_OnNonKeyProperty()
+    {
+        GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.MultiSelectFixture);
+        string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MultiSelectTargetSQLite.g.cs");
+
+        source.ShouldContain("IEnumerable<string>? SlugNotInValues = null");
+        source.ShouldContain("Slug NOT IN ");
+    }
+
+    [Fact]
+    public void NotIn_UsesDistinctParameterNames_FromIn()
+    {
+        GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.MultiSelectFixture);
+        string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MultiSelectTargetSQLite.g.cs");
+
+        // NOT IN binds its own parameters so an IN + NOT IN filter on the same column cannot
+        // collide in command.Parameters.
+        source.ShouldContain("SlugNotInParam");
+        source.ShouldContain("SlugNotInValuesList");
+    }
+
+    [Fact]
+    public void NonScalarProperty_WithMultiSelectAttribute_DoesNotEmitNotInValuesParameter()
+    {
+        GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.MultiSelectFixture);
+        string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MultiSelectTargetSQLite.g.cs");
+
+        source.ShouldNotContain("TagsNotInValues");
+    }
+
+    [Fact]
     public void PrimaryKey_EmitsValuesParameter_Automatically()
     {
         var run = GeneratorTestHost.Run(FixtureSources.MultiSelectFixture);

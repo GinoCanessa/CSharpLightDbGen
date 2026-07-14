@@ -145,7 +145,10 @@ For each mapped property the generator emits one or more filter arguments:
 - direct value: `PropertyName`
 - numeric comparator: `PropertyNameOperator` (for numeric/date-like primitives)
 - nullable tri-state: `PropertyNameIsNull` (`true`/`false`/`null`)
-- list `IN` filter: `PropertyNameValues` (generated for non-array properties with names ending in `Key`)
+- list `IN` filter: `PropertyNameValues` (`IEnumerable<T>?`) — emits `PropertyName IN (…)`
+- list `NOT IN` filter: `PropertyNameNotInValues` (`IEnumerable<T>?`) — emits `PropertyName NOT IN (…)`, binding its own distinct parameters so it can be combined with `PropertyNameValues` on the same column
+
+The `Values`/`NotInValues` pair is generated for any **scalar** property marked `[LdgSQLiteMultiSelect]`, the primary key, or (legacy heuristic) a property whose name ends in `Key`. JSON/array/non-scalar columns never receive them. Both accept any `IEnumerable<T>`; a `null` argument (the default) omits the clause, and an empty sequence is a no-op.
 
 ### Supported Numeric Operator Input Aliases
 

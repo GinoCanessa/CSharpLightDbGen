@@ -2363,6 +2363,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 if (allowKeysIn && rec.isMultiSelect)
                 {
                     yield return $"IEnumerable<{rec.propType}>? {rec.name}Values = null";
+                    yield return $"IEnumerable<{rec.propType}>? {rec.name}NotInValues = null";
                 }
             }
         }
@@ -2391,6 +2392,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 if (allowKeysIn && rec.isMultiSelect)
                 {
                     yield return $"{rec.name}Values";
+                    yield return $"{rec.name}NotInValues";
                 }
             }
         }
@@ -2518,6 +2520,43 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     yield return "            IDbDataParameter vp = command.CreateParameter();";
                     yield return "            vp.ParameterName = vParamName;";
                     yield return $"            vp.Value = {rec.name}ValuesList[vIndex];";
+                    yield return "            command.Parameters.Add(vp);";
+                    yield return "        }";
+                    yield return string.Empty;
+
+                    yield return "        command.CommandText += \"(\" + string.Join(',', vParamNames) + \")\";";
+                    yield return "    }";
+                    yield return "}";
+
+                    yield return string.Empty;
+
+                    yield return $"if ({rec.name}NotInValues is not null)";
+                    yield return "{";
+                    yield return $"    List<{rec.propType}> {rec.name}NotInValuesList = {rec.name}NotInValues as List<{rec.propType}> ?? new List<{rec.propType}>({rec.name}NotInValues);";
+                    yield return $"    if ({rec.name}NotInValuesList.Count != 0)";
+                    yield return "    {";
+
+                    if (allowsOrJoining)
+                    {
+                        yield return $$$"""        command.CommandText += (addedCondition ? $" {joiner} " : " WHERE ") + $"{{{rec.name}}} NOT IN ";""";
+                    }
+                    else
+                    {
+                        yield return $$$"""        command.CommandText += (addedCondition ? " AND " : " WHERE ") + $"{{{rec.name}}} NOT IN ";""";
+                    }
+
+                    yield return "        addedCondition = true;";
+                    yield return "        List<string> vParamNames = new();";
+                    yield return string.Empty;
+
+                    yield return $"        for (int vIndex = 0; vIndex < {rec.name}NotInValuesList.Count; vIndex++)";
+                    yield return "        {";
+                    yield return $$$"""            string vParamName = "{{{rec.name}}}NotInParam" + vIndex.ToString();""";
+                    yield return "            vParamNames.Add(\"@\" + vParamName);";
+                    yield return string.Empty;
+                    yield return "            IDbDataParameter vp = command.CreateParameter();";
+                    yield return "            vp.ParameterName = vParamName;";
+                    yield return $"            vp.Value = {rec.name}NotInValuesList[vIndex];";
                     yield return "            command.Parameters.Add(vp);";
                     yield return "        }";
                     yield return string.Empty;
