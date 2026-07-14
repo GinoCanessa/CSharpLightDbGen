@@ -55,22 +55,37 @@ This document summarizes the generated API surface developers should expect for 
 - `compareStringsWithLike`: `false` = `=`, `true` = `LIKE` for string filters.
 - `orderByProperties`, `orderByDirection`: ordering controls (`d*` starts descending).
 - `resultLimit`, `resultOffset`: paging controls for list/enumerable methods.
+- `transaction`: optional `IDbTransaction?`. Enrolls the read in a caller-supplied transaction. When omitted, no explicit `command.Transaction` is set, so any transaction already open on the connection remains in effect for the read.
 
 ## Write Methods
 
-- `Insert(IDbConnection dbConnection, T value, ..., bool ignoreDuplicates = false, bool insertPrimaryKey = false)`
-- `Insert(IDbConnection dbConnection, List<T> values, ..., bool ignoreDuplicates = false, bool insertPrimaryKey = false)`
-- `Insert(IDbConnection dbConnection, IEnumerable<T> values, ..., bool ignoreDuplicates = false, bool insertPrimaryKey = false)`
-- `Update(IDbConnection dbConnection, T value, string? dbTableName = null)`
-- `Update(IDbConnection dbConnection, IEnumerable<T> values, string? dbTableName = null)`
-- `Delete(IDbConnection dbConnection, T value, string? dbTableName = null)`
-- `Delete(IDbConnection dbConnection, IEnumerable<T> values, string? dbTableName = null)`
-- `Delete(IDbConnection dbConnection, ..., [filter params])`
+- `Insert(IDbConnection dbConnection, T value, ..., bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)`
+- `Insert(IDbConnection dbConnection, List<T> values, ..., bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)`
+- `Insert(IDbConnection dbConnection, IEnumerable<T> values, ..., bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)`
+- `Update(IDbConnection dbConnection, T value, string? dbTableName = null, IDbTransaction? transaction = null)`
+- `Update(IDbConnection dbConnection, IEnumerable<T> values, string? dbTableName = null, IDbTransaction? transaction = null)`
+- `Delete(IDbConnection dbConnection, T value, string? dbTableName = null, IDbTransaction? transaction = null)`
+- `Delete(IDbConnection dbConnection, IEnumerable<T> values, string? dbTableName = null, IDbTransaction? transaction = null)`
+- `Delete(IDbConnection dbConnection, ..., [filter params], IDbTransaction? transaction = null)`
 
 ### Insert Options
 
 - `ignoreDuplicates`: emits `INSERT OR IGNORE`.
 - `insertPrimaryKey`: includes PK in insert statement instead of identity behavior.
+
+### Transaction Enrollment
+
+Every read and write method — standard and FTS, static and extension-wrapper — accepts an
+optional trailing `transaction` parameter (`IDbTransaction? transaction = null`):
+
+- **Writes** (`Insert`/`Update`/`Delete`, FTS `Populate`): when a transaction is supplied the
+  method enrolls its command(s) in it and leaves `Commit`/`Rollback` to the caller, so multiple
+  writes compose atomically. When omitted, each write opens, commits, and disposes its own
+  transaction (unchanged auto-commit behavior).
+- **Reads** (`SelectSingle`/`SelectList`/`SelectEnumerable`/`SelectDict`/`SelectCount`, FTS
+  `Select`/`SelectCount`): enroll only when a transaction is supplied. A read that omits the
+  transaction participates in any ambient transaction already open on the connection; pass the
+  transaction explicitly for deterministic behavior.
 
 ## Generated Filter Parameters (Per Property)
 
@@ -104,9 +119,9 @@ Mapped internally to SQL operators:
 
 - `CreateTable(IDbConnection dbConnection, string? dbTableName = null)`
 - `DropTable(IDbConnection dbConnection, string? dbTableName = null)`
-- `Populate(IDbConnection dbConnection, string? dbTableName = null, string? sourceTableName = null, bool sanitizeText = false)`
-- `Select(IDbConnection dbConnection, List<string> matchTerms, string? dbTableName = null, string[]? orderByProperties = null, string? orderByDirection = null)`
-- `SelectCount(IDbConnection dbConnection, List<string> matchTerms, string? dbTableName = null)`
+- `Populate(IDbConnection dbConnection, string? dbTableName = null, string? sourceTableName = null, bool sanitizeText = false, IDbTransaction? transaction = null)`
+- `Select(IDbConnection dbConnection, List<string> matchTerms, string? dbTableName = null, string[]? orderByProperties = null, string? orderByDirection = null, IDbTransaction? transaction = null)`
+- `SelectCount(IDbConnection dbConnection, List<string> matchTerms, string? dbTableName = null, IDbTransaction? transaction = null)`
 
 ### FTS Behaviors
 

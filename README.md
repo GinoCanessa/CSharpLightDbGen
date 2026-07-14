@@ -105,10 +105,12 @@ customer.Delete(db);
 - `LIKE` matching for strings (`compareStringsWithLike: true`)
 - Paging (`resultLimit`, `resultOffset`) and ordering (`orderByProperties`, `orderByDirection`)
 - Unknown `orderByProperties` values are ignored; generated models expose `SQLiteColumnNames` for the valid SQLite column names
+- Optional trailing `transaction` (`IDbTransaction?`) enrolls the read in a caller-supplied transaction. When omitted, the read still honors any ambient transaction already open on the connection; pass the transaction explicitly for deterministic composition.
 
 **Writes:** `Insert`, `Update`, `Delete` — single value, list, or enumerable overloads
 - `ignoreDuplicates` → `INSERT OR IGNORE`
 - `insertPrimaryKey` → include PK in insert
+- Optional trailing `transaction` (`IDbTransaction?`) — when supplied, the write enrolls in the caller's transaction and leaves commit/rollback to the caller so multiple calls compose atomically. When omitted, each write opens and commits its own transaction (auto-commit, unchanged behavior).
 
 **Utilities:** `LoadMaxKey`, `SelectMaxKey`, `SQLiteColumnNames`
 
@@ -119,6 +121,7 @@ customer.Delete(db);
 `CreateTable`, `DropTable`, `Populate`, `Select` (via `MATCH`), `SelectCount`
 - Optional HTML stripping during `Populate(..., sanitizeText: true)`
 - Generated FTS models also expose `SQLiteColumnNames`, and invalid `orderByProperties` values are ignored
+- `Populate`, `Select`, and `SelectCount` accept the same optional trailing `transaction` (`IDbTransaction?`) for transactional composition
 
 ## Full-Text Search Example
 

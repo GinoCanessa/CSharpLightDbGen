@@ -222,6 +222,55 @@ public class LightSQLiteGenerator_IntegrationTests
         ArticleSearchPorter.DropTable(db).ShouldBeTrue();
     }
 
+    [Fact]
+    public void Transaction_Composition_RollbackDiscards_CommitPersists()
+    {
+        using var db = OpenInMemory();
+        Customer.CreateTable(db).ShouldBeTrue();
+
+        // Rollback path: a write enrolled in the caller's transaction is discarded,
+        // yet a read enrolled in the same transaction observes it (read-your-writes).
+        using (IDbTransaction rollbackTxn = db.BeginTransaction())
+        {
+            Customer discarded = NewCustomer("Discarded", 40, 1, 10);
+            Customer.Insert(db, discarded, transaction: rollbackTxn);
+            discarded.CustomerId.ShouldBeGreaterThan(0);
+
+            Customer.SelectCount(db, transaction: rollbackTxn).ShouldBe(1);
+
+            // A read that omits the transaction still auto-enrolls in the connection's
+            // ambient transaction, so it also observes the pending write.
+            Customer.SelectCount(db).ShouldBe(1);
+
+            rollbackTxn.Rollback();
+        }
+
+        Customer.SelectCount(db).ShouldBe(0);
+
+        // Commit path: an enrolled Insert and Update commit atomically together.
+        using (IDbTransaction commitTxn = db.BeginTransaction())
+        {
+            Customer kept = NewCustomer("Kept", 41, 2, 20);
+            Customer.Insert(db, kept, transaction: commitTxn);
+
+            kept.Score = 200;
+            Customer.Update(db, kept, transaction: commitTxn);
+
+            commitTxn.Commit();
+        }
+
+        Customer.SelectCount(db).ShouldBe(1);
+        Customer? keptRow = Customer.SelectSingle(db, Name: "Kept");
+        keptRow.ShouldNotBeNull();
+        keptRow!.Score.ShouldBe(200);
+
+        // No-transaction path: each generated write opens and commits its own transaction.
+        Customer.Insert(db, NewCustomer("Auto", 42, 3, 30));
+        Customer.SelectCount(db).ShouldBe(2);
+
+        Customer.DropTable(db).ShouldBeTrue();
+    }
+
     private static SqliteConnection OpenInMemory()
     {
         var connection = new SqliteConnection("Data Source=:memory:");
