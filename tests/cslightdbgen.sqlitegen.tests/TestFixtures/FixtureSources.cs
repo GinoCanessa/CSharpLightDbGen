@@ -113,6 +113,24 @@ public partial class ManifestEntry
 }
 """;
 
+    public const string CompositePrimaryKeyFixture = """
+using CsLightDbGen.SQLiteGenerator;
+
+namespace CsLightDbGen.SQLiteGenerator;
+
+[LdgSQLiteTable("user_websites")]
+public partial class UserWebsite
+{
+    [LdgSQLiteKey]
+    public int UserId { get; set; }
+
+    [LdgSQLiteKey]
+    public int WebsiteId { get; set; }
+
+    public string Role { get; set; } = string.Empty;
+}
+""";
+
     public const string MultiSelectFixture = """
 using System.Collections.Generic;
 using CsLightDbGen.SQLiteGenerator;

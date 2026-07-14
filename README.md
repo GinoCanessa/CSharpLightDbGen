@@ -82,7 +82,7 @@ customer.Delete(db);
 |---|---|---|
 | `LdgSQLiteTable(tableName?, dynamicTableNames)` | Class | Generates full CRUD/query API for a SQLite table |
 | `LdgSQLiteBaseClass` | Class | Marks a base class whose properties are inherited by table models |
-| `LdgSQLiteKey(autoIncrement)` | Property | Designates the primary key column |
+| `LdgSQLiteKey(autoIncrement)` | Property | Designates a primary key column. Applying it to two or more properties declares a **composite** primary key (emitted as a table-level `PRIMARY KEY (...)` constraint). |
 | `LdgSQLiteForeignKey(refTable?, refColumn?, modelTypeName?, onDelete?, onUpdate?)` | Property | Declares a single-column foreign key. `onDelete`/`onUpdate` accept `LdgSQLiteFkAction` (`NoAction`, `Restrict`, `SetNull`, `SetDefault`, `Cascade`) and emit `ON DELETE`/`ON UPDATE` clauses when non-default. |
 | `LdgSQLiteForeignKeyComposite(columns, refTable, refColumns, onDelete?, onUpdate?)` | Class | Declares a multi-column (composite) foreign key. `AllowMultiple = true`. Same `LdgSQLiteFkAction` referential actions as `LdgSQLiteForeignKey`. |
 | `LdgSQLiteIndex(columns...)` | Class | Emits a composite index on the specified columns |
@@ -119,6 +119,8 @@ customer.Delete(db);
 **Utilities:** `LoadMaxKey`, `SelectMaxKey`, `SQLiteColumnNames`
 
 **Extensions:** convenience methods on `IDbConnection`, model instances, and collections
+
+> **Composite primary keys:** declaring two or more `[LdgSQLiteKey]` properties emits a table-level `PRIMARY KEY (col, ...)` constraint (each key column is `NOT NULL`) instead of an inline single-column directive. Composite-key columns are never auto-incremented, so `Insert` returns `void`, includes every key column in the `INSERT`, and emits no `RETURNING` clause — supply all key values before inserting. `Update`/`Delete`-by-key match on the full key (`col1 = $col1 AND col2 = $col2`). `SelectDict` (which keys the result by a single primary key) is omitted for composite-key tables.
 
 ### FTS Table (`[LdgSQLiteFtsTable]`)
 

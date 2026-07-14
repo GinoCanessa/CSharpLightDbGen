@@ -1,4 +1,4 @@
-﻿using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 using System;
@@ -336,6 +336,36 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         bool pkIsIdentity = false;
         bool anyColIsJson = false;
 
+        // pre-pass: identify composite primary key columns. Composite-ness must be known
+        // before the per-property column loop builds createColLines / TableColInfoRec.isIdentity,
+        // so it cannot be decided retroactively in a single forward pass.
+        List<(string name, string propType)> pkCols = [];
+        foreach (MemberDeclarationSyntax preMember in members)
+        {
+            if (preMember is not PropertyDeclarationSyntax preProp)
+            {
+                continue;
+            }
+
+            if (preProp.AttributeLists.Any(al => al.Attributes.Any(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteIgnore)))
+            {
+                continue;
+            }
+
+            if (preProp.AttributeLists.Any(al => al.Attributes.Any(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteKey)))
+            {
+                string preType = preProp.Type.ToString();
+                if (preType.EndsWith("?"))
+                {
+                    preType = preType.Substring(0, preType.Length - 1);
+                }
+
+                pkCols.Add((preProp.Identifier.ToString(), preType));
+            }
+        }
+
+        bool compositePk = pkCols.Count > 1;
+
         List<string> createColLines = [];
         List<string> createFKLines = [];
         List<TableColInfoRec> tableColInfo = [];
@@ -381,7 +411,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             {
                 pkColName = propName;
                 pkPropType = propTypeName;
-                pkIsIdentity = (propTypeName == "int" || propTypeName == "long");
+                pkIsIdentity = !compositePk && (propTypeName == "int" || propTypeName == "long");
             }
 
             if (isPrimaryKey)
@@ -398,6 +428,10 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                 pkColIndex = tableColInfo.Count;
             }
+
+            // a column is an auto-increment identity only when it is the sole primary key
+            // (composite keys are inserted explicitly and never auto-assigned).
+            bool colIsIdentity = isPrimaryKey && !compositePk && (propTypeName == "int" || propTypeName == "long");
 
             bool isUnique = pds.AttributeLists.Any(al => al.Attributes.Any(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteUnique));
 
@@ -554,9 +588,9 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             // add our column line
             createColLines.Add(
                 $"{pds.Identifier.ToString()} {getSqlType(propTypeName, memberIsEnum, useJson, memberIsNonScalar)}" +
-                $"{(isPrimaryKey ? getPkDirective(pkPropType) : string.Empty)}" +
+                $"{((isPrimaryKey && !compositePk) ? getPkDirective(pkPropType) : string.Empty)}" +
                 $"{(isUnique ? " UNIQUE" : string.Empty)}" +
-                $"{((nullable || isPrimaryKey) ? string.Empty : " NOT NULL")}" +
+                $"{((nullable || (isPrimaryKey && !compositePk)) ? string.Empty : " NOT NULL")}" +
                 $"{defaultClause}");
 
             // check for foreign key property information
@@ -623,7 +657,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     string.Format(readFormat.Remove(0, 6), pds.Identifier.ToString(), "reader", tableColInfo.Count),
                     string.Format(readFormat, pds.Identifier.ToString(), "reader", tableColInfo.Count),
                     isPrimaryKey,
-                    isPrimaryKey && (propTypeName == "int" || propTypeName == "long"),
+                    colIsIdentity,
                     nullable,
                     memberIsEnum,
                     useJson,
@@ -642,7 +676,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     string.Format(readFormat.Remove(0, 6), pds.Identifier.ToString(), "reader", tableColInfo.Count),
                     string.Format(readFormat, pds.Identifier.ToString(), "reader", tableColInfo.Count),
                     isPrimaryKey,
-                    isPrimaryKey && (propTypeName == "int" || propTypeName == "long"),
+                    colIsIdentity,
                     nullable,
                     memberIsEnum,
                     useJson,
@@ -668,7 +702,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                         ? string.Format(_sqliteNullableReadDirectives["enum"], pds.Identifier.ToString(), "reader", tableColInfo.Count, enumTypeName)
                         : string.Format(_sqliteReadDirectives["enum"], pds.Identifier.ToString(), "reader", tableColInfo.Count, enumTypeName),
                     isPrimaryKey,
-                    isPrimaryKey && (propTypeName == "int" || propTypeName == "long"),
+                    colIsIdentity,
                     nullable,
                     memberIsEnum,
                     useJson,
@@ -693,7 +727,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                         ? string.Format(_sqliteNullableReadDirectives["JSON[]"], pds.Identifier.ToString(), "reader", tableColInfo.Count, jsonTypeName)
                         : string.Format(_sqliteReadDirectives["JSON[]"], pds.Identifier.ToString(), "reader", tableColInfo.Count, jsonTypeName),
                     isPrimaryKey,
-                    isPrimaryKey && (propTypeName == "int" || propTypeName == "long"),
+                    colIsIdentity,
                     nullable,
                     memberIsEnum,
                     useJson,
@@ -712,7 +746,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 //     $"// ERROR: could not determine retrieval directive for type {propName}:{propTypeName}",
                 //     $"// ERROR: could not determine retrieval directive for type {propName}:{propTypeName}",
                 //     isPrimaryKey,
-                //     isPrimaryKey && (propTypeName == "int" || propTypeName == "long"),
+                //     colIsIdentity,
                 //     nullable,
                 //     memberIsEnum
                 //     ));
@@ -729,7 +763,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                         ? string.Format(_sqliteNullableReadDirectives["JSON"], pds.Identifier.ToString(), "reader", tableColInfo.Count, jsonTypeName)
                         : string.Format(_sqliteReadDirectives["JSON"], pds.Identifier.ToString(), "reader", tableColInfo.Count, jsonTypeName),
                     isPrimaryKey,
-                    isPrimaryKey && (propTypeName == "int" || propTypeName == "long"),
+                    colIsIdentity,
                     nullable,
                     memberIsEnum,
                     useJson,
@@ -790,6 +824,60 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 createFKLines.Add($"FOREIGN KEY ({string.Join(", ", fkColumns)}) REFERENCES {fkRefTable} ({string.Join(", ", fkRefColumns)}){compositeActions}");
             }
         }
+
+        // WHERE predicate used by the by-key Update/Delete overloads. Composite keys AND-join
+        // every primary-key column; single keys retain the original "col = $col" form.
+        string pkWhereClause = compositePk
+            ? string.Join(" AND ", pkCols.Select(c => $"{c.name} = ${c.name}"))
+            : $"{pkColName} = ${pkColName}";
+
+        // Table constraint lines: composite keys are declared as a trailing PRIMARY KEY (...) constraint
+        // rather than an inline column directive.
+        List<string> createTableLines = [.. createColLines, .. createFKLines];
+        if (compositePk)
+        {
+            createTableLines.Add($"PRIMARY KEY ({string.Join(", ", pkCols.Select(c => c.name))})");
+        }
+
+        // SelectDict keys a dictionary by the single primary key, which has no meaning for a
+        // composite key, so the method is omitted entirely for composite-key tables.
+        string selectDictMethod = compositePk ? string.Empty : $$$""""
+                        public static Dictionary<{{{((pkColName == null) || compositePk ? "int" : pkPropType)}}}, {{{className}}}> SelectDict(
+                            IDbConnection dbConnection, 
+                            string? dbTableName = null, 
+                            bool orJoinConditions = false,
+                            bool compareStringsWithLike = false,
+                            {{{string.Join(", ", getFnFilterParams(true, true))}}}, IDbTransaction? transaction = null)
+                        {
+                            dbTableName ??= "{{{tableName}}}";
+                    
+                            Dictionary<{{{((pkColName == null) || compositePk ? "int" : pkPropType)}}}, {{{className}}}> results = new();
+                    
+                            IDbCommand command = dbConnection.CreateCommand();
+                            if (transaction != null) command.Transaction = transaction;
+                            command.CommandText = $"SELECT {{{string.Join(", ", tableColInfo.Select(p => p.name))}}} FROM {dbTableName}";
+                    
+                            string joiner = orJoinConditions ? " OR " : " AND ";
+                            string stringComparator = compareStringsWithLike ? " LIKE " : " = ";
+                            bool addedCondition = false;
+                            {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
+                                        
+                            {{{string.Join(_line_2, getConditionLines(true, true, true, true))}}}
+
+                            {{{(pkColName == null ? "int rowId = 0;" : string.Empty)}}}
+                            using (IDataReader reader = command.ExecuteReader())
+                            {
+                                while (reader.Read())
+                                {
+                                    results.Add({{{(pkColName == null ? "rowId++" : tableColInfo[(int)pkColIndex!].shortRead)}}}, new()
+                                    {
+                                        {{{string.Join(_comma_line_5, tableColInfo.Select(p => p.readerDirective))}}}
+                                    });
+                                }
+                            }
+                            return results;
+                        }
+                        """";
 
         context.AddSource(
             $"{className}{"SQLite"}.g.cs",
@@ -855,7 +943,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             IDbCommand command = dbConnection.CreateCommand();
                             command.CommandText = $"""
                                 CREATE TABLE IF NOT EXISTS {dbTableName} (
-                                    {{{string.Join(_comma_line_4, [.. createColLines, .. createFKLines])}}}
+                                    {{{string.Join(_comma_line_4, createTableLines)}}}
                                 )
                                 """;
 
@@ -885,18 +973,18 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             dbTableName ??= "{{{tableName}}}";
                     
                             IDbCommand command = dbConnection.CreateCommand();
-                            command.CommandText = $"SELECT MAX({{{(pkColName == null ? "ROWID" : pkColName)}}}) FROM {dbTableName}";
+                            command.CommandText = $"SELECT MAX({{{((pkColName == null) || compositePk ? "ROWID" : pkColName)}}}) FROM {dbTableName}";
 
                             try
                             {
                                 object? result = command.ExecuteScalar();
-                                if (result is {{{(pkColName == null ? "int" : pkPropType)}}} value)
+                                if (result is {{{((pkColName == null) || compositePk ? "int" : pkPropType)}}} value)
                                 {
                                     _indexValue = value;
                                 }
                                 else if (result is long l)
                                 {
-                                    _indexValue = {{{((pkColName == null) || (pkPropType == "int") ? "Convert.ToInt32(l)" : "null")}}};
+                                    _indexValue = {{{((pkColName == null) || compositePk || (pkPropType == "int") ? "Convert.ToInt32(l)" : "null")}}};
                                 }
                             }
                             catch (Exception)
@@ -905,21 +993,21 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             }
                         }
 
-                        public static {{{(pkColName == null ? "int" : pkPropType)}}}? SelectMaxKey(IDbConnection dbConnection, string? dbTableName = null, int defaultValue = 0)
+                        public static {{{((pkColName == null) || compositePk ? "int" : pkPropType)}}}? SelectMaxKey(IDbConnection dbConnection, string? dbTableName = null, int defaultValue = 0)
                         {
                             dbTableName ??= "{{{tableName}}}";
                     
                             IDbCommand command = dbConnection.CreateCommand();
-                            command.CommandText = $"SELECT MAX({{{(pkColName == null ? "ROWID" : pkColName)}}}) FROM {dbTableName}";
+                            command.CommandText = $"SELECT MAX({{{((pkColName == null) || compositePk ? "ROWID" : pkColName)}}}) FROM {dbTableName}";
 
                             object? result = command.ExecuteScalar();
-                            if (result is {{{(pkColName == null ? "int" : pkPropType)}}} value)
+                            if (result is {{{((pkColName == null) || compositePk ? "int" : pkPropType)}}} value)
                             {
                                 return value;
                             }
                             else if (result is long l)
                             {
-                                return {{{((pkColName == null) || (pkPropType == "int") ? "Convert.ToInt32(l)" : "null")}}};
+                                return {{{((pkColName == null) || compositePk || (pkPropType == "int") ? "Convert.ToInt32(l)" : "null")}}};
                             }
 
                             return null;
@@ -1081,41 +1169,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             yield break;
                         }
 
-                        public static Dictionary<{{{(pkColName == null ? "int" : pkPropType)}}}, {{{className}}}> SelectDict(
-                            IDbConnection dbConnection, 
-                            string? dbTableName = null, 
-                            bool orJoinConditions = false,
-                            bool compareStringsWithLike = false,
-                            {{{string.Join(", ", getFnFilterParams(true, true))}}}, IDbTransaction? transaction = null)
-                        {
-                            dbTableName ??= "{{{tableName}}}";
-                    
-                            Dictionary<{{{(pkColName == null ? "int" : pkPropType)}}}, {{{className}}}> results = new();
-                    
-                            IDbCommand command = dbConnection.CreateCommand();
-                            if (transaction != null) command.Transaction = transaction;
-                            command.CommandText = $"SELECT {{{string.Join(", ", tableColInfo.Select(p => p.name))}}} FROM {dbTableName}";
-                    
-                            string joiner = orJoinConditions ? " OR " : " AND ";
-                            string stringComparator = compareStringsWithLike ? " LIKE " : " = ";
-                            bool addedCondition = false;
-                            {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
-                                        
-                            {{{string.Join(_line_2, getConditionLines(true, true, true, true))}}}
-
-                            {{{(pkColName == null ? "int rowId = 0;" : string.Empty)}}}
-                            using (IDataReader reader = command.ExecuteReader())
-                            {
-                                while (reader.Read())
-                                {
-                                    results.Add({{{(pkColName == null ? "rowId++" : tableColInfo[(int)pkColIndex!].shortRead)}}}, new()
-                                    {
-                                        {{{string.Join(_comma_line_5, tableColInfo.Select(p => p.readerDirective))}}}
-                                    });
-                                }
-                            }
-                            return results;
-                        }
+                        {{{selectDictMethod}}}
 
                         public static int SelectCount(
                             IDbConnection dbConnection,
@@ -1128,7 +1182,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     
                             IDbCommand command = dbConnection.CreateCommand();
                             if (transaction != null) command.Transaction = transaction;
-                            command.CommandText = $"SELECT COUNT({{{(pkColName == null ? "*" : pkColName)}}}) FROM {dbTableName}";
+                            command.CommandText = $"SELECT COUNT({{{((pkColName == null) || compositePk ? "*" : pkColName)}}}) FROM {dbTableName}";
                     
                             string joiner = orJoinConditions ? " OR " : " AND ";
                             string stringComparator = compareStringsWithLike ? " LIKE " : " = ";
@@ -1144,13 +1198,13 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             }
                             else if (result is long l)
                             {
-                                return {{{((pkColName == null) || (pkPropType == "int") ? "Convert.ToInt32(l)" : "null")}}};
+                                return {{{((pkColName == null) || compositePk || (pkPropType == "int") ? "Convert.ToInt32(l)" : "null")}}};
                             }
 
                             return -1;
                         }
 
-                        public static {{{(pkColName == null ? "void" : pkPropType)}}} Insert(
+                        public static {{{((pkColName == null) || compositePk ? "void" : pkPropType)}}} Insert(
                             IDbConnection dbConnection,
                             {{{className}}} value,
                             string? dbTableName = null,
@@ -1213,7 +1267,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                 }
                             }
 
-                            {{{(pkColName == null ? "return" : $"return value.{pkColName}")}}};
+                            {{{((pkColName == null) || compositePk ? "return" : $"return value.{pkColName}")}}};
                         }
 
                         public static void Insert(
@@ -1387,7 +1441,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     UPDATE {dbTableName} SET
                                         {{{string.Join(_comma_line_5, tableColInfo.Where(p => p.isPrimaryKey == false).Select(p => p.name + " = $" + p.name))}}}
                                     WHERE
-                                        {{{pkColName}}} = ${{{pkColName}}}
+                                        {{{pkWhereClause}}}
                                     """;
                     
                                 {{{string.Join(_line_3, getInsertCommandParamLines(true, pkIsIdentity ? pkColName : null, pkPropType, includeIdentity: true, isInsert: false))}}}
@@ -1417,7 +1471,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     UPDATE {dbTableName} SET
                                         {{{string.Join(_comma_line_5, tableColInfo.Where(p => p.isPrimaryKey == false).Select(p => p.name + " = $" + p.name))}}}
                                     WHERE
-                                        {{{pkColName}}} = ${{{pkColName}}}
+                                        {{{pkWhereClause}}}
                                     """;
                     
                                 {{{string.Join(
@@ -1463,7 +1517,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             {
                                 IDbCommand command = dbConnection.CreateCommand();
                                 command.Transaction = _txn;
-                                command.CommandText = $"DELETE FROM {dbTableName} WHERE {{{pkColName}}} = ${{{pkColName}}}";
+                                command.CommandText = $"DELETE FROM {dbTableName} WHERE {{{pkWhereClause}}}";
                     
                                 {{{string.Join(
                                 _line_3,
@@ -1473,7 +1527,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     pkPropType,
                                     executeCommand: true,
                                     includeIdentity: true,
-                                    identityOnly: true,
+                                    identityOnly: !compositePk, primaryKeyOnly: compositePk,
                                     setIdentity: false))}}}
                     
                                 if (_ownTxn) _txn.Commit();
@@ -1494,7 +1548,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             {
                                 IDbCommand command = dbConnection.CreateCommand();
                                 command.Transaction = _txn;
-                                command.CommandText = $"DELETE FROM {dbTableName} WHERE {{{pkColName}}} = ${{{pkColName}}}";
+                                command.CommandText = $"DELETE FROM {dbTableName} WHERE {{{pkWhereClause}}}";
                                         
                                 {{{string.Join(
                                 _line_3,
@@ -1504,7 +1558,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     pkPropType,
                                     createParameters: true,
                                     includeIdentity: true,
-                                    identityOnly: true,
+                                    identityOnly: !compositePk, primaryKeyOnly: compositePk,
                                     setIdentity: false))}}}
                     
                                 foreach ({{{className}}} value in values)
@@ -1519,7 +1573,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                         executeCommand: true,
                                         setIdentity: false,
                                         includeIdentity: true,
-                                        identityOnly: true))}}}
+                                        identityOnly: !compositePk, primaryKeyOnly: compositePk))}}}
                                 }
                     
                                 if (_ownTxn) _txn.Commit();
@@ -2066,6 +2120,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             bool setIdentity = true,
             bool includeIdentity = false,
             bool identityOnly = false,
+            bool primaryKeyOnly = false,
             bool isInsert = true,
             string? ignoreDupeProperty = null)
         {
@@ -2079,8 +2134,16 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
             foreach (TableColInfoRec rec in tableColInfo)
             {
+                // composite-key operations bind only the primary-key columns
+                if (primaryKeyOnly)
+                {
+                    if (!rec.isPrimaryKey)
+                    {
+                        continue;
+                    }
+                }
                 // do not insert identity key values
-                if (rec.isIdentity && !includeIdentity)
+                else if (rec.isIdentity && !includeIdentity)
                 {
                     continue;
                 }

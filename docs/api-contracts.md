@@ -22,6 +22,9 @@ This document summarizes the generated API surface developers should expect for 
 ### Property Level
 
 - `LdgSQLiteKey(bool autoIncrement = true)`
+  - Marks a primary key column. A single `[LdgSQLiteKey]` on an `int`/`long` property is emitted as an inline auto-increment identity directive; other single-key types are inline `PRIMARY KEY` columns.
+  - Declaring `[LdgSQLiteKey]` on two or more properties forms a **composite** primary key, emitted as a table-level `PRIMARY KEY (col1, col2, ...)` constraint. Composite key columns are non-identity and `NOT NULL`; they receive no inline PK directive.
+  - Composite-key behavioral differences: `Insert` returns `void`, includes every key column in the `INSERT` column list (values must be supplied by the caller), and emits no `RETURNING` clause. `Update`/`Delete`-by-key match on the full key (`col1 = $col1 AND col2 = $col2`). `SelectDict` is not generated (a dictionary keyed by a single primary key is undefined for composite keys).
 - `LdgSQLiteForeignKey(string? referenceTable = null, string? referenceColumn = null, string? modelTypeName = null, LdgSQLiteFkAction onDelete = NoAction, LdgSQLiteFkAction onUpdate = NoAction)`
   - Single-column foreign key. `onDelete`/`onUpdate` emit `ON DELETE <action>` / `ON UPDATE <action>` clauses in the `CREATE TABLE` DDL when set to a non-`NoAction` value.
   - `LdgSQLiteFkAction` members map to SQLite referential actions: `NoAction` → `NO ACTION` (omitted), `Restrict` → `RESTRICT`, `SetNull` → `SET NULL`, `SetDefault` → `SET DEFAULT`, `Cascade` → `CASCADE`.
@@ -58,6 +61,7 @@ This document summarizes the generated API surface developers should expect for 
 - `SelectList(...)`
 - `SelectEnumerable(...)`
 - `SelectDict(...)`
+  - Returns a `Dictionary<TKey, TModel>` keyed by the single primary key. **Not generated for composite-key tables.**
 - `SelectCount(...)`
 
 ### Common Read Options

@@ -343,6 +343,50 @@ public class LightSQLiteGenerator_IntegrationTests
         FkParent.DropTable(db).ShouldBeTrue();
     }
 
+    [Fact]
+    public void CompositeKey_InsertUpdateDelete_RoundTripsAndEnforcesUniqueness()
+    {
+        using var db = OpenInMemory();
+
+        UserWebsite.DefaultTableName.ShouldBe("user_websites");
+        UserWebsite.CreateTable(db).ShouldBeTrue();
+
+        // Composite key columns carry no identity, so both must be supplied explicitly.
+        UserWebsite first = new() { UserId = 1, WebsiteId = 100, Role = "owner" };
+        UserWebsite.Insert(db, first);
+
+        db.Insert(new UserWebsite { UserId = 1, WebsiteId = 200, Role = "editor" });
+        db.Insert(new UserWebsite { UserId = 2, WebsiteId = 100, Role = "viewer" });
+
+        UserWebsite.SelectCount(db).ShouldBe(3);
+
+        // Round-trip: the key columns persisted their supplied values (not NULL/0).
+        UserWebsite? loaded = UserWebsite.SelectSingle(db, UserId: 1, WebsiteId: 100);
+        loaded.ShouldNotBeNull();
+        loaded!.UserId.ShouldBe(1);
+        loaded.WebsiteId.ShouldBe(100);
+        loaded.Role.ShouldBe("owner");
+
+        // The full composite key is unique; re-inserting it violates the PRIMARY KEY constraint.
+        Should.Throw<SqliteException>(() => UserWebsite.Insert(db, new UserWebsite { UserId = 1, WebsiteId = 100, Role = "dup" }));
+
+        // Sharing only one key column is allowed (proves a composite, not single, key).
+        UserWebsite.SelectCount(db, UserId: 1).ShouldBe(2);
+        UserWebsite.SelectCount(db, WebsiteId: 100).ShouldBe(2);
+
+        // Update matches on the full key and rewrites the non-key column.
+        loaded.Role = "admin";
+        UserWebsite.Update(db, loaded);
+        UserWebsite.SelectSingle(db, UserId: 1, WebsiteId: 100)!.Role.ShouldBe("admin");
+
+        // Delete-by-key uses the batch overload (binds every key column).
+        UserWebsite.Delete(db, new List<UserWebsite> { new() { UserId = 1, WebsiteId = 200 } });
+        UserWebsite.SelectCount(db).ShouldBe(2);
+        UserWebsite.SelectSingle(db, UserId: 1, WebsiteId: 200).ShouldBeNull();
+
+        UserWebsite.DropTable(db).ShouldBeTrue();
+    }
+
     private static SqliteConnection OpenInMemory()
     {
         var connection = new SqliteConnection("Data Source=:memory:");

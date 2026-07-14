@@ -70,6 +70,18 @@ public partial class FkChild
     public string Note { get; set; } = string.Empty;
 }
 
+[LdgSQLiteTable("user_websites")]
+public partial class UserWebsite
+{
+    [LdgSQLiteKey]
+    public int UserId { get; set; }
+
+    [LdgSQLiteKey]
+    public int WebsiteId { get; set; }
+
+    public string Role { get; set; } = string.Empty;
+}
+
 [LdgSQLiteFtsTable("article_source")]
 public partial class ArticleSearch
 {
