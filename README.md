@@ -113,10 +113,12 @@ customer.Delete(db);
 - Unknown `orderByProperties` values are ignored; generated models expose `SQLiteColumnNames` for the valid SQLite column names
 - Optional trailing `transaction` (`IDbTransaction?`) enrolls the read in a caller-supplied transaction. When omitted, the read still honors any ambient transaction already open on the connection; pass the transaction explicitly for deterministic composition.
 
-**Writes:** `Insert`, `Update`, `Delete` — single value, list, or enumerable overloads
+**Writes:** `Insert`, `Update`, `Upsert`, `Delete` — single value, list, or enumerable overloads
 - `ignoreDuplicates` → `INSERT OR IGNORE`
 - `insertPrimaryKey` → include PK in insert
 - Optional trailing `transaction` (`IDbTransaction?`) — when supplied, the write enrolls in the caller's transaction and leaves commit/rollback to the caller so multiple calls compose atomically. When omitted, each write opens and commits its own transaction (auto-commit, unchanged behavior).
+
+> **Upsert (`INSERT … ON CONFLICT`):** `Upsert(dbConnection, value, conflictColumns?, updateColumns?, incrementColumns?, dbTableName?, transaction?)` issues a single SQLite `INSERT … ON CONFLICT(<target>) DO UPDATE/NOTHING` (requires SQLite ≥ 3.24) and returns `void`. `conflictColumns` names the conflict target; it defaults to the model's key columns for a composite or natural (non-identity) primary key, but an **identity** (auto-increment) or keyless model has no natural conflict target, so `conflictColumns` is required and omitting it throws `ArgumentException`. `updateColumns` defaults to every non-identity column except the conflict target; passing an empty array turns the statement into `DO NOTHING` (existing row untouched, may affect zero rows). `incrementColumns` (a subset of `updateColumns`) accumulates instead of overwriting — `col = col + excluded.col`. Composes with a caller-supplied `transaction` like the other writes.
 
 **Utilities:** `LoadMaxKey`, `SelectMaxKey`, `SQLiteColumnNames`
 

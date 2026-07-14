@@ -113,6 +113,20 @@ public partial class Widget
     public string? Tag { get; set; }
 }
 
+[LdgSQLiteTable("counters")]
+[LdgSQLiteUnique("Bucket")]
+public partial class Counter
+{
+    [LdgSQLiteKey]
+    public int CounterId { get; set; }
+
+    public string Bucket { get; set; } = string.Empty;
+
+    public string Label { get; set; } = string.Empty;
+
+    public int Hits { get; set; }
+}
+
 [LdgSQLiteFtsTable("article_source")]
 public partial class ArticleSearch
 {

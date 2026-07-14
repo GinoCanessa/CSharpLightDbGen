@@ -464,6 +464,54 @@ public class LightSQLiteGenerator_IntegrationTests
         Widget.DropTable(db).ShouldBeTrue();
     }
 
+    [Fact]
+    public void Upsert_InsertsUpdatesRespectsDoNothingAndIncrements()
+    {
+        using var db = OpenInMemory();
+        Counter.CreateTable(db).ShouldBeTrue();
+
+        string[] conflict = new[] { "Bucket" };
+
+        // Fresh conflict key inserts a new row.
+        Counter.Upsert(db, new Counter { Bucket = "a", Label = "first", Hits = 1 }, conflictColumns: conflict);
+        Counter? a1 = Counter.SelectSingle(db, Bucket: "a");
+        a1.ShouldNotBeNull();
+        a1!.Label.ShouldBe("first");
+        a1.Hits.ShouldBe(1);
+        Counter.SelectCount(db).ShouldBe(1);
+
+        // Existing key with default update columns overwrites every non-conflict column.
+        Counter.Upsert(db, new Counter { Bucket = "a", Label = "second", Hits = 9 }, conflictColumns: conflict);
+        Counter? a2 = Counter.SelectSingle(db, Bucket: "a");
+        a2!.Label.ShouldBe("second");
+        a2.Hits.ShouldBe(9);
+        Counter.SelectCount(db).ShouldBe(1);
+
+        // updateColumns: [] performs DO NOTHING, leaving the stored row untouched.
+        Counter.Upsert(db, new Counter { Bucket = "a", Label = "ignored", Hits = 100 }, conflictColumns: conflict, updateColumns: Array.Empty<string>());
+        Counter? a3 = Counter.SelectSingle(db, Bucket: "a");
+        a3!.Label.ShouldBe("second");
+        a3.Hits.ShouldBe(9);
+
+        // incrementColumns accumulate (Hits = Hits + excluded.Hits) while other columns overwrite.
+        Counter.Upsert(db, new Counter { Bucket = "a", Label = "third", Hits = 5 }, conflictColumns: conflict, updateColumns: new[] { "Label", "Hits" }, incrementColumns: new[] { "Hits" });
+        Counter? a4 = Counter.SelectSingle(db, Bucket: "a");
+        a4!.Label.ShouldBe("third");
+        a4.Hits.ShouldBe(14);
+
+        // A different conflict key inserts rather than updates.
+        Counter.Upsert(db, new Counter { Bucket = "b", Label = "other", Hits = 3 }, conflictColumns: conflict);
+        Counter.SelectCount(db).ShouldBe(2);
+
+        // The extension wrapper resolves by the value's type.
+        db.Upsert(new Counter { Bucket = "b", Label = "ext", Hits = 1 }, conflictColumns: conflict);
+        Counter? b = Counter.SelectSingle(db, Bucket: "b");
+        b!.Label.ShouldBe("ext");
+        b.Hits.ShouldBe(1);
+
+        Counter.DropTable(db).ShouldBeTrue();
+    }
+
     private static SqliteConnection OpenInMemory()
     {
         var connection = new SqliteConnection("Data Source=:memory:");

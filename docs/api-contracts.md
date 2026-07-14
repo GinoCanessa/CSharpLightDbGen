@@ -95,18 +95,27 @@ This document summarizes the generated API surface developers should expect for 
 - `Delete(IDbConnection dbConnection, T value, string? dbTableName = null, IDbTransaction? transaction = null)`
 - `Delete(IDbConnection dbConnection, IEnumerable<T> values, string? dbTableName = null, IDbTransaction? transaction = null)`
 - `Delete(IDbConnection dbConnection, ..., [filter params], IDbTransaction? transaction = null)`
+- `Upsert(IDbConnection dbConnection, T value, string[]? conflictColumns = null, string[]? updateColumns = null, string[]? incrementColumns = null, string? dbTableName = null, IDbTransaction? transaction = null)`
 
 ### Insert Options
 
 - `ignoreDuplicates`: emits `INSERT OR IGNORE`.
 - `insertPrimaryKey`: includes PK in insert statement instead of identity behavior.
 
+### Upsert Options
+
+`Upsert` issues a single SQLite `INSERT … ON CONFLICT(<target>) DO UPDATE/NOTHING` (requires SQLite ≥ 3.24) and returns `void`.
+
+- `conflictColumns`: the conflict target. Defaults to the model's key columns for a composite or natural (non-identity) primary key. An **identity** (auto-increment) or keyless model has no natural conflict target, so this argument is required — omitting it throws `ArgumentException`.
+- `updateColumns`: columns assigned on conflict. Defaults to every non-identity column except the conflict target. Passing an empty array (`[]`) turns the statement into `DO NOTHING` (existing row untouched; may affect zero rows).
+- `incrementColumns`: a subset of `updateColumns` that accumulates rather than overwrites — `col = col + excluded.col`.
+
 ### Transaction Enrollment
 
 Every read and write method — standard and FTS, static and extension-wrapper — accepts an
 optional trailing `transaction` parameter (`IDbTransaction? transaction = null`):
 
-- **Writes** (`Insert`/`Update`/`Delete`, FTS `Populate`): when a transaction is supplied the
+- **Writes** (`Insert`/`Update`/`Upsert`/`Delete`, FTS `Populate`): when a transaction is supplied the
   method enrolls its command(s) in it and leaves `Commit`/`Rollback` to the caller, so multiple
   writes compose atomically. When omitted, each write opens, commits, and disposes its own
   transaction (unchanged auto-commit behavior).

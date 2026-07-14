@@ -879,6 +879,18 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             }
         }
 
+        // Upsert conflict-target defaulting. Composite and natural (non-identity) primary keys
+        // default the ON CONFLICT target to their key columns. An identity primary key never
+        // collides on insert (auto-rowid), and a keyless model has nothing to conflict on, so
+        // those models must supply conflictColumns (typically a UNIQUE/natural key) explicitly.
+        string upsertNonIdentityColsQuoted = string.Join(", ", tableColInfo.Where(p => !p.isIdentity).Select(p => $"\"{p.name}\""));
+        bool upsertHasDefaultConflict = compositePk || ((pkColName != null) && !pkIsIdentity);
+        string upsertDefaultConflictAssign = upsertHasDefaultConflict
+            ? (compositePk
+                ? $"conflictColumns = new string[] {{ {string.Join(", ", pkCols.Select(c => $"\"{c.name}\""))} }};"
+                : $"conflictColumns = new string[] {{ \"{pkColName}\" }};")
+            : "throw new System.ArgumentException(\"Upsert requires explicit conflictColumns for a model without a natural (non-identity) primary key.\", nameof(conflictColumns));";
+
         // SelectDict keys a dictionary by the single primary key, which has no meaning for a
         // composite key, so the method is omitted entirely for composite-key tables.
         string selectDictMethod = compositePk ? string.Empty : $$$""""
@@ -1509,6 +1521,78 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             }
                         }
 
+                        public static void Upsert(
+                            IDbConnection dbConnection,
+                            {{{className}}} value,
+                            string[]? conflictColumns = null,
+                            string[]? updateColumns = null,
+                            string[]? incrementColumns = null,
+                            string? dbTableName = null,
+                            IDbTransaction? transaction = null)
+                        {
+                            dbTableName ??= "{{{tableName}}}";
+                            {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
+
+                            if ((conflictColumns == null) || (conflictColumns.Length == 0))
+                            {
+                                {{{upsertDefaultConflictAssign}}}
+                            }
+
+                            if (updateColumns == null)
+                            {
+                                HashSet<string> _conflictSet = new(conflictColumns, System.StringComparer.OrdinalIgnoreCase);
+                                List<string> _autoUpdate = new();
+                                foreach (string _col in new string[] { {{{upsertNonIdentityColsQuoted}}} })
+                                {
+                                    if (!_conflictSet.Contains(_col)) _autoUpdate.Add(_col);
+                                }
+                                updateColumns = _autoUpdate.ToArray();
+                            }
+
+                            string _conflictTarget = string.Join(", ", conflictColumns);
+                            string _onConflict;
+                            if (updateColumns.Length == 0)
+                            {
+                                _onConflict = $"ON CONFLICT({_conflictTarget}) DO NOTHING";
+                            }
+                            else
+                            {
+                                HashSet<string> _incrementSet = (incrementColumns == null) ? new() : new(incrementColumns, System.StringComparer.OrdinalIgnoreCase);
+                                List<string> _setClauses = new();
+                                foreach (string _col in updateColumns)
+                                {
+                                    _setClauses.Add(_incrementSet.Contains(_col) ? $"{_col} = {_col} + excluded.{_col}" : $"{_col} = excluded.{_col}");
+                                }
+                                _onConflict = $"ON CONFLICT({_conflictTarget}) DO UPDATE SET {string.Join(", ", _setClauses)}";
+                            }
+
+                            bool _ownTxn = transaction is null;
+                            IDbTransaction _txn = transaction ?? dbConnection.BeginTransaction();
+                            try
+                            {
+                                IDbCommand command = dbConnection.CreateCommand();
+                                command.Transaction = _txn;
+                                command.CommandText = $"""
+                                    INSERT INTO {dbTableName} (
+                                        {{{string.Join(_comma_line_6, tableColInfo.Where(p => !p.isIdentity).Select(p => p.name))}}}
+                                    ) VALUES (
+                                        {{{string.Join(_comma_line_6, tableColInfo.Where(p => !p.isIdentity).Select(p => "$" + p.name))}}}
+                                    )
+                                    {_onConflict};
+                                    """;
+
+                                {{{string.Join(_line_4, getInsertCommandParamLines(true, null, pkPropType, createParameters: true, instantiateParameters: true, executeCommand: false))}}}
+
+                                command.ExecuteNonQuery();
+
+                                if (_ownTxn) _txn.Commit();
+                            }
+                            finally
+                            {
+                                if (_ownTxn) _txn.Dispose();
+                            }
+                        }
+
                         public static {{{className}}} Update(IDbConnection dbConnection, {{{className}}} value, string? dbTableName = null, IDbTransaction? transaction = null)
                         {
                             dbTableName ??= "{{{tableName}}}";
@@ -1880,6 +1964,11 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             {{{className}}}.Insert(dbCon, values, dbTableName, ignoreDuplicates, insertPrimaryKey, transaction);
                         }
 
+                        public static void Upsert(this IDbConnection dbCon, {{{className}}} value, string[]? conflictColumns = null, string[]? updateColumns = null, string[]? incrementColumns = null, string? dbTableName = null, IDbTransaction? transaction = null)
+                        {
+                            {{{className}}}.Upsert(dbCon, value, conflictColumns, updateColumns, incrementColumns, dbTableName, transaction);
+                        }
+
                         public static void Update(this IDbConnection dbCon, {{{className}}} value, string? dbTableName = null, IDbTransaction? transaction = null)
                         {
                             {{{className}}}.Update(dbCon, value, dbTableName, transaction);
@@ -1923,6 +2012,11 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                         public static void Insert(this IEnumerable<{{{className}}}> values, IDbConnection dbCon, string? dbTableName = null, bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)
                         {
                             {{{className}}}.Insert(dbCon, values, dbTableName, ignoreDuplicates, insertPrimaryKey, transaction);
+                        }
+
+                        public static void Upsert(this {{{className}}} value, IDbConnection dbCon, string[]? conflictColumns = null, string[]? updateColumns = null, string[]? incrementColumns = null, string? dbTableName = null, IDbTransaction? transaction = null)
+                        {
+                            {{{className}}}.Upsert(dbCon, value, conflictColumns, updateColumns, incrementColumns, dbTableName, transaction);
                         }
                     
                         public static void Update(this {{{className}}} value, IDbConnection dbCon, string? dbTableName = null, IDbTransaction? transaction = null)
