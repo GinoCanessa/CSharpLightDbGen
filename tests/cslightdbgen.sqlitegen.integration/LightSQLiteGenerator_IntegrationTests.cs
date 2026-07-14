@@ -307,6 +307,42 @@ public class LightSQLiteGenerator_IntegrationTests
         Job.DropTable(db).ShouldBeTrue();
     }
 
+    [Fact]
+    public void ForeignKey_OnDeleteCascade_RemovesChildRows()
+    {
+        using var db = OpenInMemory();
+
+        using (IDbCommand pragma = db.CreateCommand())
+        {
+            pragma.CommandText = "PRAGMA foreign_keys = ON;";
+            pragma.ExecuteNonQuery();
+        }
+
+        FkParent.CreateTable(db).ShouldBeTrue();
+        FkChild.CreateTable(db).ShouldBeTrue();
+
+        FkParent parent = new() { Label = "root" };
+        FkParent.Insert(db, parent);
+        parent.ParentId.ShouldBeGreaterThan(0);
+
+        FkChild.Insert(db, new FkChild { ParentRef = parent.ParentId, Note = "leaf-a" });
+        FkChild.Insert(db, new FkChild { ParentRef = parent.ParentId, Note = "leaf-b" });
+        FkChild.SelectCount(db).ShouldBe(2);
+
+        // Deleting the parent must cascade to the children (ON DELETE CASCADE),
+        // which only fires when PRAGMA foreign_keys is enabled on the connection.
+        using (IDbCommand delete = db.CreateCommand())
+        {
+            delete.CommandText = "DELETE FROM fk_parents WHERE ParentId = " + parent.ParentId + ";";
+            delete.ExecuteNonQuery();
+        }
+
+        FkChild.SelectCount(db).ShouldBe(0);
+
+        FkChild.DropTable(db).ShouldBeTrue();
+        FkParent.DropTable(db).ShouldBeTrue();
+    }
+
     private static SqliteConnection OpenInMemory()
     {
         var connection = new SqliteConnection("Data Source=:memory:");

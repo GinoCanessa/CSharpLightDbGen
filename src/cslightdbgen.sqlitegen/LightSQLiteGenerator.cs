@@ -563,31 +563,55 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             string? foreignTable = null;
             string? foreignColumn = null;
             string? foreignModelType = null;
+            string fkActions = string.Empty;
             foreach (AttributeListSyntax als in pds.AttributeLists)
             {
                 foreach (AttributeSyntax a in als.Attributes.Where(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteForeignKey))
                 {
+                    string? fkOnDelete = null;
+                    string? fkOnUpdate = null;
+
                     foreach (AttributeArgumentSyntax arg in a.ArgumentList?.Arguments ?? [])
                     {
-                        if (arg.NameEquals?.Name.ToString() == "ReferenceTable")
+                        string? argName = arg.NameEquals?.Name.ToString() ?? arg.NameColon?.Name.ToString();
+
+                        if (argName == "ReferenceTable")
                         {
                             foreignTable = arg.Expression.ToString();
                         }
-                        else if (arg.NameEquals?.Name.ToString() == "ReferenceColumn")
+                        else if (argName == "ReferenceColumn")
                         {
                             foreignColumn = arg.Expression.ToString();
                         }
-                        else if (arg.NameEquals?.Name.ToString() == "ModelTypeName")
+                        else if (argName == "ModelTypeName")
                         {
                             foreignModelType = arg.Expression.ToString();
                         }
+                        else if ((argName == "OnDelete") || (argName == "onDelete"))
+                        {
+                            fkOnDelete = fkActionFromExpr(arg.Expression.ToString());
+                        }
+                        else if ((argName == "OnUpdate") || (argName == "onUpdate"))
+                        {
+                            fkOnUpdate = fkActionFromExpr(arg.Expression.ToString());
+                        }
+                    }
+
+                    if ((fkOnDelete != null) && (fkOnDelete != "NO ACTION"))
+                    {
+                        fkActions += $" ON DELETE {fkOnDelete}";
+                    }
+
+                    if ((fkOnUpdate != null) && (fkOnUpdate != "NO ACTION"))
+                    {
+                        fkActions += $" ON UPDATE {fkOnUpdate}";
                     }
                 }
             }
 
             if ((foreignTable != null) && (foreignColumn != null))
             {
-                createFKLines.Add($"FOREIGN KEY ({pds.Identifier}) REFERENCES {foreignTable}({foreignColumn})");
+                createFKLines.Add($"FOREIGN KEY ({pds.Identifier}) REFERENCES {foreignTable}({foreignColumn}){fkActions}");
             }
 
             // create the select retrieval pair
@@ -715,6 +739,55 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     foreignTable,
                     foreignColumn,
                     foreignModelType));
+            }
+        }
+
+        // class-level composite foreign keys
+        if (symbolAttributeLookup.Contains(GeneratorAttributes._ldgSQLiteForeignKeyComposite))
+        {
+            foreach (AttributeData ad in symbolAttributeLookup[GeneratorAttributes._ldgSQLiteForeignKeyComposite])
+            {
+                ImmutableArray<TypedConstant> ctorArgs = ad.ConstructorArguments;
+                if (ctorArgs.Length < 3)
+                {
+                    continue;
+                }
+
+                string[] fkColumns = ctorArgs[0].Values
+                    .Select(tc => tc.Value?.ToString() ?? string.Empty)
+                    .Where(v => !string.IsNullOrEmpty(v))
+                    .ToArray();
+                string fkRefTable = ctorArgs[1].Value?.ToString() ?? string.Empty;
+                string[] fkRefColumns = ctorArgs[2].Values
+                    .Select(tc => tc.Value?.ToString() ?? string.Empty)
+                    .Where(v => !string.IsNullOrEmpty(v))
+                    .ToArray();
+
+                if ((fkColumns.Length == 0) || string.IsNullOrEmpty(fkRefTable) || (fkRefColumns.Length == 0))
+                {
+                    continue;
+                }
+
+                string compositeActions = string.Empty;
+                if (ctorArgs.Length > 3)
+                {
+                    string onDelete = fkActionFromValue(ctorArgs[3].Value);
+                    if (onDelete != "NO ACTION")
+                    {
+                        compositeActions += $" ON DELETE {onDelete}";
+                    }
+                }
+
+                if (ctorArgs.Length > 4)
+                {
+                    string onUpdate = fkActionFromValue(ctorArgs[4].Value);
+                    if (onUpdate != "NO ACTION")
+                    {
+                        compositeActions += $" ON UPDATE {onUpdate}";
+                    }
+                }
+
+                createFKLines.Add($"FOREIGN KEY ({string.Join(", ", fkColumns)}) REFERENCES {fkRefTable} ({string.Join(", ", fkRefColumns)}){compositeActions}");
             }
         }
 
@@ -2721,6 +2794,46 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Maps an <c>LdgSQLiteFkAction</c> enum member name to its SQLite referential-action SQL.
+    /// </summary>
+    private static string fkActionSql(string memberName) => memberName switch
+    {
+        "Restrict" => "RESTRICT",
+        "SetNull" => "SET NULL",
+        "SetDefault" => "SET DEFAULT",
+        "Cascade" => "CASCADE",
+        _ => "NO ACTION",
+    };
+
+    /// <summary>
+    /// Resolves an <c>LdgSQLiteFkAction</c> referential action from attribute-argument syntax
+    /// text such as <c>Cascade</c>, <c>LdgSQLiteFkAction.Cascade</c>, or a fully-qualified name.
+    /// </summary>
+    private static string fkActionFromExpr(string exprText)
+    {
+        int dot = exprText.LastIndexOf('.');
+        string member = (dot >= 0 ? exprText.Substring(dot + 1) : exprText).Trim();
+        return fkActionSql(member);
+    }
+
+    /// <summary>
+    /// Resolves an <c>LdgSQLiteFkAction</c> referential action from a boxed enum value
+    /// (as delivered by <c>AttributeData.ConstructorArguments</c>, where enum args arrive as ints).
+    /// </summary>
+    private static string fkActionFromValue(object? value)
+    {
+        int ordinal = value is int i ? i : 0;
+        return ordinal switch
+        {
+            1 => "RESTRICT",
+            2 => "SET NULL",
+            3 => "SET DEFAULT",
+            4 => "CASCADE",
+            _ => "NO ACTION",
+        };
     }
 
     /// <summary>

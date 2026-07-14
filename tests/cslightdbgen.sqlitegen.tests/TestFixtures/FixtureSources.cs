@@ -76,6 +76,43 @@ public partial class DefaultsEntity
 }
 """;
 
+    public const string ForeignKeyActionsFixture = """
+using CsLightDbGen.SQLiteGenerator;
+
+namespace CsLightDbGen.SQLiteGenerator;
+
+[LdgSQLiteTable("fk_children")]
+public partial class FkChild
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+
+    [LdgSQLiteForeignKey(ReferenceTable = "fk_parents", ReferenceColumn = "Id", OnDelete = LdgSQLiteFkAction.Cascade, OnUpdate = LdgSQLiteFkAction.SetNull)]
+    public int ParentId { get; set; }
+
+    [LdgSQLiteForeignKey(ReferenceTable = "fk_owners", ReferenceColumn = "Id")]
+    public int OwnerId { get; set; }
+}
+""";
+
+    public const string CompositeForeignKeyFixture = """
+using CsLightDbGen.SQLiteGenerator;
+
+namespace CsLightDbGen.SQLiteGenerator;
+
+[LdgSQLiteTable("manifest_entries")]
+[LdgSQLiteForeignKeyComposite(new string[] { "TaskId", "ManifestGeneration" }, "task_manifests", new string[] { "TaskId", "Generation" }, onDelete: LdgSQLiteFkAction.Cascade)]
+public partial class ManifestEntry
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+
+    public int TaskId { get; set; }
+
+    public int ManifestGeneration { get; set; }
+}
+""";
+
     public const string MultiSelectFixture = """
 using System.Collections.Generic;
 using CsLightDbGen.SQLiteGenerator;

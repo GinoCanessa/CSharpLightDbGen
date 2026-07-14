@@ -11,6 +11,8 @@ public class GeneratorAttributes
     internal const string _ldgSQLiteIndex = "LdgSQLiteIndex";
     internal const string _ldgSQLiteKey = "LdgSQLiteKey";
     internal const string _ldgSQLiteForeignKey = "LdgSQLiteForeignKey";
+    internal const string _ldgSQLiteForeignKeyComposite = "LdgSQLiteForeignKeyComposite";
+    internal const string _ldgSQLiteFkAction = "LdgSQLiteFkAction";
     internal const string _ldgSQLiteIgnore = "LdgSQLiteIgnore";
     internal const string _ldgSQLiteUnique = "LdgSQLiteUnique";
     internal const string _ldgSQLiteMultiSelect = "LdgSQLiteMultiSelect";
@@ -25,6 +27,7 @@ public class GeneratorAttributes
         _ldgSQLiteIndex,
         _ldgSQLiteKey,
         _ldgSQLiteForeignKey,
+        _ldgSQLiteForeignKeyComposite,
         _ldgSQLiteIgnore,
         _ldgSQLiteUnique,
         _ldgSQLiteMultiSelect,
@@ -91,11 +94,42 @@ public class GeneratorAttributes
                 public string? ReferenceTable { get; set; }
                 public string? ReferenceColumn { get; set; }
                 public string? ModelTypeName { get; set; }
-                public {{{_ldgSQLiteForeignKey}}}(string? referenceTable = null, string? referenceColumn = null, string? modelTypeName = null)
+                public {{{_ldgSQLiteFkAction}}} OnDelete { get; set; }
+                public {{{_ldgSQLiteFkAction}}} OnUpdate { get; set; }
+                public {{{_ldgSQLiteForeignKey}}}(string? referenceTable = null, string? referenceColumn = null, string? modelTypeName = null, {{{_ldgSQLiteFkAction}}} onDelete = {{{_ldgSQLiteFkAction}}}.NoAction, {{{_ldgSQLiteFkAction}}} onUpdate = {{{_ldgSQLiteFkAction}}}.NoAction)
                 {
                     ReferenceTable = referenceTable;
                     ReferenceColumn = referenceColumn;
                     ModelTypeName = modelTypeName;
+                    OnDelete = onDelete;
+                    OnUpdate = onUpdate;
+                }
+            }
+
+            public enum {{{_ldgSQLiteFkAction}}}
+            {
+                NoAction = 0,
+                Restrict = 1,
+                SetNull = 2,
+                SetDefault = 3,
+                Cascade = 4,
+            }
+
+            [System.AttributeUsage(System.AttributeTargets.Class, Inherited = false, AllowMultiple = true)]
+            public class {{{_ldgSQLiteForeignKeyComposite}}} : System.Attribute
+            {
+                public string[] Columns { get; set; }
+                public string ReferenceTable { get; set; }
+                public string[] ReferenceColumns { get; set; }
+                public {{{_ldgSQLiteFkAction}}} OnDelete { get; set; }
+                public {{{_ldgSQLiteFkAction}}} OnUpdate { get; set; }
+                public {{{_ldgSQLiteForeignKeyComposite}}}(string[] columns, string referenceTable, string[] referenceColumns, {{{_ldgSQLiteFkAction}}} onDelete = {{{_ldgSQLiteFkAction}}}.NoAction, {{{_ldgSQLiteFkAction}}} onUpdate = {{{_ldgSQLiteFkAction}}}.NoAction)
+                {
+                    Columns = columns;
+                    ReferenceTable = referenceTable;
+                    ReferenceColumns = referenceColumns;
+                    OnDelete = onDelete;
+                    OnUpdate = onUpdate;
                 }
             }
 

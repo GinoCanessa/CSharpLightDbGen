@@ -83,7 +83,8 @@ customer.Delete(db);
 | `LdgSQLiteTable(tableName?, dynamicTableNames)` | Class | Generates full CRUD/query API for a SQLite table |
 | `LdgSQLiteBaseClass` | Class | Marks a base class whose properties are inherited by table models |
 | `LdgSQLiteKey(autoIncrement)` | Property | Designates the primary key column |
-| `LdgSQLiteForeignKey(refTable?, refColumn?, modelTypeName?)` | Property | Declares a foreign key relationship |
+| `LdgSQLiteForeignKey(refTable?, refColumn?, modelTypeName?, onDelete?, onUpdate?)` | Property | Declares a single-column foreign key. `onDelete`/`onUpdate` accept `LdgSQLiteFkAction` (`NoAction`, `Restrict`, `SetNull`, `SetDefault`, `Cascade`) and emit `ON DELETE`/`ON UPDATE` clauses when non-default. |
+| `LdgSQLiteForeignKeyComposite(columns, refTable, refColumns, onDelete?, onUpdate?)` | Class | Declares a multi-column (composite) foreign key. `AllowMultiple = true`. Same `LdgSQLiteFkAction` referential actions as `LdgSQLiteForeignKey`. |
 | `LdgSQLiteIndex(columns...)` | Class | Emits a composite index on the specified columns |
 | `LdgSQLiteUnique` | Property | Adds a `UNIQUE` constraint |
 | `LdgSQLiteDefault(value?, raw?)` | Property | Emits a column `DEFAULT` clause. String values are SQL-quoted (embedded `'` doubled); `bool` maps to `1`/`0`; numeric values render as-is. Set `raw: true` to emit an unquoted SQL expression such as `CURRENT_TIMESTAMP`. |
@@ -97,6 +98,8 @@ customer.Delete(db);
 ### Standard Table (`[LdgSQLiteTable]`)
 
 **Schema:** `CreateTable`, `DropTable`
+
+> **Foreign-key enforcement:** SQLite requires `PRAGMA foreign_keys = ON` **per connection** for foreign-key constraints (including `ON DELETE`/`ON UPDATE` actions) to be enforced. `CreateTable` does **not** emit this PRAGMA — it is connection-scoped and therefore the caller's responsibility. Enable it on each connection before relying on referential actions.
 
 **Reads:** `SelectSingle`, `SelectList`, `SelectEnumerable`, `SelectDict`, `SelectCount`
 - Filter by any property via named parameters

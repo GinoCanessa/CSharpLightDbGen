@@ -14,11 +14,17 @@ This document summarizes the generated API surface developers should expect for 
   - Generates FTS5 table/search API.
 - `LdgSQLiteIndex(params string[] columns)`
   - Emits index creation SQL.
+- `LdgSQLiteForeignKeyComposite(string[] columns, string referenceTable, string[] referenceColumns, LdgSQLiteFkAction onDelete = NoAction, LdgSQLiteFkAction onUpdate = NoAction)`
+  - Emits a multi-column (composite) `FOREIGN KEY (...) REFERENCES <table> (...)` table constraint. `AllowMultiple = true`, so a model may declare several composite foreign keys.
+  - `onDelete`/`onUpdate` use the same `LdgSQLiteFkAction` referential actions as `LdgSQLiteForeignKey`.
+  - > Foreign-key constraints (single or composite) are only enforced when the caller enables `PRAGMA foreign_keys = ON` on the connection. `CreateTable` does not emit this connection-scoped PRAGMA.
 
 ### Property Level
 
 - `LdgSQLiteKey(bool autoIncrement = true)`
-- `LdgSQLiteForeignKey(string? referenceTable = null, string? referenceColumn = null, string? modelTypeName = null)`
+- `LdgSQLiteForeignKey(string? referenceTable = null, string? referenceColumn = null, string? modelTypeName = null, LdgSQLiteFkAction onDelete = NoAction, LdgSQLiteFkAction onUpdate = NoAction)`
+  - Single-column foreign key. `onDelete`/`onUpdate` emit `ON DELETE <action>` / `ON UPDATE <action>` clauses in the `CREATE TABLE` DDL when set to a non-`NoAction` value.
+  - `LdgSQLiteFkAction` members map to SQLite referential actions: `NoAction` → `NO ACTION` (omitted), `Restrict` → `RESTRICT`, `SetNull` → `SET NULL`, `SetDefault` → `SET DEFAULT`, `Cascade` → `CASCADE`.
 - `LdgSQLiteIgnore()`
 - `LdgSQLiteUnique()`
 - `LdgSQLiteDefault(object? value = null, bool raw = false)`

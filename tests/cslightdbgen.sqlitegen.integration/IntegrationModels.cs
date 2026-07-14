@@ -49,6 +49,27 @@ public partial class Job
     public bool IsActive { get; set; }
 }
 
+[LdgSQLiteTable("fk_parents")]
+public partial class FkParent
+{
+    [LdgSQLiteKey]
+    public int ParentId { get; set; }
+
+    public string Label { get; set; } = string.Empty;
+}
+
+[LdgSQLiteTable("fk_children")]
+public partial class FkChild
+{
+    [LdgSQLiteKey]
+    public int ChildId { get; set; }
+
+    [LdgSQLiteForeignKey(ReferenceTable = "fk_parents", ReferenceColumn = "ParentId", OnDelete = LdgSQLiteFkAction.Cascade)]
+    public int ParentRef { get; set; }
+
+    public string Note { get; set; } = string.Empty;
+}
+
 [LdgSQLiteFtsTable("article_source")]
 public partial class ArticleSearch
 {
