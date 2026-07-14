@@ -1067,6 +1067,8 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                             {{{string.Join(_line_2, getIndexLines())}}}
 
+                            {{{string.Join(_line_2, getEnsureUniqueConstraintIndexLines())}}}
+
                             LoadMaxKey(dbConnection, dbTableName);
 
                             return true;
@@ -2273,6 +2275,47 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 }
 
                 return hash.ToString("x8");
+            }
+        }
+
+        // Class-level [LdgSQLiteUnique(cols...)] is emitted by CreateTable as a table-level UNIQUE
+        // constraint, but CREATE TABLE IF NOT EXISTS is a no-op on a pre-existing table, so migrating
+        // an older table via EnsureSchema would otherwise silently leave the composite UNIQUE
+        // unenforced. Re-assert each composite UNIQUE as an equivalent CREATE UNIQUE INDEX IF NOT
+        // EXISTS. Emitted only inside EnsureSchema (which owns the transaction); CreateTable already
+        // carries the table constraint, so a table it creates fresh needs no extra index.
+        IEnumerable<string> getEnsureUniqueConstraintIndexLines()
+        {
+            if (!symbolAttributeLookup.Contains(GeneratorAttributes._ldgSQLiteUnique))
+            {
+                yield break;
+            }
+
+            foreach (AttributeData ad in symbolAttributeLookup[GeneratorAttributes._ldgSQLiteUnique])
+            {
+                string[] columns = ad.ConstructorArguments
+                    .FirstOrDefault()
+                    .Values
+                    .Select(tc => tc.Value?.ToString() ?? string.Empty)
+                    .Where(v => !string.IsNullOrEmpty(v))
+                    .ToArray();
+
+                if (columns.Length == 0)
+                {
+                    continue;
+                }
+
+                string indexName = $"UQ_{{dbTableName}}_{string.Join("_", columns)}";
+
+                yield return "command = dbConnection.CreateCommand();";
+                yield return "if (transaction != null) command.Transaction = transaction;";
+                yield return "command.CommandText = $\"\"\"";
+                yield return $"    CREATE UNIQUE INDEX IF NOT EXISTS \"{indexName}\" ON \"{{dbTableName}}\" (";
+                yield return $"        {string.Join(", ", columns.Select(v => $"\"{v}\""))}";
+                yield return "    )";
+                yield return "    \"\"\";";
+                yield return "command.ExecuteNonQuery();";
+                yield return string.Empty;
             }
         }
 

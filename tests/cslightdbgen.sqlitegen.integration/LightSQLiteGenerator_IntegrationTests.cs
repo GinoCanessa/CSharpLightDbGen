@@ -465,6 +465,53 @@ public class LightSQLiteGenerator_IntegrationTests
     }
 
     [Fact]
+    public void EnsureSchema_ReappliesCompositeUniqueConstraint_OnPreExistingTable()
+    {
+        using var db = OpenInMemory();
+
+        // Simulate a table created by an older generator that lacks the class-level
+        // UNIQUE (OrgId, Slug) constraint entirely.
+        using (IDbCommand create = db.CreateCommand())
+        {
+            create.CommandText = """
+                CREATE TABLE projects (
+                    ProjectId INTEGER PRIMARY KEY,
+                    OrgId INTEGER NOT NULL,
+                    Slug TEXT NOT NULL,
+                    ProjectName TEXT NOT NULL,
+                    IsArchived INTEGER NOT NULL
+                )
+                """;
+            create.ExecuteNonQuery();
+        }
+
+        using (IDbCommand seed = db.CreateCommand())
+        {
+            seed.CommandText = "INSERT INTO projects (OrgId, Slug, ProjectName, IsArchived) VALUES (1, 'alpha', 'Alpha', 0)";
+            seed.ExecuteNonQuery();
+        }
+
+        // Migration must re-assert the composite UNIQUE that CREATE TABLE IF NOT EXISTS cannot
+        // apply to a pre-existing table.
+        Project.EnsureSchema(db).ShouldBeTrue();
+
+        // A distinct (OrgId, Slug) is still accepted.
+        Project.Insert(db, new Project { OrgId = 1, Slug = "beta", ProjectName = "Beta", IsArchived = 0 });
+
+        // The same Slug under a different OrgId is accepted (proves the constraint is composite).
+        Project.Insert(db, new Project { OrgId = 2, Slug = "alpha", ProjectName = "Alpha2", IsArchived = 0 });
+
+        // A duplicate (OrgId, Slug) is now rejected — the constraint is enforced post-migration.
+        Should.Throw<SqliteException>(() =>
+            Project.Insert(db, new Project { OrgId = 1, Slug = "alpha", ProjectName = "Dupe", IsArchived = 0 }));
+
+        // Re-running the migration is idempotent and must not throw.
+        Project.EnsureSchema(db).ShouldBeTrue();
+
+        Project.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
     public void Upsert_InsertsUpdatesRespectsDoNothingAndIncrements()
     {
         using var db = OpenInMemory();
