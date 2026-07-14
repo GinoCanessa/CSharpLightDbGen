@@ -99,6 +99,20 @@ public partial class Project
     public int IsArchived { get; set; }
 }
 
+[LdgSQLiteTable("widgets")]
+public partial class Widget
+{
+    [LdgSQLiteKey]
+    public int WidgetId { get; set; }
+
+    public string WidgetLabel { get; set; } = string.Empty;
+
+    [LdgSQLiteDefault(0)]
+    public int Quantity { get; set; }
+
+    public string? Tag { get; set; }
+}
+
 [LdgSQLiteFtsTable("article_source")]
 public partial class ArticleSearch
 {

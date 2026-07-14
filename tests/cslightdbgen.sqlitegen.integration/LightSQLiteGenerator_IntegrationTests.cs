@@ -416,6 +416,54 @@ public class LightSQLiteGenerator_IntegrationTests
         Project.DropTable(db).ShouldBeTrue();
     }
 
+    [Fact]
+    public void EnsureSchema_AddsMissingColumnsAndIndexes_Idempotently()
+    {
+        using var db = OpenInMemory();
+
+        // Simulate an older database shape: only the key and one column exist.
+        using (IDbCommand create = db.CreateCommand())
+        {
+            create.CommandText = "CREATE TABLE widgets (WidgetId INTEGER PRIMARY KEY, WidgetLabel TEXT NOT NULL)";
+            create.ExecuteNonQuery();
+        }
+
+        using (IDbCommand seed = db.CreateCommand())
+        {
+            seed.CommandText = "INSERT INTO widgets (WidgetLabel) VALUES ('legacy')";
+            seed.ExecuteNonQuery();
+        }
+
+        // Additive migration brings the existing table up to the current model.
+        Widget.EnsureSchema(db).ShouldBeTrue();
+
+        // The pre-existing row is backfilled with the constant default (Quantity => 0);
+        // the newly added nullable column stays null.
+        Widget? legacy = Widget.SelectSingle(db, WidgetLabel: "legacy");
+        legacy.ShouldNotBeNull();
+        legacy!.Quantity.ShouldBe(0);
+        legacy.Tag.ShouldBeNull();
+
+        // The migrated table now accepts a fully populated insert.
+        Widget fresh = new() { WidgetLabel = "fresh", Quantity = 7, Tag = "t" };
+        Widget.Insert(db, fresh);
+        fresh.WidgetId.ShouldBeGreaterThan(0);
+
+        Widget? readback = Widget.SelectSingle(db, WidgetLabel: "fresh");
+        readback.ShouldNotBeNull();
+        readback!.Quantity.ShouldBe(7);
+        readback.Tag.ShouldBe("t");
+
+        // Re-running EnsureSchema is a no-op and must not throw.
+        Widget.EnsureSchema(db).ShouldBeTrue();
+        Widget.SelectCount(db).ShouldBe(2);
+
+        // The extension wrapper resolves through its generic constraint.
+        db.EnsureSchema<Widget>().ShouldBeTrue();
+
+        Widget.DropTable(db).ShouldBeTrue();
+    }
+
     private static SqliteConnection OpenInMemory()
     {
         var connection = new SqliteConnection("Data Source=:memory:");

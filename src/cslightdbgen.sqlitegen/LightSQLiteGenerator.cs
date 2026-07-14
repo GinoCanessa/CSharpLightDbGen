@@ -368,6 +368,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
         List<string> createColLines = [];
         List<string> createFKLines = [];
+        List<(string name, string addColumnDdl)> alterAddColumns = [];
         List<TableColInfoRec> tableColInfo = [];
 
         foreach (MemberDeclarationSyntax member in members)
@@ -546,6 +547,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
             // check for a column default (literal, boolean, numeric, or raw SQL expression)
             string defaultClause = string.Empty;
+            bool defaultIsRaw = false;
             foreach (AttributeListSyntax defAls in pds.AttributeLists)
             {
                 foreach (AttributeSyntax defAttr in defAls.Attributes.Where(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteDefault))
@@ -582,6 +584,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     }
 
                     defaultClause = formatDefault(defaultValueExpr, defaultRaw);
+                    defaultIsRaw = defaultRaw;
                 }
             }
 
@@ -592,6 +595,22 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 $"{(isUnique ? " UNIQUE" : string.Empty)}" +
                 $"{((nullable || (isPrimaryKey && !compositePk)) ? string.Empty : " NOT NULL")}" +
                 $"{defaultClause}");
+
+            // Additive-migration (EnsureSchema) column fragment. SQLite's ALTER TABLE ADD COLUMN
+            // forbids PRIMARY KEY / UNIQUE constraints and only permits constant defaults, and a
+            // NOT NULL added column must carry a constant default. Primary-key columns are never
+            // added this way (they exist with the original table); for other columns we emit type +
+            // constant default, keeping NOT NULL only when a constant default backs it.
+            if (!isPrimaryKey)
+            {
+                bool hasConstDefault = (defaultClause.Length > 0) && !defaultIsRaw;
+                string addColDefault = hasConstDefault ? defaultClause : string.Empty;
+                string addColNotNull = (!nullable && hasConstDefault) ? " NOT NULL" : string.Empty;
+
+                alterAddColumns.Add((
+                    pds.Identifier.ToString(),
+                    $"{pds.Identifier.ToString()} {getSqlType(propTypeName, memberIsEnum, useJson, memberIsNonScalar)}{addColDefault}{addColNotNull}"));
+            }
 
             // check for foreign key property information
             string? foreignTable = null;
@@ -986,6 +1005,49 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     
                             command.ExecuteNonQuery();
                     
+                            return true;
+                        }
+
+                        /// <summary>
+                        /// Additively brings an existing table up to the current model: creates the table
+                        /// if absent, adds any missing columns via ALTER TABLE ADD COLUMN, and creates any
+                        /// missing indexes. It never drops or retypes columns and never backfills data, so
+                        /// it is safe to run on every startup. Columns added to a pre-existing table cannot
+                        /// carry PRIMARY KEY / UNIQUE constraints or non-constant defaults; a NOT NULL model
+                        /// column without a constant default is added as nullable (SQLite forbids adding a
+                        /// NOT NULL column with no default to a populated table).
+                        /// </summary>
+                        public static bool EnsureSchema(IDbConnection dbConnection, string? dbTableName = null, IDbTransaction? transaction = null)
+                        {
+                            dbTableName ??= "{{{tableName}}}";
+
+                            IDbCommand command = dbConnection.CreateCommand();
+                            if (transaction != null) command.Transaction = transaction;
+                            command.CommandText = $"""
+                                CREATE TABLE IF NOT EXISTS {dbTableName} (
+                                    {{{string.Join(_comma_line_4, createTableLines)}}}
+                                )
+                                """;
+                            command.ExecuteNonQuery();
+
+                            HashSet<string> existingColumns = new(global::System.StringComparer.OrdinalIgnoreCase);
+                            command = dbConnection.CreateCommand();
+                            if (transaction != null) command.Transaction = transaction;
+                            command.CommandText = $"PRAGMA table_info({dbTableName})";
+                            using (IDataReader reader = command.ExecuteReader())
+                            {
+                                while (reader.Read())
+                                {
+                                    existingColumns.Add(reader.GetString(1));
+                                }
+                            }
+
+                            {{{string.Join(_line_2, getEnsureAddColumnLines())}}}
+
+                            {{{string.Join(_line_2, getIndexLines())}}}
+
+                            LoadMaxKey(dbConnection, dbTableName);
+
                             return true;
                         }
 
@@ -1727,6 +1789,12 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     [global::System.Runtime.CompilerServices.CompilerGeneratedAttribute()]
                     public static class {{{className}}}Extensions
                     {
+                        public static bool EnsureSchema<T>(this IDbConnection dbCon, string? dbTableName = null, IDbTransaction? transaction = null)
+                            where T : {{{className}}}
+                        {
+                            return {{{className}}}.EnsureSchema(dbCon, dbTableName, transaction);
+                        }
+
                         public static {{{className}}}? SelectSingle<T>(
                             this IDbConnection dbCon, 
                             string? dbTableName = null,
@@ -1982,6 +2050,26 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 }
 
                 return hash.ToString("x8");
+            }
+        }
+
+        // Additive-migration ALTER TABLE ADD COLUMN blocks for EnsureSchema. Each block adds a
+        // column only when PRAGMA table_info reports it missing, so re-running EnsureSchema is
+        // idempotent.
+        IEnumerable<string> getEnsureAddColumnLines()
+        {
+            foreach ((string name, string addColumnDdl) in alterAddColumns)
+            {
+                yield return $"if (!existingColumns.Contains(\"{name}\"))";
+                yield return "{";
+                yield return "    command = dbConnection.CreateCommand();";
+                yield return "    if (transaction != null) command.Transaction = transaction;";
+                yield return "    command.CommandText = $\"\"\"";
+                yield return $"        ALTER TABLE {{dbTableName}} ADD COLUMN {addColumnDdl}";
+                yield return "        \"\"\";";
+                yield return "    command.ExecuteNonQuery();";
+                yield return "}";
+                yield return string.Empty;
             }
         }
 

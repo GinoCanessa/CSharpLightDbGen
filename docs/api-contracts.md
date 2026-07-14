@@ -55,6 +55,12 @@ This document summarizes the generated API surface developers should expect for 
 
 - `CreateTable(IDbConnection dbConnection, string? dbTableName = null)`
 - `DropTable(IDbConnection dbConnection, string? dbTableName = null)`
+- `EnsureSchema(IDbConnection dbConnection, string? dbTableName = null, IDbTransaction? transaction = null)`
+  - Additive migration for an existing database. Runs `CREATE TABLE IF NOT EXISTS`, reads `PRAGMA table_info(<table>)`, adds any missing model columns via `ALTER TABLE <table> ADD COLUMN …`, then re-runs index creation (`CREATE [UNIQUE] INDEX IF NOT EXISTS …`).
+  - **Additive only:** never drops columns, never changes column types, never backfills data beyond SQLite's own `ADD COLUMN` default fill.
+  - Respects SQLite `ADD COLUMN` restrictions: added columns carry no `PRIMARY KEY`/`UNIQUE` constraint and only constant (non-`raw`) defaults. A `NOT NULL` model column without a constant default is added as **nullable** (SQLite rejects adding a `NOT NULL` column with no default to a populated table); primary-key columns are never added this way.
+  - Idempotent — every `ALTER` is guarded by a `PRAGMA table_info` membership check, so repeated calls are safe. Threads the optional `transaction` onto the `CREATE`/`PRAGMA`/`ALTER`/index commands.
+  - Also exposed as an extension: `dbConnection.EnsureSchema<TModel>(string? dbTableName = null, IDbTransaction? transaction = null)`.
 
 ## Key Utilities
 

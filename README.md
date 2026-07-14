@@ -97,7 +97,9 @@ customer.Delete(db);
 
 ### Standard Table (`[LdgSQLiteTable]`)
 
-**Schema:** `CreateTable`, `DropTable`
+**Schema:** `CreateTable`, `DropTable`, `EnsureSchema`
+
+> **Additive migration (`EnsureSchema`):** `EnsureSchema(dbConnection, dbTableName?, transaction?)` brings an existing table up to the current model without dropping data: it runs `CREATE TABLE IF NOT EXISTS`, reads `PRAGMA table_info`, adds any missing columns with `ALTER TABLE … ADD COLUMN`, and (re)creates missing indexes (`IF NOT EXISTS`). It is **additive only** — it never drops columns, changes column types, or backfills beyond SQLite's own `ADD COLUMN` default fill. Added columns cannot carry `PRIMARY KEY`/`UNIQUE` constraints or non-constant defaults; a `NOT NULL` model column lacking a constant default is added as nullable (SQLite forbids adding a `NOT NULL` column with no default to a populated table). Running it repeatedly is idempotent. Available as an extension too: `dbConnection.EnsureSchema<MyModel>()`.
 
 > **Foreign-key enforcement:** SQLite requires `PRAGMA foreign_keys = ON` **per connection** for foreign-key constraints (including `ON DELETE`/`ON UPDATE` actions) to be enforced. `CreateTable` does **not** emit this PRAGMA — it is connection-scoped and therefore the caller's responsibility. Enable it on each connection before relying on referential actions.
 
