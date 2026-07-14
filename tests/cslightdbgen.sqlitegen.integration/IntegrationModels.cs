@@ -28,6 +28,27 @@ public partial record class Order
     public string Description { get; set; } = string.Empty;
 }
 
+[LdgSQLiteTable("jobs")]
+public partial class Job
+{
+    [LdgSQLiteKey]
+    public int JobId { get; set; }
+
+    public string JobName { get; set; } = string.Empty;
+
+    [LdgSQLiteDefault(0)]
+    public int RetryCount { get; set; }
+
+    [LdgSQLiteDefault("queued")]
+    public string Status { get; set; } = string.Empty;
+
+    [LdgSQLiteDefault("CURRENT_TIMESTAMP", raw: true)]
+    public string CreatedAt { get; set; } = string.Empty;
+
+    [LdgSQLiteDefault(true)]
+    public bool IsActive { get; set; }
+}
+
 [LdgSQLiteFtsTable("article_source")]
 public partial class ArticleSearch
 {

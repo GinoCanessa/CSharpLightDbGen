@@ -14,6 +14,7 @@ public class GeneratorAttributes
     internal const string _ldgSQLiteIgnore = "LdgSQLiteIgnore";
     internal const string _ldgSQLiteUnique = "LdgSQLiteUnique";
     internal const string _ldgSQLiteMultiSelect = "LdgSQLiteMultiSelect";
+    internal const string _ldgSQLiteDefault = "LdgSQLiteDefault";
 
     internal const string _ldgSQLiteFtsTable = "LdgSQLiteFtsTable";
     internal const string _ldgSQLiteFtsUnindexed = "LdgSQLiteFtsUnindexed";
@@ -27,6 +28,7 @@ public class GeneratorAttributes
         _ldgSQLiteIgnore,
         _ldgSQLiteUnique,
         _ldgSQLiteMultiSelect,
+        _ldgSQLiteDefault,
         _ldgSQLiteFtsTable,
         _ldgSQLiteFtsUnindexed,
         ];
@@ -118,6 +120,19 @@ public class GeneratorAttributes
             {
                 public {{{_ldgSQLiteMultiSelect}}}()
                 {
+                }
+            }
+
+            [System.AttributeUsage(System.AttributeTargets.Property, Inherited = false, AllowMultiple = false)]
+            public class {{{_ldgSQLiteDefault}}} : System.Attribute
+            {
+                public object? Value { get; set; }
+                public bool Raw { get; set; }
+
+                public {{{_ldgSQLiteDefault}}}(object? value = null, bool raw = false)
+                {
+                    Value = value;
+                    Raw = raw;
                 }
             }
 

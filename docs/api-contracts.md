@@ -21,6 +21,12 @@ This document summarizes the generated API surface developers should expect for 
 - `LdgSQLiteForeignKey(string? referenceTable = null, string? referenceColumn = null, string? modelTypeName = null)`
 - `LdgSQLiteIgnore()`
 - `LdgSQLiteUnique()`
+- `LdgSQLiteDefault(object? value = null, bool raw = false)`
+  - Emits a `DEFAULT` clause in the generated `CREATE TABLE` DDL for the column.
+  - `string` values are rendered as SQL string literals with embedded `'` doubled (e.g. `DEFAULT 'queued'`).
+  - `bool` values render as `1`/`0`; numeric and other literals render verbatim (e.g. `DEFAULT 0`).
+  - `raw: true` emits the string value as an unquoted SQL expression (e.g. `LdgSQLiteDefault("CURRENT_TIMESTAMP", raw: true)` → `DEFAULT CURRENT_TIMESTAMP`).
+  - A `null` (or omitted) value emits no clause. Not applicable to `[LdgSQLiteFtsTable]` models (FTS5 columns cannot carry defaults).
 - `LdgSQLiteMultiSelect()`
 - `LdgSQLiteFtsUnindexed()`
 

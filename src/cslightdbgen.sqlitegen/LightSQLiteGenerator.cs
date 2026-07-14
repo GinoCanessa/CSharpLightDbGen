@@ -510,12 +510,54 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 !memberIsNonScalar &&
                 (hasMultiSelectAttr || isPrimaryKey || propName.EndsWith("Key"));
 
+            // check for a column default (literal, boolean, numeric, or raw SQL expression)
+            string defaultClause = string.Empty;
+            foreach (AttributeListSyntax defAls in pds.AttributeLists)
+            {
+                foreach (AttributeSyntax defAttr in defAls.Attributes.Where(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteDefault))
+                {
+                    ExpressionSyntax? defaultValueExpr = null;
+                    bool defaultRaw = false;
+                    int positional = 0;
+
+                    foreach (AttributeArgumentSyntax arg in defAttr.ArgumentList?.Arguments ?? [])
+                    {
+                        string? argName = arg.NameColon?.Name.ToString() ?? arg.NameEquals?.Name.ToString();
+
+                        if ((argName == "raw") || (argName == "Raw"))
+                        {
+                            defaultRaw = arg.Expression.ToString() == "true";
+                        }
+                        else if ((argName == "value") || (argName == "Value"))
+                        {
+                            defaultValueExpr = arg.Expression;
+                        }
+                        else if (argName == null)
+                        {
+                            if (positional == 0)
+                            {
+                                defaultValueExpr = arg.Expression;
+                            }
+                            else if (positional == 1)
+                            {
+                                defaultRaw = arg.Expression.ToString() == "true";
+                            }
+
+                            positional++;
+                        }
+                    }
+
+                    defaultClause = formatDefault(defaultValueExpr, defaultRaw);
+                }
+            }
+
             // add our column line
             createColLines.Add(
                 $"{pds.Identifier.ToString()} {getSqlType(propTypeName, memberIsEnum, useJson, memberIsNonScalar)}" +
                 $"{(isPrimaryKey ? getPkDirective(pkPropType) : string.Empty)}" +
                 $"{(isUnique ? " UNIQUE" : string.Empty)}" +
-                $"{((nullable || isPrimaryKey) ? string.Empty : " NOT NULL")}");
+                $"{((nullable || isPrimaryKey) ? string.Empty : " NOT NULL")}" +
+                $"{defaultClause}");
 
             // check for foreign key property information
             string? foreignTable = null;
@@ -2679,6 +2721,48 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Renders a SQLite column DEFAULT clause from an <c>[LdgSQLiteDefault]</c> attribute argument.
+    /// </summary>
+    /// <remarks>
+    /// Reads directly from syntax to avoid boxing/enum-conversion hazards. String literals are
+    /// SQL single-quoted (embedded quotes doubled) unless <paramref name="raw"/> is set, in which
+    /// case the unquoted text is emitted verbatim (e.g. <c>CURRENT_TIMESTAMP</c>). Booleans map to
+    /// <c>1</c>/<c>0</c>; numeric and other literals emit their source text. A null/absent value
+    /// yields no clause.
+    /// </remarks>
+    private static string formatDefault(ExpressionSyntax? expr, bool raw)
+    {
+        if (expr is null)
+        {
+            return string.Empty;
+        }
+
+        if (expr is LiteralExpressionSyntax lit)
+        {
+            object? val = lit.Token.Value;
+
+            if (val is null)
+            {
+                return string.Empty;
+            }
+
+            if (val is string s)
+            {
+                return raw ? $" DEFAULT {s}" : $" DEFAULT '{s.Replace("'", "''")}'";
+            }
+
+            if (val is bool b)
+            {
+                return b ? " DEFAULT 1" : " DEFAULT 0";
+            }
+
+            return $" DEFAULT {lit.Token.Text}";
+        }
+
+        return $" DEFAULT {expr.ToString()}";
     }
 
     /// <summary>

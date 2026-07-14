@@ -86,6 +86,7 @@ customer.Delete(db);
 | `LdgSQLiteForeignKey(refTable?, refColumn?, modelTypeName?)` | Property | Declares a foreign key relationship |
 | `LdgSQLiteIndex(columns...)` | Class | Emits a composite index on the specified columns |
 | `LdgSQLiteUnique` | Property | Adds a `UNIQUE` constraint |
+| `LdgSQLiteDefault(value?, raw?)` | Property | Emits a column `DEFAULT` clause. String values are SQL-quoted (embedded `'` doubled); `bool` maps to `1`/`0`; numeric values render as-is. Set `raw: true` to emit an unquoted SQL expression such as `CURRENT_TIMESTAMP`. |
 | `LdgSQLiteMultiSelect` | Property | Emits an `IEnumerable<T>? {Name}Values` parameter on filter/delete helpers that renders as a SQL `IN (...)` clause. Implicitly applied to `[LdgSQLiteKey]` primary keys and to any non-array property whose name ends in `Key`. Non-scalar / JSON / collection properties are not eligible. |
 | `LdgSQLiteIgnore` | Property | Excludes the property from generation |
 | `LdgSQLiteFtsTable(sourceTable, tableName?)` | Class | Generates an FTS5 full-text search table |

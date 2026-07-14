@@ -46,6 +46,36 @@ public sealed class MetaTag
 }
 """;
 
+    public const string DefaultsFixture = """
+using CsLightDbGen.SQLiteGenerator;
+
+namespace CsLightDbGen.SQLiteGenerator;
+
+[LdgSQLiteTable("defaults_table")]
+public partial class DefaultsEntity
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+
+    [LdgSQLiteDefault(0)]
+    public int RetryCount { get; set; }
+
+    [LdgSQLiteDefault("queued")]
+    public string Status { get; set; } = string.Empty;
+
+    [LdgSQLiteDefault("CURRENT_TIMESTAMP", raw: true)]
+    public string CreatedAt { get; set; } = string.Empty;
+
+    [LdgSQLiteDefault(true)]
+    public bool IsActive { get; set; }
+
+    [LdgSQLiteDefault("O'Brien")]
+    public string EscapedName { get; set; } = string.Empty;
+
+    public string NoDefault { get; set; } = string.Empty;
+}
+""";
+
     public const string MultiSelectFixture = """
 using System.Collections.Generic;
 using CsLightDbGen.SQLiteGenerator;

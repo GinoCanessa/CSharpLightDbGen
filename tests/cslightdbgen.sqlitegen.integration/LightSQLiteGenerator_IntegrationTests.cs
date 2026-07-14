@@ -271,6 +271,42 @@ public class LightSQLiteGenerator_IntegrationTests
         Customer.DropTable(db).ShouldBeTrue();
     }
 
+    [Fact]
+    public void ColumnDefaults_ApplyWhenColumnsOmitted()
+    {
+        using var db = OpenInMemory();
+        Job.CreateTable(db).ShouldBeTrue();
+
+        // Insert a row that omits every defaulted column; SQLite must fill them
+        // from the DDL DEFAULT clauses emitted by the generator.
+        using (IDbCommand insert = db.CreateCommand())
+        {
+            insert.CommandText = "INSERT INTO jobs (JobName) VALUES ('build');";
+            insert.ExecuteNonQuery();
+        }
+
+        Job? row = Job.SelectSingle(db, JobName: "build");
+        row.ShouldNotBeNull();
+        row!.RetryCount.ShouldBe(0);
+        row.Status.ShouldBe("queued");
+        row.IsActive.ShouldBeTrue();
+        row.CreatedAt.ShouldNotBeNullOrWhiteSpace();
+
+        // An explicit value still overrides the default.
+        using (IDbCommand insertExplicit = db.CreateCommand())
+        {
+            insertExplicit.CommandText = "INSERT INTO jobs (JobName, Status, RetryCount) VALUES ('deploy', 'running', 3);";
+            insertExplicit.ExecuteNonQuery();
+        }
+
+        Job? explicitRow = Job.SelectSingle(db, JobName: "deploy");
+        explicitRow.ShouldNotBeNull();
+        explicitRow!.Status.ShouldBe("running");
+        explicitRow.RetryCount.ShouldBe(3);
+
+        Job.DropTable(db).ShouldBeTrue();
+    }
+
     private static SqliteConnection OpenInMemory()
     {
         var connection = new SqliteConnection("Data Source=:memory:");
