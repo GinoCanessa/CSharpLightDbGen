@@ -976,20 +976,31 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                          {{{(pkPropType == "long" ? "internal static long _indexValue = 0;" : string.Empty)}}}
                          {{{(pkPropType == "long" ? "public static long GetIndex() => Interlocked.Increment(ref _indexValue);" : string.Empty)}}}
 
-                         private static string[]? ResolveOrderByProperties(string[]? orderByProperties)
+                         private static string[]? ResolveOrderByProperties(string[]? orderByProperties, string[]? orderByDirections, string? orderByDirection)
                          {
                              if ((orderByProperties == null) || (orderByProperties.Length == 0))
                              {
                                  return null;
                              }
 
+                             bool defaultDescending = orderByDirection?.StartsWith("d", StringComparison.OrdinalIgnoreCase) == true;
+
                              List<string> resolvedOrderByProperties = new(orderByProperties.Length);
-                             foreach (string orderByProperty in orderByProperties)
+                             for (int orderByIndex = 0; orderByIndex < orderByProperties.Length; orderByIndex++)
                              {
-                                 if (!string.IsNullOrWhiteSpace(orderByProperty) && SQLiteColumnNames.Contains(orderByProperty))
+                                 string orderByProperty = orderByProperties[orderByIndex];
+                                 if (string.IsNullOrWhiteSpace(orderByProperty) || !SQLiteColumnNames.Contains(orderByProperty))
                                  {
-                                     resolvedOrderByProperties.Add(orderByProperty);
+                                     continue;
                                  }
+
+                                 bool descending = defaultDescending;
+                                 if ((orderByDirections != null) && (orderByIndex < orderByDirections.Length) && !string.IsNullOrWhiteSpace(orderByDirections[orderByIndex]))
+                                 {
+                                     descending = orderByDirections[orderByIndex].StartsWith("d", StringComparison.OrdinalIgnoreCase);
+                                 }
+
+                                 resolvedOrderByProperties.Add(orderByProperty + (descending ? " DESC" : " ASC"));
                              }
 
                              return resolvedOrderByProperties.Count > 0
@@ -1161,7 +1172,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             bool compareStringsWithLike = false,
                             int? resultLimit = null,
                             int? resultOffset = null,
-                            {{{string.Join(", ", getFnFilterParams(true, true))}}}, IDbTransaction? transaction = null)
+                            {{{string.Join(", ", getFnFilterParams(true, true))}}}, IDbTransaction? transaction = null, string[]? orderByDirections = null)
                         {
                             dbTableName ??= "{{{tableName}}}";
 
@@ -1174,7 +1185,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                              string joiner = orJoinConditions ? " OR " : " AND ";
                              string stringComparator = compareStringsWithLike ? " LIKE " : " = ";
                              bool addedCondition = false;
-                             string[]? resolvedOrderByProperties = ResolveOrderByProperties(orderByProperties);
+                             string[]? resolvedOrderByProperties = ResolveOrderByProperties(orderByProperties, orderByDirections, orderByDirection);
                              {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
                                          
                              {{{string.Join(_line_2, getConditionLines(true, true, true, true))}}}
@@ -1182,14 +1193,6 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                              if ((resolvedOrderByProperties != null) && (resolvedOrderByProperties.Length > 0))
                              {
                                  command.CommandText += $" ORDER BY {string.Join(", ", resolvedOrderByProperties)}";
-                                 if (orderByDirection?.StartsWith("d", StringComparison.OrdinalIgnoreCase) == true)
-                                 {
-                                     command.CommandText += $" DESC";
-                                }
-                                else
-                                {
-                                    command.CommandText += $" ASC";
-                                }
                             }
                                 
                             if (resultLimit.HasValue && (resultLimit.Value > 0))
@@ -1223,7 +1226,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             bool compareStringsWithLike = false,
                             int? resultLimit = null,
                             int? resultOffset = null,
-                            {{{string.Join(", ", getFnFilterParams(true, true))}}}, IDbTransaction? transaction = null)
+                            {{{string.Join(", ", getFnFilterParams(true, true))}}}, IDbTransaction? transaction = null, string[]? orderByDirections = null)
                         {
                             dbTableName ??= "{{{tableName}}}";
 
@@ -1234,7 +1237,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                              string joiner = orJoinConditions ? " OR " : " AND ";
                              string stringComparator = compareStringsWithLike ? " LIKE " : " = ";
                              bool addedCondition = false;
-                             string[]? resolvedOrderByProperties = ResolveOrderByProperties(orderByProperties);
+                             string[]? resolvedOrderByProperties = ResolveOrderByProperties(orderByProperties, orderByDirections, orderByDirection);
                              {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
  
                              {{{string.Join(_line_2, getConditionLines(true, true, true, true))}}}
@@ -1242,14 +1245,6 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                              if ((resolvedOrderByProperties != null) && (resolvedOrderByProperties.Length > 0))
                              {
                                  command.CommandText += $" ORDER BY {string.Join(", ", resolvedOrderByProperties)}";
-                                 if (orderByDirection?.StartsWith("d", StringComparison.OrdinalIgnoreCase) == true)
-                                 {
-                                     command.CommandText += $" DESC";
-                                }
-                                else
-                                {
-                                    command.CommandText += $" ASC";
-                                }
                             }
 
                             if (resultLimit.HasValue && (resultLimit.Value > 0))
@@ -2010,7 +2005,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             bool compareStringsWithLike = false,
                             int? resultLimit = null,
                             int? resultOffset = null,
-                            {{{string.Join(", ", getFnFilterParams(true, true))}}}, IDbTransaction? transaction = null)
+                            {{{string.Join(", ", getFnFilterParams(true, true))}}}, IDbTransaction? transaction = null, string[]? orderByDirections = null)
                             where T : {{{className}}}
                         {
                             return {{{className}}}.SelectList(
@@ -2022,7 +2017,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                 compareStringsWithLike,
                                 resultLimit,
                                 resultOffset,
-                                {{{string.Join(", ", getFnFilterArgs(true, true))}}}, transaction);
+                                {{{string.Join(", ", getFnFilterArgs(true, true))}}}, transaction, orderByDirections);
                         }
 
                         public static IEnumerable<{{{className}}}> SelectEnumerable<T>(
@@ -2034,7 +2029,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             bool compareStringsWithLike = false,
                             int? resultLimit = null,
                             int? resultOffset = null,
-                            {{{string.Join(", ", getFnFilterParams(true, true))}}}, IDbTransaction? transaction = null)
+                            {{{string.Join(", ", getFnFilterParams(true, true))}}}, IDbTransaction? transaction = null, string[]? orderByDirections = null)
                             where T : {{{className}}}
                         {
                             return {{{className}}}.SelectEnumerable(
@@ -2046,7 +2041,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                 compareStringsWithLike,
                                 resultLimit,
                                 resultOffset,
-                                {{{string.Join(", ", getFnFilterArgs(true, true))}}}, transaction);
+                                {{{string.Join(", ", getFnFilterArgs(true, true))}}}, transaction, orderByDirections);
                         }
 
                         public static int SelectCount<T>(
@@ -3013,20 +3008,31 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                              {{{string.Join(_comma_line_5, tableColInfo.Select(c => $"\"{c.name}\""))}}}
                          };
 
-                         private static string[]? ResolveOrderByProperties(string[]? orderByProperties)
+                         private static string[]? ResolveOrderByProperties(string[]? orderByProperties, string[]? orderByDirections, string? orderByDirection)
                          {
                              if ((orderByProperties == null) || (orderByProperties.Length == 0))
                              {
                                  return null;
                              }
 
+                             bool defaultDescending = orderByDirection?.StartsWith("d", StringComparison.OrdinalIgnoreCase) == true;
+
                              List<string> resolvedOrderByProperties = new(orderByProperties.Length);
-                             foreach (string orderByProperty in orderByProperties)
+                             for (int orderByIndex = 0; orderByIndex < orderByProperties.Length; orderByIndex++)
                              {
-                                 if (!string.IsNullOrWhiteSpace(orderByProperty) && SQLiteColumnNames.Contains(orderByProperty))
+                                 string orderByProperty = orderByProperties[orderByIndex];
+                                 if (string.IsNullOrWhiteSpace(orderByProperty) || !SQLiteColumnNames.Contains(orderByProperty))
                                  {
-                                     resolvedOrderByProperties.Add(orderByProperty);
+                                     continue;
                                  }
+
+                                 bool descending = defaultDescending;
+                                 if ((orderByDirections != null) && (orderByIndex < orderByDirections.Length) && !string.IsNullOrWhiteSpace(orderByDirections[orderByIndex]))
+                                 {
+                                     descending = orderByDirections[orderByIndex].StartsWith("d", StringComparison.OrdinalIgnoreCase);
+                                 }
+
+                                 resolvedOrderByProperties.Add(orderByProperty + (descending ? " DESC" : " ASC"));
                              }
 
                              return resolvedOrderByProperties.Count > 0
@@ -3134,12 +3140,12 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             List<string> matchTerms,
                             string? dbTableName = null,
                             string[]? orderByProperties = null,
-                            string? orderByDirection = null, IDbTransaction? transaction = null)
+                            string? orderByDirection = null, IDbTransaction? transaction = null, string[]? orderByDirections = null)
                         {
                              dbTableName ??= "{{{tableName}}}";
  
                              List<{{{className}}}> results = new();
-                             string[]? resolvedOrderByProperties = ResolveOrderByProperties(orderByProperties);
+                             string[]? resolvedOrderByProperties = ResolveOrderByProperties(orderByProperties, orderByDirections, orderByDirection);
  
                              IDbCommand command = dbConnection.CreateCommand();
                              if (transaction != null) command.Transaction = transaction;
@@ -3164,14 +3170,6 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                              if ((resolvedOrderByProperties != null) && (resolvedOrderByProperties.Length > 0))
                              {
                                  command.CommandText += $" ORDER BY {string.Join(", ", resolvedOrderByProperties)}";
-                                 if (orderByDirection?.StartsWith("d", StringComparison.OrdinalIgnoreCase) == true)
-                                 {
-                                     command.CommandText += $" DESC";
-                                }
-                                else
-                                {
-                                    command.CommandText += $" ASC";
-                                }
                             }
                     
                             using (IDataReader reader = command.ExecuteReader())
@@ -3246,10 +3244,10 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     [global::System.Runtime.CompilerServices.CompilerGeneratedAttribute()]
                     public static class {{{className}}}Extensions
                     {
-                        public static List<{{{className}}}> Select<T>(this IDbConnection dbCon, List<string> matchTerms, string? dbTableName = null, string[]? orderByProperties = null, string? orderByDirection = null, IDbTransaction? transaction = null)
+                        public static List<{{{className}}}> Select<T>(this IDbConnection dbCon, List<string> matchTerms, string? dbTableName = null, string[]? orderByProperties = null, string? orderByDirection = null, IDbTransaction? transaction = null, string[]? orderByDirections = null)
                             where T : {{{className}}}
                         {
-                            return {{{className}}}.Select(dbCon, matchTerms, dbTableName, orderByProperties, orderByDirection, transaction);
+                            return {{{className}}}.Select(dbCon, matchTerms, dbTableName, orderByProperties, orderByDirection, transaction, orderByDirections);
                         }
 
                         public static int SelectCount<T>(this IDbConnection dbCon, List<string> matchTerms, string? dbTableName = null, IDbTransaction? transaction = null)

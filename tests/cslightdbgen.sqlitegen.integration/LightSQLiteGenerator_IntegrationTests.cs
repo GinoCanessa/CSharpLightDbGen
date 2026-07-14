@@ -655,6 +655,67 @@ public class LightSQLiteGenerator_IntegrationTests
         Job.DropTable(db).ShouldBeTrue();
     }
 
+    [Fact]
+    public void OrderBy_MultiColumn_PerColumnDirection_Works()
+    {
+        using var db = OpenInMemory();
+        Customer.CreateTable(db).ShouldBeTrue();
+
+        // Two customers share Age 30 so the secondary Name sort key is exercised.
+        Customer.Insert(db, new List<Customer>
+        {
+            NewCustomer("Ana", 30, 1, 1),
+            NewCustomer("Bob", 30, 1, 1),
+            NewCustomer("Cy", 20, 1, 1),
+            NewCustomer("Dan", 40, 1, 1)
+        });
+
+        // Age DESC, then Name ASC.
+        List<Customer> descAsc = Customer.SelectList(
+            db,
+            orderByProperties: new[] { "Age", "Name" },
+            orderByDirections: new[] { "desc", "asc" });
+        descAsc.Select(c => c.Name).ToList().ShouldBe(new List<string> { "Dan", "Ana", "Bob", "Cy" });
+
+        // Per-column direction: Age ASC, then Name DESC (proves a single trailing direction is not applied to all columns).
+        List<Customer> ascDesc = Customer.SelectList(
+            db,
+            orderByProperties: new[] { "Age", "Name" },
+            orderByDirections: new[] { "asc", "desc" });
+        ascDesc.Select(c => c.Name).ToList().ShouldBe(new List<string> { "Cy", "Bob", "Ana", "Dan" });
+
+        // An unknown column in the middle is dropped, but directions stay paired to the surviving columns
+        // by their original input index (Name keeps "asc", not the dropped "Bogus" slot's "desc").
+        List<Customer> withUnknownMidList = Customer.SelectList(
+            db,
+            orderByProperties: new[] { "Age", "Bogus", "Name" },
+            orderByDirections: new[] { "desc", "desc", "asc" });
+        withUnknownMidList.Select(c => c.Name).ToList().ShouldBe(new List<string> { "Dan", "Ana", "Bob", "Cy" });
+
+        // Fewer directions than columns: the missing trailing slots fall back to the scalar orderByDirection.
+        List<Customer> shortDirections = Customer.SelectList(
+            db,
+            orderByProperties: new[] { "Age", "Name" },
+            orderByDirection: "desc",
+            orderByDirections: new[] { "asc" });
+        shortDirections.Select(c => c.Name).ToList().ShouldBe(new List<string> { "Cy", "Bob", "Ana", "Dan" });
+
+        // SelectEnumerable honors per-column directions too.
+        List<Customer> viaEnumerable = Customer.SelectEnumerable(
+            db,
+            orderByProperties: new[] { "Age", "Name" },
+            orderByDirections: new[] { "asc", "desc" }).ToList();
+        viaEnumerable.Select(c => c.Name).ToList().ShouldBe(new List<string> { "Cy", "Bob", "Ana", "Dan" });
+
+        // The extension wrapper threads the new orderByDirections argument.
+        List<Customer> viaExtension = db.SelectList<Customer>(
+            orderByProperties: new[] { "Age", "Name" },
+            orderByDirections: new[] { "desc", "asc" });
+        viaExtension.Select(c => c.Name).ToList().ShouldBe(new List<string> { "Dan", "Ana", "Bob", "Cy" });
+
+        Customer.DropTable(db).ShouldBeTrue();
+    }
+
     private static SqliteConnection OpenInMemory()
     {
         var connection = new SqliteConnection("Data Source=:memory:");

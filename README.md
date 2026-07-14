@@ -109,8 +109,9 @@ customer.Delete(db);
 - Nullable tri-state filters (`ScoreIsNull: true`)
 - `IN` / `NOT IN` list filters (`SegmentKeyValues: [1, 2, 3]`, `StatusNotInValues: ["complete", "failed"]`) — generated for any property marked `[LdgSQLiteMultiSelect]`, the primary key, or (legacy heuristic) a name ending in `Key`
 - `LIKE` matching for strings (`compareStringsWithLike: true`)
-- Paging (`resultLimit`, `resultOffset`) and ordering (`orderByProperties`, `orderByDirection`)
-- Unknown `orderByProperties` values are ignored; generated models expose `SQLiteColumnNames` for the valid SQLite column names
+- Paging (`resultLimit`, `resultOffset`) and ordering (`orderByProperties`, `orderByDirection`, `orderByDirections`)
+- Multi-column ordering with per-column direction: pass `orderByProperties: ["Age", "Name"]` together with `orderByDirections: ["desc", "asc"]` to emit `ORDER BY Age DESC, Name ASC` (each entry `d*` = descending, anything else = ascending). `orderByDirection` remains the single fallback direction, applied to any column without a matching `orderByDirections` entry (including when `orderByDirections` is shorter than `orderByProperties` or omitted)
+- Unknown `orderByProperties` values are ignored; directions stay paired to the surviving columns by their original position, so an invalid column in the middle of the list does not shift later columns onto the wrong direction. Generated models expose `SQLiteColumnNames` for the valid SQLite column names
 - Optional trailing `transaction` (`IDbTransaction?`) enrolls the read in a caller-supplied transaction. When omitted, the read still honors any ambient transaction already open on the connection; pass the transaction explicitly for deterministic composition.
 
 **Writes:** `Insert`, `InsertReturning`, `Update`, `UpdateReturning`, `Upsert`, `Delete` — single value, list, or enumerable overloads
@@ -133,7 +134,7 @@ customer.Delete(db);
 
 `CreateTable`, `DropTable`, `Populate`, `Select` (via `MATCH`), `SelectCount`
 - Optional HTML stripping during `Populate(..., sanitizeText: true)`
-- Generated FTS models also expose `SQLiteColumnNames`, and invalid `orderByProperties` values are ignored
+- Generated FTS models also expose `SQLiteColumnNames`, and invalid `orderByProperties` values are ignored. FTS `Select` supports the same multi-column `orderByDirections` (per-column direction) as regular reads
 - `Populate`, `Select`, and `SelectCount` accept the same optional trailing `transaction` (`IDbTransaction?`) for transactional composition
 
 ## Full-Text Search Example

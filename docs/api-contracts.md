@@ -82,7 +82,7 @@ This document summarizes the generated API surface developers should expect for 
 - `dbTableName`: override table name.
 - `orJoinConditions`: `false` = `AND`, `true` = `OR` across filters.
 - `compareStringsWithLike`: `false` = `=`, `true` = `LIKE` for string filters.
-- `orderByProperties`, `orderByDirection`: ordering controls (`d*` starts descending).
+- `orderByProperties`, `orderByDirection`, `orderByDirections`: ordering controls. `orderByProperties` is the ordered list of columns; unknown columns are dropped. `orderByDirections` is an optional parallel array giving a per-column direction (`d*` = descending, anything else = ascending), matched to `orderByProperties` **by original input index** so dropped unknown columns never shift later columns onto the wrong direction. `orderByDirection` is the single fallback direction (`d*` starts descending), used for any column that has no matching `orderByDirections` entry (including when `orderByDirections` is `null` or shorter than `orderByProperties`). Passed as the trailing optional parameter (`..., IDbTransaction? transaction = null, string[]? orderByDirections = null`) on `SelectList`/`SelectEnumerable` and their extension wrappers.
 - `resultLimit`, `resultOffset`: paging controls for list/enumerable methods.
 - `transaction`: optional `IDbTransaction?`. Enrolls the read in a caller-supplied transaction. When omitted, no explicit `command.Transaction` is set, so any transaction already open on the connection remains in effect for the read.
 
@@ -174,7 +174,7 @@ Mapped internally to SQL operators:
 - `CreateTable(IDbConnection dbConnection, string? dbTableName = null)`
 - `DropTable(IDbConnection dbConnection, string? dbTableName = null)`
 - `Populate(IDbConnection dbConnection, string? dbTableName = null, string? sourceTableName = null, bool sanitizeText = false, IDbTransaction? transaction = null)`
-- `Select(IDbConnection dbConnection, List<string> matchTerms, string? dbTableName = null, string[]? orderByProperties = null, string? orderByDirection = null, IDbTransaction? transaction = null)`
+- `Select(IDbConnection dbConnection, List<string> matchTerms, string? dbTableName = null, string[]? orderByProperties = null, string? orderByDirection = null, IDbTransaction? transaction = null, string[]? orderByDirections = null)` — supports the same per-column `orderByDirections` semantics as regular reads.
 - `SelectCount(IDbConnection dbConnection, List<string> matchTerms, string? dbTableName = null, IDbTransaction? transaction = null)`
 
 ### FTS Behaviors
