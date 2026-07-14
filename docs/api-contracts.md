@@ -12,8 +12,13 @@ This document summarizes the generated API surface developers should expect for 
   - Generates regular table CRUD/query API.
 - `LdgSQLiteFtsTable(string sourceTable, string? tableName = null)`
   - Generates FTS5 table/search API.
-- `LdgSQLiteIndex(params string[] columns)`
-  - Emits index creation SQL.
+- `LdgSQLiteIndex(params string[] columns)` with named args `bool Unique = false`, `string? Where = null`
+  - Emits index creation SQL for the listed columns.
+  - `Unique = true` emits `CREATE UNIQUE INDEX` instead of `CREATE INDEX`.
+  - `Where = "<predicate>"` emits a partial index (`... WHERE <predicate>`). The predicate is inlined verbatim into the DDL.
+  - Unique and/or partial indexes receive a deterministic (FNV-1a) name suffix so repeated schema application does not create duplicate indexes.
+- `LdgSQLiteUnique(params string[] columns)` *(class-level use)*
+  - Declares a multi-column `UNIQUE (col1, col2, ...)` table constraint. `AllowMultiple = true`, so a model may declare several composite unique constraints.
 - `LdgSQLiteForeignKeyComposite(string[] columns, string referenceTable, string[] referenceColumns, LdgSQLiteFkAction onDelete = NoAction, LdgSQLiteFkAction onUpdate = NoAction)`
   - Emits a multi-column (composite) `FOREIGN KEY (...) REFERENCES <table> (...)` table constraint. `AllowMultiple = true`, so a model may declare several composite foreign keys.
   - `onDelete`/`onUpdate` use the same `LdgSQLiteFkAction` referential actions as `LdgSQLiteForeignKey`.
@@ -29,7 +34,8 @@ This document summarizes the generated API surface developers should expect for 
   - Single-column foreign key. `onDelete`/`onUpdate` emit `ON DELETE <action>` / `ON UPDATE <action>` clauses in the `CREATE TABLE` DDL when set to a non-`NoAction` value.
   - `LdgSQLiteFkAction` members map to SQLite referential actions: `NoAction` → `NO ACTION` (omitted), `Restrict` → `RESTRICT`, `SetNull` → `SET NULL`, `SetDefault` → `SET DEFAULT`, `Cascade` → `CASCADE`.
 - `LdgSQLiteIgnore()`
-- `LdgSQLiteUnique()`
+- `LdgSQLiteUnique(params string[] columns)` *(property-level use)*
+  - Adds an inline `UNIQUE` constraint to the column. Column arguments are ignored for property-level use; the same attribute is dual-targeted so it may also be applied at the class level for composite unique constraints (see Class Level).
 - `LdgSQLiteDefault(object? value = null, bool raw = false)`
   - Emits a `DEFAULT` clause in the generated `CREATE TABLE` DDL for the column.
   - `string` values are rendered as SQL string literals with embedded `'` doubled (e.g. `DEFAULT 'queued'`).

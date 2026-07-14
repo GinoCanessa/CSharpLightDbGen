@@ -71,6 +71,10 @@ public class GeneratorAttributes
             public class {{{_ldgSQLiteIndex}}} : System.Attribute
             {
                 public string[] Columns { get; set; }
+
+                public bool Unique { get; set; }
+
+                public string? Where { get; set; }
         
                 public {{{_ldgSQLiteIndex }}}(params string[] columns)
                 {
@@ -141,11 +145,14 @@ public class GeneratorAttributes
                 }
             }
 
-            [System.AttributeUsage(System.AttributeTargets.Property, Inherited = false, AllowMultiple = true)]
+            [System.AttributeUsage(System.AttributeTargets.Property | System.AttributeTargets.Class, Inherited = false, AllowMultiple = true)]
             public class {{{_ldgSQLiteUnique}}} : System.Attribute
             {
-                public {{{_ldgSQLiteUnique}}}()
+                public string[] Columns { get; set; }
+
+                public {{{_ldgSQLiteUnique}}}(params string[] columns)
                 {
+                    Columns = columns;
                 }
             }
 

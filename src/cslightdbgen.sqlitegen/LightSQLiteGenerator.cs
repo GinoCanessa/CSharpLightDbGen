@@ -839,6 +839,27 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             createTableLines.Add($"PRIMARY KEY ({string.Join(", ", pkCols.Select(c => c.name))})");
         }
 
+        // class-level [LdgSQLiteUnique(cols...)] declares a multi-column UNIQUE table constraint.
+        if (symbolAttributeLookup.Contains(GeneratorAttributes._ldgSQLiteUnique))
+        {
+            foreach (AttributeData ad in symbolAttributeLookup[GeneratorAttributes._ldgSQLiteUnique])
+            {
+                string[] uniqueColumns = ad.ConstructorArguments
+                    .FirstOrDefault()
+                    .Values
+                    .Select(tc => tc.Value?.ToString() ?? string.Empty)
+                    .Where(v => !string.IsNullOrEmpty(v))
+                    .ToArray();
+
+                if (uniqueColumns.Length == 0)
+                {
+                    continue;
+                }
+
+                createTableLines.Add($"UNIQUE ({string.Join(", ", uniqueColumns)})");
+            }
+        }
+
         // SelectDict keys a dictionary by the single primary key, which has no meaning for a
         // composite key, so the method is omitted entirely for composite-key tables.
         string selectDictMethod = compositePk ? string.Empty : $$$""""
@@ -1907,16 +1928,60 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     continue;
                 }
 
+                bool unique = false;
+                string? whereClause = null;
+                foreach (KeyValuePair<string, TypedConstant> na in ad.NamedArguments)
+                {
+                    if (na.Key == "Unique")
+                    {
+                        unique = na.Value.Value is bool b && b;
+                    }
+                    else if (na.Key == "Where")
+                    {
+                        whereClause = na.Value.Value?.ToString();
+                    }
+                }
+
+                bool hasWhere = !string.IsNullOrWhiteSpace(whereClause);
+
+                // index names must stay distinct per (columns, uniqueness, predicate) so a plain
+                // index and a partial/unique index on the same columns do not collide.
                 string indexName = $"IDX_{{dbTableName}}_{(string.Join("_", columns))}";
+                if (unique)
+                {
+                    indexName += "_U";
+                }
+                if (hasWhere)
+                {
+                    indexName += "_" + partialIndexSuffix(whereClause!);
+                }
+
+                string indexKind = unique ? "UNIQUE INDEX" : "INDEX";
 
                 yield return "command = dbConnection.CreateCommand();";
                 yield return "command.CommandText = $\"\"\"";
-                yield return $"    CREATE INDEX IF NOT EXISTS \"{indexName}\" ON \"{{dbTableName}}\" (";
+                yield return $"    CREATE {indexKind} IF NOT EXISTS \"{indexName}\" ON \"{{dbTableName}}\" (";
                 yield return $"        {string.Join(", ", columns.Select(v => $"\"{v}\""))}";
-                yield return "    )";
+                yield return hasWhere ? $"    ) WHERE {whereClause}" : "    )";
                 yield return "    \"\"\";";
                 yield return "command.ExecuteNonQuery();";
                 yield return string.Empty;
+            }
+        }
+
+        // FNV-1a 32-bit hash; deterministic across builds so partial-index names are stable.
+        static string partialIndexSuffix(string value)
+        {
+            unchecked
+            {
+                uint hash = 2166136261;
+                foreach (char c in value)
+                {
+                    hash ^= c;
+                    hash *= 16777619;
+                }
+
+                return hash.ToString("x8");
             }
         }
 

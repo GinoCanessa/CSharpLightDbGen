@@ -131,6 +131,31 @@ public partial class UserWebsite
 }
 """;
 
+    public const string UniqueIndexFixture = """
+using CsLightDbGen.SQLiteGenerator;
+
+namespace CsLightDbGen.SQLiteGenerator;
+
+[LdgSQLiteTable("packages")]
+[LdgSQLiteUnique("Provider", "Subject")]
+[LdgSQLiteIndex("NpmId", "Version", Unique = true, Where = "Status NOT IN ('complete','failed')")]
+public partial class PackageRecord
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+
+    public string Provider { get; set; } = string.Empty;
+
+    public string Subject { get; set; } = string.Empty;
+
+    public string NpmId { get; set; } = string.Empty;
+
+    public string Version { get; set; } = string.Empty;
+
+    public string Status { get; set; } = string.Empty;
+}
+""";
+
     public const string MultiSelectFixture = """
 using System.Collections.Generic;
 using CsLightDbGen.SQLiteGenerator;

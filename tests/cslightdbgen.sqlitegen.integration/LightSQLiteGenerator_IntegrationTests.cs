@@ -387,6 +387,35 @@ public class LightSQLiteGenerator_IntegrationTests
         UserWebsite.DropTable(db).ShouldBeTrue();
     }
 
+    [Fact]
+    public void UniqueConstraintAndPartialIndex_EnforceExpectedUniqueness()
+    {
+        using var db = OpenInMemory();
+        Project.CreateTable(db).ShouldBeTrue();
+
+        // Composite UNIQUE (OrgId, Slug): the same (OrgId, Slug) pair is rejected.
+        Project.Insert(db, new Project { OrgId = 1, Slug = "alpha", ProjectName = "Alpha", IsArchived = 0 });
+        Should.Throw<SqliteException>(() =>
+            Project.Insert(db, new Project { OrgId = 1, Slug = "alpha", ProjectName = "Different", IsArchived = 1 }));
+
+        // A different slug within the same org is allowed.
+        Project.Insert(db, new Project { OrgId = 1, Slug = "beta", ProjectName = "Beta", IsArchived = 0 });
+
+        // Partial UNIQUE INDEX (OrgId, ProjectName) WHERE IsArchived = 0:
+        // two active rows sharing (OrgId, ProjectName) collide.
+        Project.Insert(db, new Project { OrgId = 2, Slug = "s1", ProjectName = "Shared", IsArchived = 0 });
+        Should.Throw<SqliteException>(() =>
+            Project.Insert(db, new Project { OrgId = 2, Slug = "s2", ProjectName = "Shared", IsArchived = 0 }));
+
+        // Archived rows fall outside the predicate, so duplicates are permitted there.
+        Project.Insert(db, new Project { OrgId = 2, Slug = "s3", ProjectName = "Shared", IsArchived = 1 });
+        Project.Insert(db, new Project { OrgId = 2, Slug = "s4", ProjectName = "Shared", IsArchived = 1 });
+
+        Project.SelectCount(db).ShouldBe(5);
+
+        Project.DropTable(db).ShouldBeTrue();
+    }
+
     private static SqliteConnection OpenInMemory()
     {
         var connection = new SqliteConnection("Data Source=:memory:");

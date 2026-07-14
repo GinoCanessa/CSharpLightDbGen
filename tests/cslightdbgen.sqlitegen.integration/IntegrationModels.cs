@@ -82,6 +82,23 @@ public partial class UserWebsite
     public string Role { get; set; } = string.Empty;
 }
 
+[LdgSQLiteTable("projects")]
+[LdgSQLiteUnique("OrgId", "Slug")]
+[LdgSQLiteIndex("OrgId", "ProjectName", Unique = true, Where = "IsArchived = 0")]
+public partial class Project
+{
+    [LdgSQLiteKey]
+    public int ProjectId { get; set; }
+
+    public int OrgId { get; set; }
+
+    public string Slug { get; set; } = string.Empty;
+
+    public string ProjectName { get; set; } = string.Empty;
+
+    public int IsArchived { get; set; }
+}
+
 [LdgSQLiteFtsTable("article_source")]
 public partial class ArticleSearch
 {

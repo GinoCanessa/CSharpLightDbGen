@@ -85,8 +85,8 @@ customer.Delete(db);
 | `LdgSQLiteKey(autoIncrement)` | Property | Designates a primary key column. Applying it to two or more properties declares a **composite** primary key (emitted as a table-level `PRIMARY KEY (...)` constraint). |
 | `LdgSQLiteForeignKey(refTable?, refColumn?, modelTypeName?, onDelete?, onUpdate?)` | Property | Declares a single-column foreign key. `onDelete`/`onUpdate` accept `LdgSQLiteFkAction` (`NoAction`, `Restrict`, `SetNull`, `SetDefault`, `Cascade`) and emit `ON DELETE`/`ON UPDATE` clauses when non-default. |
 | `LdgSQLiteForeignKeyComposite(columns, refTable, refColumns, onDelete?, onUpdate?)` | Class | Declares a multi-column (composite) foreign key. `AllowMultiple = true`. Same `LdgSQLiteFkAction` referential actions as `LdgSQLiteForeignKey`. |
-| `LdgSQLiteIndex(columns...)` | Class | Emits a composite index on the specified columns |
-| `LdgSQLiteUnique` | Property | Adds a `UNIQUE` constraint |
+| `LdgSQLiteIndex(columns..., Unique?, Where?)` | Class | Emits a composite index on the specified columns. Set `Unique = true` for a `CREATE UNIQUE INDEX`; set `Where = "<predicate>"` for a partial index (`... WHERE <predicate>`). Unique/partial indexes get a deterministic name suffix so migrations stay idempotent. |
+| `LdgSQLiteUnique(columns...)` | Property or Class | On a property, adds an inline `UNIQUE` column constraint. On a class, declares a multi-column `UNIQUE (...)` table constraint (`AllowMultiple = true`). |
 | `LdgSQLiteDefault(value?, raw?)` | Property | Emits a column `DEFAULT` clause. String values are SQL-quoted (embedded `'` doubled); `bool` maps to `1`/`0`; numeric values render as-is. Set `raw: true` to emit an unquoted SQL expression such as `CURRENT_TIMESTAMP`. |
 | `LdgSQLiteMultiSelect` | Property | Emits an `IEnumerable<T>? {Name}Values` parameter on filter/delete helpers that renders as a SQL `IN (...)` clause. Implicitly applied to `[LdgSQLiteKey]` primary keys and to any non-array property whose name ends in `Key`. Non-scalar / JSON / collection properties are not eligible. |
 | `LdgSQLiteIgnore` | Property | Excludes the property from generation |
