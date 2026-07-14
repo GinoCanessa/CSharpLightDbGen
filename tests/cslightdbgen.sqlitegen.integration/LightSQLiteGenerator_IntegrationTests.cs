@@ -512,6 +512,71 @@ public class LightSQLiteGenerator_IntegrationTests
         Counter.DropTable(db).ShouldBeTrue();
     }
 
+    [Fact]
+    public void InsertReturning_And_UpdateReturning_HydrateModel_AndBulkInsertSurfacesKeys()
+    {
+        using var db = OpenInMemory();
+        Job.CreateTable(db).ShouldBeTrue();
+
+        // InsertReturning surfaces the generated identity key and the server-computed
+        // CURRENT_TIMESTAMP default in a single round-trip, hydrating the passed instance.
+        Job inserted = new() { JobName = "hydrate-me", Status = "running", RetryCount = 2 };
+        Job returned = Job.InsertReturning(db, inserted);
+
+        ReferenceEquals(returned, inserted).ShouldBeTrue();
+        inserted.JobId.ShouldBeGreaterThan(0);
+        inserted.CreatedAt.ShouldNotBeNullOrWhiteSpace();
+        inserted.Status.ShouldBe("running");
+        inserted.RetryCount.ShouldBe(2);
+
+        // The row actually persisted with the database-computed timestamp.
+        Job? persisted = Job.SelectSingle(db, JobId: inserted.JobId);
+        persisted.ShouldNotBeNull();
+        persisted!.CreatedAt.ShouldBe(inserted.CreatedAt);
+
+        // UpdateReturning reflects the post-update state (RETURNING *).
+        inserted.Status = "done";
+        inserted.RetryCount = 5;
+        Job updated = Job.UpdateReturning(db, inserted);
+        updated.Status.ShouldBe("done");
+        updated.RetryCount.ShouldBe(5);
+
+        Job? persistedAfter = Job.SelectSingle(db, JobId: inserted.JobId);
+        persistedAfter!.Status.ShouldBe("done");
+        persistedAfter.RetryCount.ShouldBe(5);
+
+        Job.DropTable(db).ShouldBeTrue();
+
+        // Bulk key surfacing: both the List<T> (regression) and IEnumerable<T> insert
+        // overloads populate each element's generated identity key.
+        Customer.CreateTable(db).ShouldBeTrue();
+
+        List<Customer> listRows = new()
+        {
+            NewCustomer("List-A", 20, 1, null),
+            NewCustomer("List-B", 21, 1, null),
+        };
+        Customer.Insert(db, listRows);
+        listRows[0].CustomerId.ShouldBeGreaterThan(0);
+        listRows[1].CustomerId.ShouldBeGreaterThan(0);
+        listRows[0].CustomerId.ShouldNotBe(listRows[1].CustomerId);
+
+        Customer[] enumRows =
+        [
+            NewCustomer("Enum-A", 22, 2, null),
+            NewCustomer("Enum-B", 23, 2, null),
+            NewCustomer("Enum-C", 24, 2, null),
+        ];
+        Customer.Insert(db, (IEnumerable<Customer>)enumRows);
+        enumRows[0].CustomerId.ShouldBeGreaterThan(0);
+        enumRows[1].CustomerId.ShouldBeGreaterThan(0);
+        enumRows[2].CustomerId.ShouldBeGreaterThan(0);
+        enumRows[0].CustomerId.ShouldNotBe(enumRows[1].CustomerId);
+        enumRows[1].CustomerId.ShouldNotBe(enumRows[2].CustomerId);
+
+        Customer.DropTable(db).ShouldBeTrue();
+    }
+
     private static SqliteConnection OpenInMemory()
     {
         var connection = new SqliteConnection("Data Source=:memory:");

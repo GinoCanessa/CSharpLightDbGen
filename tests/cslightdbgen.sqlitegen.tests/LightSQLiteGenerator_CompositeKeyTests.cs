@@ -51,7 +51,12 @@ public class LightSQLiteGenerator_CompositeKeyTests
         string source = GetCompositeSource();
 
         source.ShouldContain("public static void Insert(");
-        source.ShouldNotContain("RETURNING");
+
+        // Composite keys are non-identity, so the plain Insert does no auto-increment
+        // round-trip: no identity RETURNING clause and no scalar key hydration.
+        // (The dedicated InsertReturning/UpdateReturning methods emit RETURNING by design.)
+        source.ShouldNotContain("Convert.ToInt64(commandResult)");
+        source.ShouldNotContain("Convert.ToInt32(commandResult)");
     }
 
     [Fact]

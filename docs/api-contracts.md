@@ -90,7 +90,9 @@ This document summarizes the generated API surface developers should expect for 
 - `Insert(IDbConnection dbConnection, T value, ..., bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)`
 - `Insert(IDbConnection dbConnection, List<T> values, ..., bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)`
 - `Insert(IDbConnection dbConnection, IEnumerable<T> values, ..., bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)`
+- `InsertReturning(IDbConnection dbConnection, T value, string? dbTableName = null, bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)` → returns the same `T` instance, hydrated from `RETURNING`
 - `Update(IDbConnection dbConnection, T value, string? dbTableName = null, IDbTransaction? transaction = null)`
+- `UpdateReturning(IDbConnection dbConnection, T value, string? dbTableName = null, IDbTransaction? transaction = null)` → returns the same `T` instance, hydrated from `RETURNING`
 - `Update(IDbConnection dbConnection, IEnumerable<T> values, string? dbTableName = null, IDbTransaction? transaction = null)`
 - `Delete(IDbConnection dbConnection, T value, string? dbTableName = null, IDbTransaction? transaction = null)`
 - `Delete(IDbConnection dbConnection, IEnumerable<T> values, string? dbTableName = null, IDbTransaction? transaction = null)`
@@ -101,6 +103,17 @@ This document summarizes the generated API surface developers should expect for 
 
 - `ignoreDuplicates`: emits `INSERT OR IGNORE`.
 - `insertPrimaryKey`: includes PK in insert statement instead of identity behavior.
+- List/enumerable `Insert` overloads surface each element's generated identity key back onto the passed instances.
+
+### RETURNING / Hydration Options
+
+`InsertReturning` and `UpdateReturning` append a trailing `RETURNING <all columns>` clause
+(requires SQLite ≥ 3.35), read the single returned row, hydrate the passed `value` **in place**,
+and return that same instance. Use them to observe server-computed values in one round-trip:
+
+- The generated identity key and any raw/expression column default (e.g. `CreatedAt = CURRENT_TIMESTAMP`) become visible on the returned instance.
+- `InsertReturning` **omits** raw/expression-default columns from the `INSERT` so SQLite computes them, then reads them back via `RETURNING`. Constant defaults are still bound from the model (identical to `Insert`). This is the one behavioral divergence from `Insert`, which binds every non-identity column.
+- `UpdateReturning` sets every non-PK column (identical `SET` list to `Update`) and hydrates all columns from the updated row.
 
 ### Upsert Options
 
@@ -115,7 +128,7 @@ This document summarizes the generated API surface developers should expect for 
 Every read and write method — standard and FTS, static and extension-wrapper — accepts an
 optional trailing `transaction` parameter (`IDbTransaction? transaction = null`):
 
-- **Writes** (`Insert`/`Update`/`Upsert`/`Delete`, FTS `Populate`): when a transaction is supplied the
+- **Writes** (`Insert`/`InsertReturning`/`Update`/`UpdateReturning`/`Upsert`/`Delete`, FTS `Populate`): when a transaction is supplied the
   method enrolls its command(s) in it and leaves `Commit`/`Rollback` to the caller, so multiple
   writes compose atomically. When omitted, each write opens, commits, and disposes its own
   transaction (unchanged auto-commit behavior).

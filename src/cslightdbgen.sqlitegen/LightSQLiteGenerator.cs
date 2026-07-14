@@ -369,6 +369,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         List<string> createColLines = [];
         List<string> createFKLines = [];
         List<(string name, string addColumnDdl)> alterAddColumns = [];
+        HashSet<string> rawDefaultColumnNames = new(System.StringComparer.Ordinal);
         List<TableColInfoRec> tableColInfo = [];
 
         foreach (MemberDeclarationSyntax member in members)
@@ -586,6 +587,14 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     defaultClause = formatDefault(defaultValueExpr, defaultRaw);
                     defaultIsRaw = defaultRaw;
                 }
+            }
+
+            // Columns whose default is a raw SQL expression (e.g. CURRENT_TIMESTAMP) are computed
+            // by the database. InsertReturning omits them from the INSERT so the engine fills them,
+            // then hydrates the computed value back via RETURNING.
+            if (defaultIsRaw && (defaultClause.Length > 0))
+            {
+                rawDefaultColumnNames.Add(pds.Identifier.ToString());
             }
 
             // add our column line
@@ -1365,6 +1374,67 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             {{{((pkColName == null) || compositePk ? "return" : $"return value.{pkColName}")}}};
                         }
 
+                        public static {{{className}}} InsertReturning(
+                            IDbConnection dbConnection,
+                            {{{className}}} value,
+                            string? dbTableName = null,
+                            bool ignoreDuplicates = false,
+                            bool insertPrimaryKey = false, IDbTransaction? transaction = null)
+                        {
+                            dbTableName ??= "{{{tableName}}}";
+                            {{{getNonIdentityPkInit(pkColName, pkPropType)}}}
+                            {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
+                            string insertLiteral = ignoreDuplicates ? "INSERT OR IGNORE" : "INSERT";
+
+                            bool _ownTxn = transaction is null;
+                            IDbTransaction _txn = transaction ?? dbConnection.BeginTransaction();
+                            try
+                            {
+                                IDbCommand command = dbConnection.CreateCommand();
+                                command.Transaction = _txn;
+                                if (insertPrimaryKey)
+                                {
+                                    command.CommandText = $"""
+                                        {insertLiteral} INTO {dbTableName} (
+                                            {{{string.Join(_comma_line_6, tableColInfo.Where(p => !rawDefaultColumnNames.Contains(p.name)).Select(p => p.name))}}}
+                                        ) VALUES (
+                                            {{{string.Join(_comma_line_6, tableColInfo.Where(p => !rawDefaultColumnNames.Contains(p.name)).Select(p => "$" + p.name))}}}
+                                        ) RETURNING {{{string.Join(", ", tableColInfo.Select(p => p.name))}}};
+                                        """;
+
+                                    {{{string.Join(_line_5, getInsertCommandParamLines(true, null, pkPropType, createParameters: true, instantiateParameters: true, includeIdentity: true, skipRawDefaults: true))}}}
+                                }
+                                else
+                                {
+                                    command.CommandText = $"""
+                                        {insertLiteral} INTO {dbTableName} (
+                                            {{{string.Join(_comma_line_6, tableColInfo.Where(p => (p.isIdentity == false) && !rawDefaultColumnNames.Contains(p.name)).Select(p => p.name))}}}
+                                        ) VALUES (
+                                            {{{string.Join(_comma_line_6, tableColInfo.Where(p => (p.isIdentity == false) && !rawDefaultColumnNames.Contains(p.name)).Select(p => "$" + p.name))}}}
+                                        ) RETURNING {{{string.Join(", ", tableColInfo.Select(p => p.name))}}};
+                                        """;
+
+                                    {{{string.Join(_line_5, getInsertCommandParamLines(true, null, pkPropType, createParameters: true, instantiateParameters: true, skipRawDefaults: true))}}}
+                                }
+
+                                using (IDataReader reader = command.ExecuteReader())
+                                {
+                                    if (reader.Read())
+                                    {
+                                        {{{string.Join(_line_5, tableColInfo.Select(p => "value." + p.readerDirective + ";"))}}}
+                                    }
+                                }
+
+                                if (_ownTxn) _txn.Commit();
+                            }
+                            finally
+                            {
+                                if (_ownTxn) _txn.Dispose();
+                            }
+
+                            return value;
+                        }
+
                         public static void Insert(
                             IDbConnection dbConnection,
                             List<{{{className}}}> values,
@@ -1509,7 +1579,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     foreach ({{{className}}} value in values)
                                     {
                                         {{{getNonIdentityPkInit(pkColName, pkPropType)}}}
-                                        {{{string.Join(_line_5, getInsertCommandParamLines(false, pkIsIdentity ? pkColName : null, pkPropType, instantiateParameters: true, executeCommand: true, setIdentity: false, ignoreDupeProperty: "ignoreDuplicates"))}}}
+                                        {{{string.Join(_line_5, getInsertCommandParamLines(false, pkIsIdentity ? pkColName : null, pkPropType, instantiateParameters: true, executeCommand: true, ignoreDupeProperty: "ignoreDuplicates"))}}}
                                     }
                     
                                     if (_ownTxn) _txn.Commit();
@@ -1620,6 +1690,45 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     if (_ownTxn) _txn.Dispose();
                             }
                     
+                            return value;
+                        }
+
+                        public static {{{className}}} UpdateReturning(IDbConnection dbConnection, {{{className}}} value, string? dbTableName = null, IDbTransaction? transaction = null)
+                        {
+                            dbTableName ??= "{{{tableName}}}";
+                            {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
+
+                            bool _ownTxn = transaction is null;
+                            IDbTransaction _txn = transaction ?? dbConnection.BeginTransaction();
+                            try
+                            {
+                                IDbCommand command = dbConnection.CreateCommand();
+                                command.Transaction = _txn;
+                                command.CommandText = $"""
+                                    UPDATE {dbTableName} SET
+                                        {{{string.Join(_comma_line_5, tableColInfo.Where(p => p.isPrimaryKey == false).Select(p => p.name + " = $" + p.name))}}}
+                                    WHERE
+                                        {{{pkWhereClause}}}
+                                    RETURNING {{{string.Join(", ", tableColInfo.Select(p => p.name))}}}
+                                    """;
+
+                                {{{string.Join(_line_4, getInsertCommandParamLines(true, null, pkPropType, createParameters: true, instantiateParameters: true, includeIdentity: true))}}}
+
+                                using (IDataReader reader = command.ExecuteReader())
+                                {
+                                    if (reader.Read())
+                                    {
+                                        {{{string.Join(_line_5, tableColInfo.Select(p => "value." + p.readerDirective + ";"))}}}
+                                    }
+                                }
+
+                                if (_ownTxn) _txn.Commit();
+                            }
+                            finally
+                            {
+                                if (_ownTxn) _txn.Dispose();
+                            }
+
                             return value;
                         }
 
@@ -1969,6 +2078,16 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             {{{className}}}.Upsert(dbCon, value, conflictColumns, updateColumns, incrementColumns, dbTableName, transaction);
                         }
 
+                        public static {{{className}}} InsertReturning(this IDbConnection dbCon, {{{className}}} value, string? dbTableName = null, bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)
+                        {
+                            return {{{className}}}.InsertReturning(dbCon, value, dbTableName, ignoreDuplicates, insertPrimaryKey, transaction);
+                        }
+
+                        public static {{{className}}} UpdateReturning(this IDbConnection dbCon, {{{className}}} value, string? dbTableName = null, IDbTransaction? transaction = null)
+                        {
+                            return {{{className}}}.UpdateReturning(dbCon, value, dbTableName, transaction);
+                        }
+
                         public static void Update(this IDbConnection dbCon, {{{className}}} value, string? dbTableName = null, IDbTransaction? transaction = null)
                         {
                             {{{className}}}.Update(dbCon, value, dbTableName, transaction);
@@ -2017,6 +2136,16 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                         public static void Upsert(this {{{className}}} value, IDbConnection dbCon, string[]? conflictColumns = null, string[]? updateColumns = null, string[]? incrementColumns = null, string? dbTableName = null, IDbTransaction? transaction = null)
                         {
                             {{{className}}}.Upsert(dbCon, value, conflictColumns, updateColumns, incrementColumns, dbTableName, transaction);
+                        }
+
+                        public static {{{className}}} InsertReturning(this {{{className}}} value, IDbConnection dbCon, string? dbTableName = null, bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)
+                        {
+                            return {{{className}}}.InsertReturning(dbCon, value, dbTableName, ignoreDuplicates, insertPrimaryKey, transaction);
+                        }
+
+                        public static {{{className}}} UpdateReturning(this {{{className}}} value, IDbConnection dbCon, string? dbTableName = null, IDbTransaction? transaction = null)
+                        {
+                            return {{{className}}}.UpdateReturning(dbCon, value, dbTableName, transaction);
                         }
                     
                         public static void Update(this {{{className}}} value, IDbConnection dbCon, string? dbTableName = null, IDbTransaction? transaction = null)
@@ -2368,6 +2497,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             bool includeIdentity = false,
             bool identityOnly = false,
             bool primaryKeyOnly = false,
+            bool skipRawDefaults = false,
             bool isInsert = true,
             string? ignoreDupeProperty = null)
         {
@@ -2381,6 +2511,13 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
             foreach (TableColInfoRec rec in tableColInfo)
             {
+                // InsertReturning lets the database compute raw/expression defaults, so their
+                // columns are neither listed nor parameterized.
+                if (skipRawDefaults && rawDefaultColumnNames.Contains(rec.name))
+                {
+                    continue;
+                }
+
                 // composite-key operations bind only the primary-key columns
                 if (primaryKeyOnly)
                 {
