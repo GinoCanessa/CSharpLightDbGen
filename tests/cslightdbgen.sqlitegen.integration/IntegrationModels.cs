@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using CsLightDbGen.SQLiteGenerator;
 
 namespace cslightdbgen.sqlitegen.integration.Models;
@@ -264,4 +265,100 @@ public partial class IdentityOnlyEntity
 {
     [LdgSQLiteKey]
     public int Id { get; set; }
+}
+
+// H1: a plain POCO used only as a JSON-serialized column value (not itself a table).
+public class JsonAddress
+{
+    public string Street { get; set; } = string.Empty;
+
+    public string City { get; set; } = string.Empty;
+
+    public int Zip { get; set; }
+}
+
+// H1: JSON columns. A single complex object, a scalar list, and a list of complex objects are all
+// serialized as JSON TEXT and must round-trip through the generated TrySerializeForDb / ParseFromDb
+// / ParseArrayFromDb helpers.
+[LdgSQLiteTable("json_docs")]
+public partial class JsonDocEntity
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+
+    public string DocName { get; set; } = string.Empty;
+
+    public JsonAddress? Address { get; set; }
+
+    public List<string> Tags { get; set; } = [];
+
+    public List<JsonAddress> History { get; set; } = [];
+}
+
+// H2: DateTime scalar columns (TEXT-backed) must round-trip through insert/select, including the
+// nullable variant.
+[LdgSQLiteTable("temporal_samples")]
+public partial class TemporalSample
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+
+    public DateTime OccurredAt { get; set; }
+
+    public DateTime? MaybeAt { get; set; }
+}
+
+// H1: foreign key with ON DELETE SET NULL. The referencing column must be nullable so the action
+// can null it when the parent is removed.
+[LdgSQLiteTable("sn_children")]
+public partial class SetNullChild
+{
+    [LdgSQLiteKey]
+    public int ChildId { get; set; }
+
+    [LdgSQLiteForeignKey("fk_parents", "ParentId", onDelete: LdgSQLiteFkAction.SetNull)]
+    public int? ParentRef { get; set; }
+
+    public string Note { get; set; } = string.Empty;
+}
+
+// H1: foreign key with ON DELETE RESTRICT. Deleting a parent that still has children must fail.
+[LdgSQLiteTable("rs_children")]
+public partial class RestrictChild
+{
+    [LdgSQLiteKey]
+    public int ChildId { get; set; }
+
+    [LdgSQLiteForeignKey("fk_parents", "ParentId", onDelete: LdgSQLiteFkAction.Restrict)]
+    public int ParentRef { get; set; }
+
+    public string Note { get; set; } = string.Empty;
+}
+
+// H1: class-level composite foreign key referencing the composite key of user_websites. Verifies
+// the composite FOREIGN KEY (...) REFERENCES ... DDL actually executes and enforces ON DELETE
+// CASCADE at runtime.
+[LdgSQLiteTable("uw_memberships")]
+[LdgSQLiteForeignKeyComposite(new[] { "RefUserId", "RefWebsiteId" }, "user_websites", new[] { "UserId", "WebsiteId" }, onDelete: LdgSQLiteFkAction.Cascade)]
+public partial class Membership
+{
+    [LdgSQLiteKey]
+    public int MembershipId { get; set; }
+
+    public int RefUserId { get; set; }
+
+    public int RefWebsiteId { get; set; }
+
+    public string MemberRole { get; set; } = string.Empty;
+}
+
+// H1: DynamicTableNames — one model mapped to multiple physical tables via the dbTableName argument
+// present on every generated method.
+[LdgSQLiteTable("dyn_events", dynamicTableNames: true)]
+public partial class DynEvent
+{
+    [LdgSQLiteKey]
+    public int EventId { get; set; }
+
+    public string Payload { get; set; } = string.Empty;
 }

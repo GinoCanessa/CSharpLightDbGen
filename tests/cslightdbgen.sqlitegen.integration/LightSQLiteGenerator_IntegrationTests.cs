@@ -1218,6 +1218,239 @@ public class LightSQLiteGenerator_IntegrationTests
         IdentityOnlyEntity.DropTable(db).ShouldBeTrue();
     }
 
+    [Fact]
+    public void JsonColumns_ComplexObjectAndLists_RoundTrip()
+    {
+        using SqliteConnection db = OpenInMemory();
+
+        JsonDocEntity.CreateTable(db).ShouldBeTrue();
+
+        JsonDocEntity doc = new()
+        {
+            DocName = "spec",
+            Address = new JsonAddress { Street = "1 Main", City = "Metropolis", Zip = 12345 },
+            Tags = new List<string> { "alpha", "beta", "gamma" },
+            History = new List<JsonAddress>
+            {
+                new() { Street = "2 Old Rd", City = "Gotham", Zip = 54321 },
+                new() { Street = "3 Past Ln", City = "Star City", Zip = 99999 }
+            }
+        };
+
+        int id = JsonDocEntity.Insert(db, doc);
+        id.ShouldBeGreaterThan(0);
+
+        JsonDocEntity? loaded = JsonDocEntity.SelectSingle(db, Id: id);
+        loaded.ShouldNotBeNull();
+        loaded!.DocName.ShouldBe("spec");
+
+        loaded.Address.ShouldNotBeNull();
+        loaded.Address!.Street.ShouldBe("1 Main");
+        loaded.Address.City.ShouldBe("Metropolis");
+        loaded.Address.Zip.ShouldBe(12345);
+
+        loaded.Tags.Count.ShouldBe(3);
+        loaded.Tags.ShouldBe(new[] { "alpha", "beta", "gamma" });
+
+        loaded.History.Count.ShouldBe(2);
+        loaded.History[0].City.ShouldBe("Gotham");
+        loaded.History[0].Zip.ShouldBe(54321);
+        loaded.History[1].Street.ShouldBe("3 Past Ln");
+        loaded.History[1].Zip.ShouldBe(99999);
+
+        JsonDocEntity.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void DateTimeColumns_RoundTrip()
+    {
+        using SqliteConnection db = OpenInMemory();
+
+        TemporalSample.CreateTable(db).ShouldBeTrue();
+
+        DateTime occurred = new(2024, 7, 14, 9, 30, 15);
+        int nullId = TemporalSample.Insert(db, new TemporalSample { OccurredAt = occurred, MaybeAt = null });
+
+        TemporalSample? loadedNull = TemporalSample.SelectSingle(db, Id: nullId);
+        loadedNull.ShouldNotBeNull();
+        loadedNull!.OccurredAt.ShouldBe(occurred);
+        loadedNull.MaybeAt.ShouldBeNull();
+
+        DateTime later = new(2025, 1, 2, 3, 4, 5);
+        int valueId = TemporalSample.Insert(db, new TemporalSample { OccurredAt = occurred, MaybeAt = later });
+
+        TemporalSample? loadedValue = TemporalSample.SelectSingle(db, Id: valueId);
+        loadedValue.ShouldNotBeNull();
+        loadedValue!.OccurredAt.ShouldBe(occurred);
+        loadedValue.MaybeAt.ShouldBe(later);
+
+        TemporalSample.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ForeignKey_OnDeleteSetNull_NullsChildReference()
+    {
+        using SqliteConnection db = OpenInMemory();
+        EnableForeignKeys(db);
+
+        FkParent.CreateTable(db).ShouldBeTrue();
+        SetNullChild.CreateTable(db).ShouldBeTrue();
+
+        FkParent parent = new() { Label = "root" };
+        FkParent.Insert(db, parent);
+
+        int childId = SetNullChild.Insert(db, new SetNullChild { ParentRef = parent.ParentId, Note = "leaf" });
+
+        // ON DELETE SET NULL nulls the referencing column instead of deleting the child row.
+        ExecuteSql(db, "DELETE FROM fk_parents WHERE ParentId = " + parent.ParentId + ";");
+
+        SetNullChild? loaded = SetNullChild.SelectSingle(db, ChildId: childId);
+        loaded.ShouldNotBeNull();
+        loaded!.ParentRef.ShouldBeNull();
+
+        SetNullChild.DropTable(db).ShouldBeTrue();
+        FkParent.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ForeignKey_OnDeleteRestrict_BlocksParentDelete()
+    {
+        using SqliteConnection db = OpenInMemory();
+        EnableForeignKeys(db);
+
+        FkParent.CreateTable(db).ShouldBeTrue();
+        RestrictChild.CreateTable(db).ShouldBeTrue();
+
+        FkParent parent = new() { Label = "root" };
+        FkParent.Insert(db, parent);
+        RestrictChild.Insert(db, new RestrictChild { ParentRef = parent.ParentId, Note = "leaf" });
+
+        // ON DELETE RESTRICT rejects deleting a parent that still has referencing children.
+        Should.Throw<SqliteException>(() =>
+            ExecuteSql(db, "DELETE FROM fk_parents WHERE ParentId = " + parent.ParentId + ";"));
+
+        RestrictChild.SelectCount(db).ShouldBe(1);
+
+        RestrictChild.DropTable(db).ShouldBeTrue();
+        FkParent.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void CompositeForeignKey_OnDeleteCascade_RemovesChildRows()
+    {
+        using SqliteConnection db = OpenInMemory();
+        EnableForeignKeys(db);
+
+        UserWebsite.CreateTable(db).ShouldBeTrue();
+        Membership.CreateTable(db).ShouldBeTrue();
+
+        UserWebsite parent = new() { UserId = 1, WebsiteId = 100, Role = "owner" };
+        UserWebsite.Insert(db, parent);
+
+        Membership.Insert(db, new Membership { RefUserId = 1, RefWebsiteId = 100, MemberRole = "admin" });
+        Membership.Insert(db, new Membership { RefUserId = 1, RefWebsiteId = 100, MemberRole = "editor" });
+        Membership.SelectCount(db).ShouldBe(2);
+
+        // Deleting the composite parent row must cascade through the composite FOREIGN KEY, which
+        // only works if the emitted FOREIGN KEY (...) REFERENCES ... (...) DDL actually executed.
+        ExecuteSql(db, "DELETE FROM user_websites WHERE UserId = 1 AND WebsiteId = 100;");
+
+        Membership.SelectCount(db).ShouldBe(0);
+
+        Membership.DropTable(db).ShouldBeTrue();
+        UserWebsite.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void DynamicTableName_SameModelTargetsMultipleTables()
+    {
+        using SqliteConnection db = OpenInMemory();
+
+        // One model materialized into two independent physical tables via the dbTableName argument.
+        DynEvent.CreateTable(db, "dyn_events_live").ShouldBeTrue();
+        DynEvent.CreateTable(db, "dyn_events_archive").ShouldBeTrue();
+
+        int liveId = DynEvent.Insert(db, new DynEvent { Payload = "live-1" }, dbTableName: "dyn_events_live");
+        liveId.ShouldBeGreaterThan(0);
+        DynEvent.Insert(db, new DynEvent { Payload = "arch-1" }, dbTableName: "dyn_events_archive");
+
+        DynEvent.SelectCount(db, dbTableName: "dyn_events_live").ShouldBe(1);
+        DynEvent.SelectCount(db, dbTableName: "dyn_events_archive").ShouldBe(1);
+
+        DynEvent? liveLoaded = DynEvent.SelectSingle(db, dbTableName: "dyn_events_live", EventId: liveId);
+        liveLoaded.ShouldNotBeNull();
+        liveLoaded!.Payload.ShouldBe("live-1");
+
+        DynEvent.SelectList(db, dbTableName: "dyn_events_archive")
+            .ShouldHaveSingleItem().Payload.ShouldBe("arch-1");
+
+        DynEvent.DropTable(db, "dyn_events_live").ShouldBeTrue();
+        DynEvent.DropTable(db, "dyn_events_archive").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Insert_WithInsertPrimaryKey_PersistsSuppliedIdentityKey()
+    {
+        using SqliteConnection db = OpenInMemory();
+
+        Widget.CreateTable(db).ShouldBeTrue();
+
+        // insertPrimaryKey: true includes the identity column in the INSERT so the caller-supplied
+        // key is stored verbatim instead of being auto-assigned.
+        Widget.Insert(db, new Widget { WidgetId = 5000, WidgetLabel = "explicit", Quantity = 7 }, insertPrimaryKey: true);
+
+        Widget? loaded = Widget.SelectSingle(db, WidgetId: 5000);
+        loaded.ShouldNotBeNull();
+        loaded!.WidgetId.ShouldBe(5000);
+        loaded.WidgetLabel.ShouldBe("explicit");
+        loaded.Quantity.ShouldBe(7);
+
+        Widget.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void SelectEnumerable_IsLazyAndDisposesOnPartialEnumeration()
+    {
+        using SqliteConnection db = OpenInMemory();
+
+        Widget.CreateTable(db).ShouldBeTrue();
+        for (int i = 0; i < 5; i++)
+        {
+            Widget.Insert(db, new Widget { WidgetLabel = "w" + i, Quantity = i });
+        }
+
+        IEnumerable<Widget> streamed = Widget.SelectEnumerable(db, orderByProperties: new[] { "WidgetId" });
+
+        // Abandoning the enumeration after two items must dispose the command/reader deterministically
+        // (the generated iterator scopes both in `using`), leaving the connection fully usable.
+        using (IEnumerator<Widget> enumerator = streamed.GetEnumerator())
+        {
+            enumerator.MoveNext().ShouldBeTrue();
+            enumerator.Current.WidgetLabel.ShouldBe("w0");
+            enumerator.MoveNext().ShouldBeTrue();
+            enumerator.Current.WidgetLabel.ShouldBe("w1");
+        }
+
+        Widget.SelectCount(db).ShouldBe(5);
+        Widget.SelectEnumerable(db).Count().ShouldBe(5);
+
+        Widget.DropTable(db).ShouldBeTrue();
+    }
+
+    private static void EnableForeignKeys(IDbConnection db)
+    {
+        using IDbCommand pragma = db.CreateCommand();
+        pragma.CommandText = "PRAGMA foreign_keys = ON;";
+        pragma.ExecuteNonQuery();
+    }
+
+    private static void ExecuteSql(IDbConnection db, string sql)
+    {
+        using IDbCommand command = db.CreateCommand();
+        command.CommandText = sql;
+        command.ExecuteNonQuery();
+    }
+
     private static SqliteConnection OpenInMemory()
     {
         var connection = new SqliteConnection("Data Source=:memory:");
