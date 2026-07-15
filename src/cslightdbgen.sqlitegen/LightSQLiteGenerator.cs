@@ -2023,58 +2023,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             _ => "=",
                         };
 
-                        private static readonly JsonSerializerOptions _options = new()
-                        {
-                            WriteIndented = false,
-                        };
-
-                        {{{emitHtmlStripRegexField()}}}
-
-                        private static bool TrySerializeForDb<T>(T? instance, [NotNullWhen(true)]out string? json) where T : class
-                        {
-                            if (instance == null)
-                            {
-                                json = null;
-                                return false;
-                            }
-
-                            json = JsonSerializer.Serialize(instance, _options);
-                            return true;
-                        }
-
-                        private static bool TrySerializeForDb<T>(List<T>? instances, [NotNullWhen(true)] out string? json) where T : class
-                        {
-                            if ((instances == null) || (instances.Count == 0))
-                            {
-                                json = null;
-                                return false;
-                            }
-
-                            json = JsonSerializer.Serialize(instances, _options);
-                            return true;
-                        }
-
-                        private static T? ParseFromDb<T>(string json) where T : class
-                        {
-                            if (string.IsNullOrWhiteSpace(json))
-                            {
-                                return null;
-                            }
-
-                            return JsonSerializer.Deserialize<T>(json, _options);
-                        }
-
-                        private static List<T> ParseArrayFromDb<T>(string json) where T : class
-                        {
-                            if (string.IsNullOrWhiteSpace(json))
-                            {
-                                return new List<T>();
-                            }
-
-                            return JsonSerializer.Deserialize<List<T>>(json, _options) ?? [];
-                        }
-
-                        {{{emitStripHtmlMethod()}}}
+                        {{{(anyColIsJson ? emitJsonHelperMembers() : string.Empty)}}}
                     }
 
                     [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
@@ -3510,6 +3459,60 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             }
 
             return _htmlStripRegex.Replace(input, string.Empty).Trim();
+        }
+        """;
+
+    // JSON (de)serialization helpers, emitted only for models that actually carry a JSON column
+    // (anyColIsJson). The per-column serialize/parse call sites are gated on the same condition, so a
+    // model with no JSON column never references these and they are omitted from its output.
+    private static string emitJsonHelperMembers() => """
+        private static readonly JsonSerializerOptions _options = new()
+        {
+            WriteIndented = false,
+        };
+
+        private static bool TrySerializeForDb<T>(T? instance, [NotNullWhen(true)]out string? json) where T : class
+        {
+            if (instance == null)
+            {
+                json = null;
+                return false;
+            }
+
+            json = JsonSerializer.Serialize(instance, _options);
+            return true;
+        }
+
+        private static bool TrySerializeForDb<T>(List<T>? instances, [NotNullWhen(true)] out string? json) where T : class
+        {
+            if ((instances == null) || (instances.Count == 0))
+            {
+                json = null;
+                return false;
+            }
+
+            json = JsonSerializer.Serialize(instances, _options);
+            return true;
+        }
+
+        private static T? ParseFromDb<T>(string json) where T : class
+        {
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return null;
+            }
+
+            return JsonSerializer.Deserialize<T>(json, _options);
+        }
+
+        private static List<T> ParseArrayFromDb<T>(string json) where T : class
+        {
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return new List<T>();
+            }
+
+            return JsonSerializer.Deserialize<List<T>>(json, _options) ?? [];
         }
         """;
 

@@ -84,6 +84,37 @@ public class LightSQLiteGenerator_GenerationTests
     }
 
     [Fact]
+    public void ScalarOnlyModel_OmitsJsonAndHtmlStripHelpers()
+    {
+        // F2: the JSON (de)serialization helpers are emitted only for models carrying a JSON column,
+        // and the HTML-strip helper is FTS-only. A scalar-only table must emit none of them.
+        const string source = """
+            using CsLightDbGen.SQLiteGenerator;
+            namespace T;
+
+            [LdgSQLiteTable("scalar_only")]
+            public partial class ScalarOnly
+            {
+                [LdgSQLiteKey]
+                public int Id { get; set; }
+                public string Name { get; set; } = string.Empty;
+                public int? Score { get; set; }
+            }
+            """;
+
+        var run = GeneratorTestHost.Run(source);
+        var generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "ScalarOnly.Table.g.cs");
+
+        generated.ShouldNotContain("TrySerializeForDb");
+        generated.ShouldNotContain("ParseFromDb<");
+        generated.ShouldNotContain("ParseArrayFromDb<");
+        generated.ShouldNotContain("JsonSerializerOptions");
+        generated.ShouldNotContain("_htmlStripRegex");
+        generated.ShouldNotContain("StripHtml(");
+        run.CompilationErrors.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void Classification_ArrayAndValueTypeCollection_RouteCorrectly()
     {
         // Regression guard for A1: arrays (IArrayTypeSymbol) and value-type collections must be
