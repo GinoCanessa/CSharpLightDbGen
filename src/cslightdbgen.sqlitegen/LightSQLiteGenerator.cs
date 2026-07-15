@@ -840,6 +840,75 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             LocationInfo.From(propSymbol));
     }
 
+    // Single-sources the per-column read-directive dispatch shared by emit() and emitFts(). Given a
+    // column and its zero-based reader ordinal, returns the setter directive (the reader statement
+    // with its leading 6-char prefix stripped), the getter directive, and whether the column is a
+    // JSON-backed column (so the caller can flip anyColIsJson). The five-way classification —
+    // scalar-nullable, scalar-non-null, enum, non-scalar/array JSON, object JSON — is identical
+    // between the two emit paths; only the surrounding TableColInfoRec construction differs.
+    private static (string setter, string getter, bool isJson) buildReadDirectives(ColumnInput col, int ordinal)
+    {
+        string propName = col.Name;
+        string propTypeName = col.TypeName;
+        bool nullable = col.Nullable;
+        bool memberIsEnum = col.IsEnum;
+        string? enumTypeName = col.EnumTypeName;
+        bool memberIsNonScalar = col.IsNonScalar;
+        string? jsonTypeName = col.JsonTypeName;
+
+        if (nullable && _sqliteNullableReadDirectives.TryGetValue(propTypeName, out string? readFormat))
+        {
+            return (
+                string.Format(readFormat.Remove(0, 6), propName, "reader", ordinal),
+                string.Format(readFormat, propName, "reader", ordinal),
+                false);
+        }
+        else if (!nullable && _sqliteReadDirectives.TryGetValue(propTypeName, out readFormat))
+        {
+            return (
+                string.Format(readFormat.Remove(0, 6), propName, "reader", ordinal),
+                string.Format(readFormat, propName, "reader", ordinal),
+                false);
+        }
+        else if (memberIsEnum)
+        {
+            return (
+                nullable
+                    ? string.Format(_sqliteNullableReadDirectives["enum"].Remove(0, 6), propName, "reader", ordinal, enumTypeName)
+                    : string.Format(_sqliteReadDirectives["enum"].Remove(0, 6), propName, "reader", ordinal, enumTypeName),
+                nullable
+                    ? string.Format(_sqliteNullableReadDirectives["enum"], propName, "reader", ordinal, enumTypeName)
+                    : string.Format(_sqliteReadDirectives["enum"], propName, "reader", ordinal, enumTypeName),
+                false);
+        }
+        else if (memberIsNonScalar)
+        {
+            // A real T[] array column reads back as List<T>.ToArray(); List<T>/IEnumerable<T>
+            // stay as List<T>. Both share the JSON[] serialization; only the read differs.
+            string jsonArrKey = col.IsArray ? "JSON[]array" : "JSON[]";
+
+            return (
+                nullable
+                    ? string.Format(_sqliteNullableReadDirectives[jsonArrKey].Remove(0, 6), propName, "reader", ordinal, jsonTypeName)
+                    : string.Format(_sqliteReadDirectives[jsonArrKey].Remove(0, 6), propName, "reader", ordinal, jsonTypeName),
+                nullable
+                    ? string.Format(_sqliteNullableReadDirectives[jsonArrKey], propName, "reader", ordinal, jsonTypeName)
+                    : string.Format(_sqliteReadDirectives[jsonArrKey], propName, "reader", ordinal, jsonTypeName),
+                true);
+        }
+        else
+        {
+            return (
+                nullable
+                    ? string.Format(_sqliteNullableReadDirectives["JSON"].Remove(0, 6), propName, "reader", ordinal, jsonTypeName)
+                    : string.Format(_sqliteReadDirectives["JSON"].Remove(0, 6), propName, "reader", ordinal, jsonTypeName),
+                nullable
+                    ? string.Format(_sqliteNullableReadDirectives["JSON"], propName, "reader", ordinal, jsonTypeName)
+                    : string.Format(_sqliteReadDirectives["JSON"], propName, "reader", ordinal, jsonTypeName),
+                true);
+        }
+    }
+
     private static void emit(TableModel model, SourceProductionContext context)
     {
         string className = model.ClassName;
@@ -917,9 +986,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             bool hasMultiSelectAttr = col.HasMultiSelectAttr;
 
             bool memberIsEnum = col.IsEnum;
-            string? enumTypeName = col.EnumTypeName;
             bool memberIsNonScalar = col.IsNonScalar;
-            string? jsonTypeName = col.JsonTypeName;
 
             bool useJson = !memberIsEnum && !_sqliteTypeMap.ContainsKey(propTypeName);
 
@@ -1013,136 +1080,28 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     "a foreign key must specify both a reference table and a reference column");
             }
 
-            // create the select retrieval pair
-            if (nullable && _sqliteNullableReadDirectives.TryGetValue(propTypeName, out string? readFormat))
-            {
-                tableColInfo.Add(new (
-                    propName,
-                    propTypeName,
-                    string.Format(readFormat.Remove(0, 6), propName, "reader", tableColInfo.Count),
-                    string.Format(readFormat, propName, "reader", tableColInfo.Count),
-                    isPrimaryKey,
-                    colIsIdentity,
-                    nullable,
-                    memberIsEnum,
-                    useJson,
-                    memberIsNonScalar,
-                    isUnique,
-                    isMultiSelect,
-                    foreignTable,
-                    foreignColumn,
-                    foreignModelType));
-            }
-            else if (!nullable && _sqliteReadDirectives.TryGetValue(propTypeName, out readFormat))
-            {
-                tableColInfo.Add(new (
-                    propName,
-                    propTypeName,
-                    string.Format(readFormat.Remove(0, 6), propName, "reader", tableColInfo.Count),
-                    string.Format(readFormat, propName, "reader", tableColInfo.Count),
-                    isPrimaryKey,
-                    colIsIdentity,
-                    nullable,
-                    memberIsEnum,
-                    useJson,
-                    memberIsNonScalar,
-                        isUnique,
-                        isMultiSelect,
-                        foreignTable,
-                        foreignColumn,
-                        foreignModelType));
-            }
-            else if (memberIsEnum)
-            {
-                //// build the reader directive for the enum type
-                //string ef = $"Enum.TryParse(reader.GetString({tableColInfo.Count}), out {propName});";
+            // create the select retrieval pair. The read-directive classification is shared with
+            // emitFts() via buildReadDirectives; only this record's key/identity/FK/multi-select
+            // fields are table-specific.
+            (string readSetter, string readGetter, bool colIsJson) = buildReadDirectives(col, tableColInfo.Count);
+            anyColIsJson |= colIsJson;
 
-                tableColInfo.Add(new (
-                    propName,
-                    propTypeName,
-                    nullable
-                        ? string.Format(_sqliteNullableReadDirectives["enum"].Remove(0, 6), propName, "reader", tableColInfo.Count, enumTypeName)
-                        : string.Format(_sqliteReadDirectives["enum"].Remove(0, 6), propName, "reader", tableColInfo.Count, enumTypeName),
-                    nullable
-                        ? string.Format(_sqliteNullableReadDirectives["enum"], propName, "reader", tableColInfo.Count, enumTypeName)
-                        : string.Format(_sqliteReadDirectives["enum"], propName, "reader", tableColInfo.Count, enumTypeName),
-                    isPrimaryKey,
-                    colIsIdentity,
-                    nullable,
-                    memberIsEnum,
-                    useJson,
-                    memberIsNonScalar,
-                    isUnique,
-                    isMultiSelect,
-                    foreignTable,
-                    foreignColumn,
-                    foreignModelType));
-            }
-            else if (memberIsNonScalar)
-            {
-                anyColIsJson = true;
-
-                // A real T[] array column reads back as List<T>.ToArray(); List<T>/IEnumerable<T>
-                // stay as List<T>. Both share the JSON[] serialization; only the read differs.
-                string jsonArrKey = col.IsArray ? "JSON[]array" : "JSON[]";
-
-                tableColInfo.Add(new(
-                    propName,
-                    propTypeName,
-                    nullable
-                        ? string.Format(_sqliteNullableReadDirectives[jsonArrKey].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName)
-                        : string.Format(_sqliteReadDirectives[jsonArrKey].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName),
-                    nullable
-                        ? string.Format(_sqliteNullableReadDirectives[jsonArrKey], propName, "reader", tableColInfo.Count, jsonTypeName)
-                        : string.Format(_sqliteReadDirectives[jsonArrKey], propName, "reader", tableColInfo.Count, jsonTypeName),
-                    isPrimaryKey,
-                    colIsIdentity,
-                    nullable,
-                    memberIsEnum,
-                    useJson,
-                    memberIsNonScalar,
-                        isUnique,
-                        isMultiSelect,
-                        foreignTable,
-                        foreignColumn,
-                        foreignModelType));
-            }
-            else
-            {
-                // tableColInfo.Add((
-                //     propName,
-                //     propTypeName,
-                //     $"// ERROR: could not determine retrieval directive for type {propName}:{propTypeName}",
-                //     $"// ERROR: could not determine retrieval directive for type {propName}:{propTypeName}",
-                //     isPrimaryKey,
-                //     colIsIdentity,
-                //     nullable,
-                //     memberIsEnum
-                //     ));
-
-                anyColIsJson = true;
-
-                tableColInfo.Add(new(
-                    propName,
-                    propTypeName,
-                    nullable
-                        ? string.Format(_sqliteNullableReadDirectives["JSON"].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName)
-                        : string.Format(_sqliteReadDirectives["JSON"].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName),
-                    nullable
-                        ? string.Format(_sqliteNullableReadDirectives["JSON"], propName, "reader", tableColInfo.Count, jsonTypeName)
-                        : string.Format(_sqliteReadDirectives["JSON"], propName, "reader", tableColInfo.Count, jsonTypeName),
-                    isPrimaryKey,
-                    colIsIdentity,
-                    nullable,
-                    memberIsEnum,
-                    useJson,
-                    memberIsNonScalar,
-                    isUnique,
-                    isMultiSelect,
-                    foreignTable,
-                    foreignColumn,
-                    foreignModelType));
-            }
+            tableColInfo.Add(new(
+                propName,
+                propTypeName,
+                readSetter,
+                readGetter,
+                isPrimaryKey,
+                colIsIdentity,
+                nullable,
+                memberIsEnum,
+                useJson,
+                memberIsNonScalar,
+                isUnique,
+                isMultiSelect,
+                foreignTable,
+                foreignColumn,
+                foreignModelType));
         }
 
         // class-level composite foreign keys (pre-rendered to DDL fragments in the transform)
@@ -1281,7 +1240,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                          public static IReadOnlyCollection<string> SQLiteColumnNames { get; } = _sqliteColumnNames;
 
-                         private static string quoteRuntimeIdent(string ident) => "\"" + ident.Replace("\"", "\"\"") + "\"";
+                         {{{emitQuoteRuntimeIdentMember()}}}
                          {{{getKeyIndexMembers()}}}
 
                          {{{emitResolveOrderByPropertiesMember()}}}
@@ -3008,9 +2967,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             bool isUnindexed = col.IsUnindexed;
 
             bool memberIsEnum = col.IsEnum;
-            string? enumTypeName = col.EnumTypeName;
             bool memberIsNonScalar = col.IsNonScalar;
-            string? jsonTypeName = col.JsonTypeName;
 
             bool useJson = !memberIsEnum && !_sqliteTypeMap.ContainsKey(propTypeName);
 
@@ -3032,103 +2989,23 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 createColLines.Add(quoteIdent(propName));
             }
 
-            // create the select retrieval pair
-            if (nullable && _sqliteNullableReadDirectives.TryGetValue(propTypeName, out string? readFormat))
-            {
-                tableColInfo.Add(new(
-                    propName,
-                    propTypeName,
-                    string.Format(readFormat.Remove(0, 6), propName, "reader", tableColInfo.Count),
-                    string.Format(readFormat, propName, "reader", tableColInfo.Count),
-                    false,
-                    false,
-                    nullable,
-                    memberIsEnum,
-                    useJson,
-                    memberIsNonScalar,
-                    isUnique));
-            }
-            else if (!nullable && _sqliteReadDirectives.TryGetValue(propTypeName, out readFormat))
-            {
-                tableColInfo.Add(new(
-                    propName,
-                    propTypeName,
-                    string.Format(readFormat.Remove(0, 6), propName, "reader", tableColInfo.Count),
-                    string.Format(readFormat, propName, "reader", tableColInfo.Count),
-                    false,
-                    false,
-                    nullable,
-                    memberIsEnum,
-                    useJson,
-                    memberIsNonScalar,
-                    isUnique));
-            }
-            else if (memberIsEnum)
-            {
-                //// build the reader directive for the enum type
-                //string ef = $"Enum.TryParse(reader.GetString({tableColInfo.Count}), out {propName});";
+            // create the select retrieval pair. Shared read-directive classification with emit()
+            // via buildReadDirectives; FTS records carry no key/identity/FK/multi-select data.
+            (string readSetter, string readGetter, bool colIsJson) = buildReadDirectives(col, tableColInfo.Count);
+            anyColIsJson |= colIsJson;
 
-                tableColInfo.Add(new(
-                    propName,
-                    propTypeName,
-                    nullable
-                        ? string.Format(_sqliteNullableReadDirectives["enum"].Remove(0, 6), propName, "reader", tableColInfo.Count, enumTypeName)
-                        : string.Format(_sqliteReadDirectives["enum"].Remove(0, 6), propName, "reader", tableColInfo.Count, enumTypeName),
-                    nullable
-                        ? string.Format(_sqliteNullableReadDirectives["enum"], propName, "reader", tableColInfo.Count, enumTypeName)
-                        : string.Format(_sqliteReadDirectives["enum"], propName, "reader", tableColInfo.Count, enumTypeName),
-                    false,
-                    false,
-                    nullable,
-                    memberIsEnum,
-                    useJson,
-                    memberIsNonScalar,
-                    isUnique));
-            }
-            else if (memberIsNonScalar)
-            {
-                anyColIsJson = true;
-
-                string jsonArrKey = col.IsArray ? "JSON[]array" : "JSON[]";
-
-                tableColInfo.Add(new(
-                    propName,
-                    propTypeName,
-                    nullable
-                        ? string.Format(_sqliteNullableReadDirectives[jsonArrKey].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName)
-                        : string.Format(_sqliteReadDirectives[jsonArrKey].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName),
-                    nullable
-                        ? string.Format(_sqliteNullableReadDirectives[jsonArrKey], propName, "reader", tableColInfo.Count, jsonTypeName)
-                        : string.Format(_sqliteReadDirectives[jsonArrKey], propName, "reader", tableColInfo.Count, jsonTypeName),
-                    false,
-                    false,
-                    nullable,
-                    memberIsEnum,
-                    useJson,
-                    memberIsNonScalar,
-                    isUnique));
-            }
-            else
-            {
-                anyColIsJson = true;
-
-                tableColInfo.Add(new(
-                    propName,
-                    propTypeName,
-                    nullable
-                        ? string.Format(_sqliteNullableReadDirectives["JSON"].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName)
-                        : string.Format(_sqliteReadDirectives["JSON"].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName),
-                    nullable
-                        ? string.Format(_sqliteNullableReadDirectives["JSON"], propName, "reader", tableColInfo.Count, jsonTypeName)
-                        : string.Format(_sqliteReadDirectives["JSON"], propName, "reader", tableColInfo.Count, jsonTypeName),
-                    false,
-                    false,
-                    nullable,
-                    memberIsEnum,
-                    useJson,
-                    memberIsNonScalar,
-                    isUnique));
-            }
+            tableColInfo.Add(new(
+                propName,
+                propTypeName,
+                readSetter,
+                readGetter,
+                false,
+                false,
+                nullable,
+                memberIsEnum,
+                useJson,
+                memberIsNonScalar,
+                isUnique));
         }
 
         string hintName = string.IsNullOrEmpty(classNamespace)
@@ -3172,7 +3049,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                          public static IReadOnlyCollection<string> SQLiteColumnNames { get; } = _sqliteColumnNames;
 
-                         private static string quoteRuntimeIdent(string ident) => "\"" + ident.Replace("\"", "\"\"") + "\"";
+                         {{{emitQuoteRuntimeIdentMember()}}}
 
                          {{{emitResolveOrderByPropertiesMember()}}}
                      
@@ -3566,6 +3443,10 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
     // interpolation. Keeping one source here removes the mirror-bug risk of hand-maintaining
     // byte-identical copies in the two code paths. These members carry no per-model values, so the
     // text is a plain (non-interpolated) raw string.
+    private static string emitQuoteRuntimeIdentMember() => """
+        private static string quoteRuntimeIdent(string ident) => "\"" + ident.Replace("\"", "\"\"") + "\"";
+        """;
+
     private static string emitResolveOrderByPropertiesMember() => """
         private static string[]? ResolveOrderByProperties(string[]? orderByProperties, string[]? orderByDirections, string? orderByDirection)
         {
