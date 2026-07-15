@@ -221,3 +221,26 @@ public partial class PosFkChild
 
     public string PosNote { get; set; } = string.Empty;
 }
+
+// A5: required (NOT NULL) column with no constant default. Added nullable by ALTER TABLE, so
+// EnsureSchema must fail fast rather than strand pre-existing rows as NULL on a populated table.
+[LdgSQLiteTable("mig_required")]
+public partial class MigRequiredEntity
+{
+    [LdgSQLiteKey]
+    public int MigRequiredId { get; set; }
+
+    public string MigRequiredLabel { get; set; } = string.Empty;
+}
+
+// A5: non-nullable column with a raw (database-computed) default. ALTER TABLE ADD COLUMN cannot
+// apply the default, so EnsureSchema must fail fast on a populated table.
+[LdgSQLiteTable("mig_raw")]
+public partial class MigRawEntity
+{
+    [LdgSQLiteKey]
+    public int MigRawId { get; set; }
+
+    [LdgSQLiteDefault("CURRENT_TIMESTAMP", raw: true)]
+    public string MigRawStamp { get; set; } = string.Empty;
+}

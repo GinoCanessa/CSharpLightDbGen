@@ -457,7 +457,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
         List<string> createColLines = [];
         List<string> createFKLines = [];
-        List<(string name, string addColumnDdl)> alterAddColumns = [];
+        List<(string name, string addColumnDdl, string? migrationBlockReason)> alterAddColumns = [];
         HashSet<string> rawDefaultColumnNames = new(System.StringComparer.Ordinal);
         List<TableColInfoRec> tableColInfo = [];
 
@@ -662,9 +662,23 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 string addColDefault = hasConstDefault ? defaultClause : string.Empty;
                 string addColNotNull = (!nullable && hasConstDefault) ? " NOT NULL" : string.Empty;
 
+                // A NOT NULL column with no constant default (added as nullable) and a raw-default
+                // column (added without its database-computed default) both leave pre-existing rows
+                // NULL in a slot the generated readers hydrate as non-nullable. Record why such a
+                // column cannot be additively migrated; EnsureSchema fails fast at runtime rather
+                // than reporting success with a schema its own readers cannot hydrate.
+                string? migrationBlockReason = null;
+                if (!nullable && !hasConstDefault)
+                {
+                    migrationBlockReason = (defaultIsRaw && (defaultClause.Length > 0))
+                        ? "it carries a database-computed (raw) default that ALTER TABLE ADD COLUMN cannot apply, which would leave existing rows NULL in a non-nullable column"
+                        : "it is required (NOT NULL) but has no constant default to backfill existing rows";
+                }
+
                 alterAddColumns.Add((
                     propName,
-                    $"{propName} {getSqlType(propTypeName, memberIsEnum, useJson, memberIsNonScalar)}{addColDefault}{addColNotNull}"));
+                    $"{propName} {getSqlType(propTypeName, memberIsEnum, useJson, memberIsNonScalar)}{addColDefault}{addColNotNull}",
+                    migrationBlockReason));
             }
 
             // check for foreign key property information
@@ -2430,10 +2444,24 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         // idempotent.
         IEnumerable<string> getEnsureAddColumnLines()
         {
-            foreach ((string name, string addColumnDdl) in alterAddColumns)
+            foreach ((string name, string addColumnDdl, string? migrationBlockReason) in alterAddColumns)
             {
                 yield return $"if (!existingColumns.Contains(\"{name}\"))";
                 yield return "{";
+                if (migrationBlockReason != null)
+                {
+                    // Adding this column to an EMPTY table is harmless (no rows to strand as NULL);
+                    // adding it to a POPULATED table would leave a schema the generated readers
+                    // cannot hydrate, so fail fast with a column-specific migration error instead of
+                    // returning success.
+                    yield return "    command = dbConnection.CreateCommand();";
+                    yield return "    if (transaction != null) command.Transaction = transaction;";
+                    yield return "    command.CommandText = $\"SELECT EXISTS(SELECT 1 FROM {dbTableName})\";";
+                    yield return "    if (global::System.Convert.ToInt64(command.ExecuteScalar()) != 0L)";
+                    yield return "    {";
+                    yield return $"        throw new global::System.InvalidOperationException($\"EnsureSchema cannot add column '{name}' to populated table '{{dbTableName}}' because {migrationBlockReason}. Migrate this table manually (for example, recreate it and copy the rows) before calling EnsureSchema.\");";
+                    yield return "    }";
+                }
                 yield return "    command = dbConnection.CreateCommand();";
                 yield return "    if (transaction != null) command.Transaction = transaction;";
                 yield return "    command.CommandText = $\"\"\"";

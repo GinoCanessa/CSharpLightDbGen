@@ -400,6 +400,99 @@ public class LightSQLiteGenerator_GenerationTests
         run.CompilationErrors.ShouldBeEmpty();
     }
 
+    [Fact]
+    public void EnsureSchema_RequiredColumnWithoutConstantDefault_EmitsPopulatedTableGuard()
+    {
+        // A5: a NOT NULL column with no constant default is added nullable by ALTER TABLE, leaving
+        // pre-existing rows NULL in a slot the readers hydrate as non-nullable. EnsureSchema must
+        // fail fast on a populated table rather than reporting success.
+        const string source = """
+            using CsLightDbGen.SQLiteGenerator;
+
+            namespace CsLightDbGen.SQLiteGenerator;
+
+            [LdgSQLiteTable("mig_required")]
+            public partial class MigRequiredEntity
+            {
+                [LdgSQLiteKey]
+                public int MigRequiredId { get; set; }
+
+                public string MigRequiredLabel { get; set; } = string.Empty;
+            }
+            """;
+
+        var run = GeneratorTestHost.Run(source);
+
+        string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MigRequiredEntity.Table.g.cs");
+        generated.ShouldContain("SELECT EXISTS(SELECT 1 FROM {dbTableName})");
+        generated.ShouldContain("EnsureSchema cannot add column 'MigRequiredLabel'");
+        run.Errors.ShouldBeEmpty();
+        run.CompilationErrors.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void EnsureSchema_RawDefaultColumn_EmitsPopulatedTableGuard()
+    {
+        // A5: a raw (database-computed) default cannot be applied by ALTER TABLE ADD COLUMN, so a
+        // non-nullable raw-default column left NULL on existing rows is also guarded at runtime.
+        const string source = """
+            using CsLightDbGen.SQLiteGenerator;
+
+            namespace CsLightDbGen.SQLiteGenerator;
+
+            [LdgSQLiteTable("mig_raw")]
+            public partial class MigRawEntity
+            {
+                [LdgSQLiteKey]
+                public int MigRawId { get; set; }
+
+                [LdgSQLiteDefault("CURRENT_TIMESTAMP", raw: true)]
+                public string MigRawStamp { get; set; } = string.Empty;
+            }
+            """;
+
+        var run = GeneratorTestHost.Run(source);
+
+        string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MigRawEntity.Table.g.cs");
+        generated.ShouldContain("EnsureSchema cannot add column 'MigRawStamp'");
+        generated.ShouldContain("raw");
+        run.Errors.ShouldBeEmpty();
+        run.CompilationErrors.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void EnsureSchema_NullableAndConstantDefaultColumns_HaveNoPopulatedTableGuard()
+    {
+        // A5: a nullable column (NULL is a valid hydrated value) and a NOT NULL column with a
+        // constant default (backfilled by ALTER) are both additively migratable, so neither is
+        // guarded — EnsureSchema adds them and keeps returning success.
+        const string source = """
+            using CsLightDbGen.SQLiteGenerator;
+
+            namespace CsLightDbGen.SQLiteGenerator;
+
+            [LdgSQLiteTable("mig_safe")]
+            public partial class MigSafeEntity
+            {
+                [LdgSQLiteKey]
+                public int MigSafeId { get; set; }
+
+                public string? MigSafeTag { get; set; }
+
+                [LdgSQLiteDefault("0")]
+                public int MigSafeCount { get; set; }
+            }
+            """;
+
+        var run = GeneratorTestHost.Run(source);
+
+        string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MigSafeEntity.Table.g.cs");
+        generated.ShouldNotContain("EnsureSchema cannot add column");
+        generated.ShouldNotContain("SELECT EXISTS(SELECT 1 FROM {dbTableName})");
+        run.Errors.ShouldBeEmpty();
+        run.CompilationErrors.ShouldBeEmpty();
+    }
+
     public static IEnumerable<object[]> AllFixtureNames()
     {
         return typeof(FixtureSources)

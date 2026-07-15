@@ -976,6 +976,115 @@ public class LightSQLiteGenerator_IntegrationTests
         FkParent.DropTable(db).ShouldBeTrue();
     }
 
+    [Fact]
+    public void EnsureSchema_RequiredColumnWithoutConstantDefault_FailsOrRemainsReadable()
+    {
+        using var db = OpenInMemory();
+
+        // Older shape: the required MigRequiredLabel column does not exist yet. On an EMPTY legacy
+        // table there are no rows to strand as NULL, so the additive migration proceeds and the
+        // migrated table round-trips a fully populated insert.
+        using (IDbCommand create = db.CreateCommand())
+        {
+            create.CommandText = "CREATE TABLE mig_required (MigRequiredId INTEGER PRIMARY KEY)";
+            create.ExecuteNonQuery();
+        }
+
+        MigRequiredEntity.EnsureSchema(db).ShouldBeTrue();
+
+        MigRequiredEntity entity = new() { MigRequiredLabel = "first" };
+        MigRequiredEntity.Insert(db, entity);
+        MigRequiredEntity? readback = MigRequiredEntity.SelectSingle(db, MigRequiredId: entity.MigRequiredId);
+        readback.ShouldNotBeNull();
+        readback!.MigRequiredLabel.ShouldBe("first");
+
+        MigRequiredEntity.DropTable(db).ShouldBeTrue();
+
+        // Older shape again, but POPULATED before the required column is introduced. Adding it
+        // nullable would leave the pre-existing row unreadable through the generated reader, so
+        // EnsureSchema must fail fast instead of reporting success.
+        using (IDbCommand create = db.CreateCommand())
+        {
+            create.CommandText = "CREATE TABLE mig_required (MigRequiredId INTEGER PRIMARY KEY)";
+            create.ExecuteNonQuery();
+        }
+        using (IDbCommand seed = db.CreateCommand())
+        {
+            seed.CommandText = "INSERT INTO mig_required (MigRequiredId) VALUES (1)";
+            seed.ExecuteNonQuery();
+        }
+
+        InvalidOperationException ex = Should.Throw<InvalidOperationException>(() => MigRequiredEntity.EnsureSchema(db));
+        ex.Message.ShouldContain("MigRequiredLabel");
+
+        // The migration aborted before altering the table — the pre-existing row is intact.
+        using (IDbCommand count = db.CreateCommand())
+        {
+            count.CommandText = "SELECT COUNT(*) FROM mig_required";
+            Convert.ToInt64(count.ExecuteScalar()).ShouldBe(1L);
+        }
+
+        MigRequiredEntity.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void EnsureSchema_RawDefaultColumn_FailsOrPreservesComputedDefault()
+    {
+        using var db = OpenInMemory();
+
+        // On an EMPTY legacy table the raw-default column is added (SQLite cannot apply the
+        // database-computed default via ALTER, but there are no rows to strand), and EnsureSchema
+        // reports success.
+        using (IDbCommand create = db.CreateCommand())
+        {
+            create.CommandText = "CREATE TABLE mig_raw (MigRawId INTEGER PRIMARY KEY)";
+            create.ExecuteNonQuery();
+        }
+
+        MigRawEntity.EnsureSchema(db).ShouldBeTrue();
+
+        bool hasColumn = false;
+        using (IDbCommand info = db.CreateCommand())
+        {
+            info.CommandText = "PRAGMA table_info(mig_raw)";
+            using IDataReader r = info.ExecuteReader();
+            while (r.Read())
+            {
+                if (string.Equals(r.GetString(1), "MigRawStamp", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasColumn = true;
+                }
+            }
+        }
+        hasColumn.ShouldBeTrue();
+
+        MigRawEntity.DropTable(db).ShouldBeTrue();
+
+        // On a POPULATED legacy table the raw default cannot backfill the pre-existing row, which
+        // would strand it NULL in a non-nullable slot. EnsureSchema must fail fast.
+        using (IDbCommand create = db.CreateCommand())
+        {
+            create.CommandText = "CREATE TABLE mig_raw (MigRawId INTEGER PRIMARY KEY)";
+            create.ExecuteNonQuery();
+        }
+        using (IDbCommand seed = db.CreateCommand())
+        {
+            seed.CommandText = "INSERT INTO mig_raw (MigRawId) VALUES (1)";
+            seed.ExecuteNonQuery();
+        }
+
+        InvalidOperationException ex = Should.Throw<InvalidOperationException>(() => MigRawEntity.EnsureSchema(db));
+        ex.Message.ShouldContain("MigRawStamp");
+
+        using (IDbCommand count = db.CreateCommand())
+        {
+            count.CommandText = "SELECT COUNT(*) FROM mig_raw";
+            Convert.ToInt64(count.ExecuteScalar()).ShouldBe(1L);
+        }
+
+        MigRawEntity.DropTable(db).ShouldBeTrue();
+    }
+
     private static SqliteConnection OpenInMemory()
     {
         var connection = new SqliteConnection("Data Source=:memory:");
