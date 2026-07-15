@@ -4,7 +4,8 @@ using cslightdbgen.performance;
 BenchmarkSwitcher.FromTypes(
 [
     typeof(SingleInsertBenchmarks),
-    typeof(BulkInsertBenchmarks),
+    typeof(BulkInsertThroughputBenchmarks),
+    typeof(BulkInsertHydratingBenchmarks),
     typeof(SingleRecordSelectBenchmarks),
     typeof(MultiRecordFilteredSelectBenchmarks),
     typeof(MultiRecordUnfilteredSelectBenchmarks)

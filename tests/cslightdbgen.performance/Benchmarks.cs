@@ -144,6 +144,37 @@ internal static class BenchmarkDataFactory
             SegmentKey = row.SegmentKey,
             Score = row.Score
         }).ToList();
+
+    public static List<BenchRecord> CreateRowsWithIds(int count, int startIndex = 1)
+    {
+        List<BenchRecord> rows = CreateRows(count, startIndex);
+        for (int i = 0; i < rows.Count; i++)
+        {
+            rows[i].Id = startIndex + i;
+        }
+
+        return rows;
+    }
+
+    public static List<BenchRecord> CloneRowsPreservingId(IEnumerable<BenchRecord> rows)
+        => rows.Select(row => new BenchRecord
+        {
+            Id = row.Id,
+            Name = row.Name,
+            SegmentKey = row.SegmentKey,
+            Score = row.Score
+        }).ToList();
+
+    public static int ChecksumIds(IEnumerable<BenchRecord> rows)
+    {
+        int checksum = 0;
+        foreach (BenchRecord row in rows)
+        {
+            checksum ^= row.Id;
+        }
+
+        return checksum;
+    }
 }
 
 [MemoryDiagnoser]
@@ -271,7 +302,64 @@ public class SingleInsertBenchmarks : BenchmarkScenarioBase
     }
 }
 
-public class BulkInsertBenchmarks : BenchmarkScenarioBase
+public class BulkInsertThroughputBenchmarks : BenchmarkScenarioBase
+{
+    private List<BenchRecord> _rows = null!;
+
+    [IterationSetup]
+    public void Setup()
+    {
+        InitializeEmptyDatabases();
+        _rows = BenchmarkDataFactory.CreateRowsWithIds(BenchmarkDataFactory.BulkInsertCount);
+    }
+
+    [Benchmark(Baseline = true)]
+    public int SqliteGen()
+    {
+        BenchRecord.Insert(SqliteGenConnection, BenchmarkDataFactory.CloneRowsPreservingId(_rows), insertPrimaryKey: true);
+        return SqliteGenConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM bench_records;");
+    }
+
+    [Benchmark]
+    public int DapperDirect()
+    {
+        using SqliteTransaction transaction = DapperConnection.BeginTransaction();
+
+        DapperConnection.Execute(
+            """
+            INSERT INTO bench_records (Id, Name, SegmentKey, Score)
+            VALUES (@Id, @Name, @SegmentKey, @Score);
+            """,
+            BenchmarkDataFactory.CloneRowsPreservingId(_rows),
+            transaction);
+
+        transaction.Commit();
+        return DapperConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM bench_records;");
+    }
+
+    [Benchmark]
+    public int DapperSqlBuilder()
+    {
+        using SqliteTransaction transaction = DapperBuilderConnection.BeginTransaction();
+
+        SqlBuilder sqlBuilder = new();
+        SqlBuilder.Template template = sqlBuilder.AddTemplate(
+            """
+            INSERT INTO bench_records (Id, Name, SegmentKey, Score)
+            VALUES (@Id, @Name, @SegmentKey, @Score);
+            """);
+
+        DapperBuilderConnection.Execute(
+            template.RawSql,
+            BenchmarkDataFactory.CloneRowsPreservingId(_rows),
+            transaction);
+
+        transaction.Commit();
+        return DapperBuilderConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM bench_records;");
+    }
+}
+
+public class BulkInsertHydratingBenchmarks : BenchmarkScenarioBase
 {
     private List<BenchRecord> _rows = null!;
 
@@ -285,64 +373,51 @@ public class BulkInsertBenchmarks : BenchmarkScenarioBase
     [Benchmark(Baseline = true)]
     public int SqliteGenList()
     {
-        BenchRecord.Insert(SqliteGenConnection, BenchmarkDataFactory.CloneRows(_rows));
-        return SqliteGenConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM bench_records;");
+        List<BenchRecord> rows = BenchmarkDataFactory.CloneRows(_rows);
+        BenchRecord.Insert(SqliteGenConnection, rows);
+        return BenchmarkDataFactory.ChecksumIds(rows);
     }
 
     [Benchmark]
     public int SqliteGenEnumerable()
     {
-        BenchRecord.Insert(SqliteGenConnection, BenchmarkDataFactory.CloneRows(_rows) as IEnumerable<BenchRecord>);
-        return SqliteGenConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM bench_records;");
+        List<BenchRecord> rows = BenchmarkDataFactory.CloneRows(_rows);
+        BenchRecord.Insert(SqliteGenConnection, rows as IEnumerable<BenchRecord>);
+        return BenchmarkDataFactory.ChecksumIds(rows);
     }
 
     [Benchmark]
     public int DapperDirect()
     {
-        using var transaction = DapperConnection.BeginTransaction();
+        List<BenchRecord> rows = BenchmarkDataFactory.CloneRows(_rows);
+        using SqliteTransaction transaction = DapperConnection.BeginTransaction();
 
-        DapperConnection.Execute(
-            """
-            INSERT INTO bench_records (Name, SegmentKey, Score)
-            VALUES (@Name, @SegmentKey, @Score);
-            """,
-            BenchmarkDataFactory.CloneRows(_rows),
-            transaction);
-
-        transaction.Commit();
-        return DapperConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM bench_records;");
-    }
-
-    [Benchmark]
-    public int DapperSqlBuilder()
-    {
-        using var transaction = DapperBuilderConnection.BeginTransaction();
-
-        var sqlBuilder = new SqlBuilder();
-        var template = sqlBuilder.AddTemplate(
-            """
-            INSERT INTO bench_records (Name, SegmentKey, Score)
-            VALUES (@Name, @SegmentKey, @Score);
-            """);
-
-        DapperBuilderConnection.Execute(
-            template.RawSql,
-            BenchmarkDataFactory.CloneRows(_rows),
-            transaction);
+        foreach (BenchRecord row in rows)
+        {
+            row.Id = DapperConnection.ExecuteScalar<int>(
+                """
+                INSERT INTO bench_records (Name, SegmentKey, Score)
+                VALUES (@Name, @SegmentKey, @Score)
+                RETURNING Id;
+                """,
+                row,
+                transaction);
+        }
 
         transaction.Commit();
-        return DapperBuilderConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM bench_records;");
+        return BenchmarkDataFactory.ChecksumIds(rows);
     }
 
     [Benchmark]
     public int EfCore()
     {
-        using var context = BenchmarkDataFactory.CreateContext(EfConnection);
+        List<BenchRecord> rows = BenchmarkDataFactory.CloneRows(_rows);
+        using BenchDbContext context = BenchmarkDataFactory.CreateContext(EfConnection);
 
-        context.BenchRecords.AddRange(BenchmarkDataFactory.CloneRows(_rows));
+        context.BenchRecords.AddRange(rows);
         context.SaveChanges();
 
-        return context.BenchRecords.Count();
+        return BenchmarkDataFactory.ChecksumIds(rows);
     }
 }
 

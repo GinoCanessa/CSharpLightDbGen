@@ -253,17 +253,34 @@ the warning in the consuming project:
 | **CSharpLightDbGen** | **67.1 μs** | **8.11 KB** |
 | EF Core | 453.4 μs | 77.3 KB |
 
-### Bulk Insert (1,000 rows)
+### Bulk Insert — Throughput (1,000 rows)
+
+Every path issues a batched insert and does **not** read the generated keys back. The generated path
+uses `insertPrimaryKey: true` with caller-supplied ids, so — like the Dapper paths — it runs a plain
+`INSERT` with no `RETURNING` round-trip. All three produce the same rows on disk.
 
 | Method | Mean | Allocated |
 |---|---|---|
-| Dapper (direct) | 2.35 ms | 1,425 KB |
-| **CSharpLightDbGen** | **3.90 ms** | **808 KB** |
-| EF Core | 18.67 ms | 8,198 KB |
+| **CSharpLightDbGen** | **2.16 ms** | **699 KB** |
+| Dapper (direct) | 3.02 ms | 1,792 KB |
+| Dapper (SqlBuilder) | 3.79 ms | 1,746 KB |
+
+### Bulk Insert — With Key Hydration (1,000 rows)
+
+Every path inserts **and** populates each in-memory row's auto-generated `Id`, so the observable
+result is identical across ORMs (`RETURNING Id` per row for the generated and Dapper paths, change
+tracking for EF Core).
+
+| Method | Mean | Allocated |
+|---|---|---|
+| **CSharpLightDbGen** | **4.36 ms** | **831 KB** |
+| Dapper (direct) | 9.05 ms | 2,267 KB |
+| EF Core | 23.26 ms | 8,194 KB |
 
 **Key takeaways:**
 - **Reads:** 1.2–1.4× faster than Dapper, 2–8× faster than EF Core
-- **Writes:** Competitive with Dapper, 5–7× faster than EF Core
+- **Bulk writes:** ~1.4× faster than Dapper for raw throughput and ~2× faster when hydrating generated keys; 5–6× faster than EF Core
+- **Single insert:** competitive with Dapper, ~7× faster than EF Core
 - **Memory:** Consistently lowest allocations across all benchmarks
 
 ## Project Structure
