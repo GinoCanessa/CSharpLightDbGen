@@ -163,6 +163,18 @@ optional trailing `transaction` parameter (`IDbTransaction? transaction = null`)
   transaction participates in any ambient transaction already open on the connection; pass the
   transaction explicitly for deterministic behavior.
 
+### Execution Model (Synchronous)
+
+Every generated API — standard and FTS, static and extension-wrapper, read and write — is
+**synchronous**. The generator emits ADO.NET calls (`IDbCommand.ExecuteNonQuery` /
+`ExecuteScalar` / `ExecuteReader`) directly and exposes **no** `async`/`Task`-returning overloads
+and **no** `CancellationToken` parameter. Callers that need cancellation or non-blocking I/O should
+run the generated call on a background thread (for example `Task.Run(...)`) and/or wrap it with
+their own timeout/cancellation policy. `SelectEnumerable` is a lazily-evaluated iterator: it opens
+its command and reader on first `MoveNext` and disposes both when the enumerator is disposed
+(including on early `break`/abandonment), so it must be enumerated on a single thread within the
+lifetime of its connection.
+
 ## Generated Filter Parameters (Per Property)
 
 For each mapped property the generator emits one or more filter arguments:
