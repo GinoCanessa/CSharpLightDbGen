@@ -34,6 +34,15 @@ public class LightSQLiteGenerator_CachingTests
 
         namespace Demo;
 
+        [LdgSQLiteTable("widgets")]
+        public partial class WidgetSource
+        {
+            [LdgSQLiteKey]
+            public int Id { get; set; }
+
+            public string Name { get; set; } = string.Empty;
+        }
+
         [LdgSQLiteFtsTable("widgets")]
         public partial class WidgetSearch
         {

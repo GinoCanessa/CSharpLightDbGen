@@ -130,6 +130,16 @@ public partial class Counter
     public int Hits { get; set; }
 }
 
+[LdgSQLiteTable("article_source")]
+public partial class ArticleSource
+{
+    public string Title { get; set; } = string.Empty;
+
+    public string Body { get; set; } = string.Empty;
+
+    public string? RawHtml { get; set; }
+}
+
 [LdgSQLiteFtsTable("article_source")]
 public partial class ArticleSearch
 {

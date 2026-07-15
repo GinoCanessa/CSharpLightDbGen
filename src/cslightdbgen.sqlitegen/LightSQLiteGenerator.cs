@@ -77,7 +77,149 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             .Select(static (model, _) => model!.Value)
             .WithTrackingName(FtsModelTrackingName);
 
-        context.RegisterSourceOutput(ftsModels, static (spc, model) => emitFts(model, spc));
+        // Table names an FTS source may resolve against: every compile-time [LdgSQLiteTable] name in
+        // THIS compilation (including dynamic-named tables' base names) unioned with every generated
+        // table declared in a referenced assembly. Kept value-equatable (sorted, deduped) so that an
+        // unrelated edit re-firing CompilationProvider does not invalidate cached FTS emission.
+        IncrementalValueProvider<EquatableArray<string>> localTableNames = tableModels
+            .Select(static (m, _) => m.TableName)
+            .Collect()
+            .Select(static (names, _) => SortDistinct(names));
+
+        IncrementalValueProvider<EquatableArray<string>> referencedTableNames = context.CompilationProvider
+            .Select(static (compilation, ct) => CollectReferencedTableNames(compilation, ct));
+
+        IncrementalValueProvider<EquatableArray<string>> knownTableNames = localTableNames
+            .Combine(referencedTableNames)
+            .Select(static (pair, _) => MergeTableNames(pair.Left, pair.Right));
+
+        // An FTS model whose source table matches no known [LdgSQLiteTable] (here or in a referenced
+        // assembly) reports CSLDG006 and is skipped; membership is case-insensitive because SQLite
+        // identifiers are.
+        context.RegisterSourceOutput(
+            ftsModels.Combine(knownTableNames),
+            static (spc, pair) => EmitFtsResolved(pair.Left, pair.Right, spc));
+    }
+
+    /// <summary>
+    /// Emits an FTS model only when its source table resolves to a known <c>[LdgSQLiteTable]</c>
+    /// table (in this compilation or a referenced assembly); otherwise reports CSLDG006 and skips it.
+    /// </summary>
+    private static void EmitFtsResolved(FtsModel model, EquatableArray<string> knownTableNames, SourceProductionContext context)
+    {
+        ImmutableHashSet<string> known = ImmutableHashSet.CreateRange(StringComparer.OrdinalIgnoreCase, knownTableNames);
+
+        if (!known.Contains(model.SourceTableName))
+        {
+            GeneratorDiagnostics.Report(
+                context,
+                GeneratorDiagnostics.FtsSourceTableUnresolved,
+                model.Location?.ToLocation(),
+                model.ClassName,
+                model.SourceTableName);
+            return;
+        }
+
+        emitFts(model, context);
+    }
+
+    /// <summary>Sorts and de-duplicates (ordinal) a collected set of table names into an equatable array.</summary>
+    private static EquatableArray<string> SortDistinct(ImmutableArray<string> names)
+    {
+        SortedSet<string> distinct = new(StringComparer.Ordinal);
+        foreach (string name in names)
+        {
+            if (!string.IsNullOrEmpty(name))
+            {
+                distinct.Add(name);
+            }
+        }
+
+        return distinct.ToEquatableArray();
+    }
+
+    /// <summary>
+    /// Unions local and referenced-assembly table names case-insensitively (SQLite identifiers are
+    /// case-insensitive) into a sorted, de-duplicated equatable array.
+    /// </summary>
+    private static EquatableArray<string> MergeTableNames(EquatableArray<string> local, EquatableArray<string> referenced)
+    {
+        SortedSet<string> union = new(StringComparer.OrdinalIgnoreCase);
+        foreach (string name in local)
+        {
+            union.Add(name);
+        }
+
+        foreach (string name in referenced)
+        {
+            union.Add(name);
+        }
+
+        return union.ToEquatableArray();
+    }
+
+    /// <summary>
+    /// Collects the table names of every <c>[LdgSQLiteTable]</c>-annotated type declared in a
+    /// referenced assembly. An assembly that never ran the generator cannot declare the attribute
+    /// type, so it is pruned before the namespace walk (N2). The table name is constructor argument 0,
+    /// falling back to the type name — mirroring <see cref="TransformTable"/>.
+    /// </summary>
+    private static EquatableArray<string> CollectReferencedTableNames(Compilation compilation, CancellationToken cancellationToken)
+    {
+        SortedSet<string> names = new(StringComparer.Ordinal);
+
+        foreach (IAssemblySymbol assembly in compilation.SourceModule.ReferencedAssemblySymbols)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (!assembly.TypeNames.Contains(GeneratorAttributes._ldgSQLiteTable))
+            {
+                continue;
+            }
+
+            foreach (INamedTypeSymbol type in EnumerateNamedTypes(assembly.GlobalNamespace, cancellationToken))
+            {
+                foreach (AttributeData attribute in type.GetAttributes())
+                {
+                    if (attribute.AttributeClass?.Name != GeneratorAttributes._ldgSQLiteTable)
+                    {
+                        continue;
+                    }
+
+                    string? ctorName = attribute.ConstructorArguments.FirstOrDefault().Value?.ToString();
+                    names.Add(string.IsNullOrEmpty(ctorName) ? type.Name : ctorName!);
+                    break;
+                }
+            }
+        }
+
+        return names.ToEquatableArray();
+    }
+
+    /// <summary>Depth-first enumeration of all named types (including nested) under a namespace.</summary>
+    private static IEnumerable<INamedTypeSymbol> EnumerateNamedTypes(INamespaceSymbol root, CancellationToken cancellationToken)
+    {
+        Stack<INamespaceOrTypeSymbol> pending = new();
+        pending.Push(root);
+
+        while (pending.Count > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            INamespaceOrTypeSymbol current = pending.Pop();
+            foreach (ISymbol member in current.GetMembers())
+            {
+                if (member is INamespaceSymbol childNamespace)
+                {
+                    pending.Push(childNamespace);
+                }
+                else if (member is INamedTypeSymbol type)
+                {
+                    yield return type;
+                    pending.Push(type);
+                }
+            }
+        }
     }
 
 

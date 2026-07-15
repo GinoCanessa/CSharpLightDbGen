@@ -291,6 +291,17 @@ using CsLightDbGen.SQLiteGenerator;
 
 namespace CsLightDbGen.SQLiteGenerator;
 
+[LdgSQLiteTable("source_table")]
+public partial class SourceTable
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+
+    public string Title { get; set; } = string.Empty;
+
+    public string? RawHtml { get; set; }
+}
+
 [LdgSQLiteFtsTable("source_table")]
 public partial class FtsEntity
 {
@@ -305,6 +316,17 @@ public partial class FtsEntity
 using CsLightDbGen.SQLiteGenerator;
 
 namespace CsLightDbGen.SQLiteGenerator;
+
+[LdgSQLiteTable("source_table")]
+public partial class SourceTable
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+
+    public string Title { get; set; } = string.Empty;
+
+    public string? RawHtml { get; set; }
+}
 
 [LdgSQLiteFtsTable("source_table", tokenizer: "porter ascii")]
 public partial class FtsTokenizerEntity
