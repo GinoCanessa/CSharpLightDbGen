@@ -1148,37 +1148,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                          private static string quoteRuntimeIdent(string ident) => "\"" + ident.Replace("\"", "\"\"") + "\"";
                          {{{getKeyIndexMembers()}}}
 
-                         private static string[]? ResolveOrderByProperties(string[]? orderByProperties, string[]? orderByDirections, string? orderByDirection)
-                         {
-                             if ((orderByProperties == null) || (orderByProperties.Length == 0))
-                             {
-                                 return null;
-                             }
-
-                             bool defaultDescending = orderByDirection?.StartsWith("d", StringComparison.OrdinalIgnoreCase) == true;
-
-                             List<string> resolvedOrderByProperties = new(orderByProperties.Length);
-                             for (int orderByIndex = 0; orderByIndex < orderByProperties.Length; orderByIndex++)
-                             {
-                                 string orderByProperty = orderByProperties[orderByIndex];
-                                 if (string.IsNullOrWhiteSpace(orderByProperty) || !_sqliteColumnNames.Contains(orderByProperty))
-                                 {
-                                     continue;
-                                 }
-
-                                 bool descending = defaultDescending;
-                                 if ((orderByDirections != null) && (orderByIndex < orderByDirections.Length) && !string.IsNullOrWhiteSpace(orderByDirections[orderByIndex]))
-                                 {
-                                     descending = orderByDirections[orderByIndex].StartsWith("d", StringComparison.OrdinalIgnoreCase);
-                                 }
-
-                                 resolvedOrderByProperties.Add(quoteRuntimeIdent(orderByProperty) + (descending ? " DESC" : " ASC"));
-                             }
-
-                             return resolvedOrderByProperties.Count > 0
-                                 ? resolvedOrderByProperties.ToArray()
-                                 : null;
-                         }
+                         {{{emitResolveOrderByPropertiesMember()}}}
  
                          public static bool CreateTable(IDbConnection dbConnection, string? dbTableName = null)
                          {
@@ -2058,7 +2028,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             WriteIndented = false,
                         };
 
-                        private static System.Text.RegularExpressions.Regex _htmlStripRegex = new("<.*?>", System.Text.RegularExpressions.RegexOptions.Compiled);
+                        {{{emitHtmlStripRegexField()}}}
 
                         private static bool TrySerializeForDb<T>(T? instance, [NotNullWhen(true)]out string? json) where T : class
                         {
@@ -2104,15 +2074,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             return JsonSerializer.Deserialize<List<T>>(json, _options) ?? [];
                         }
 
-                        private static string StripHtml(string? input)
-                        {
-                            if (string.IsNullOrWhiteSpace(input))
-                            {
-                                return string.Empty;
-                            }
-
-                            return _htmlStripRegex.Replace(input, string.Empty).Trim();
-                        }
+                        {{{emitStripHtmlMethod()}}}
                     }
 
                     [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
@@ -3093,37 +3055,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                          private static string quoteRuntimeIdent(string ident) => "\"" + ident.Replace("\"", "\"\"") + "\"";
 
-                         private static string[]? ResolveOrderByProperties(string[]? orderByProperties, string[]? orderByDirections, string? orderByDirection)
-                         {
-                             if ((orderByProperties == null) || (orderByProperties.Length == 0))
-                             {
-                                 return null;
-                             }
-
-                             bool defaultDescending = orderByDirection?.StartsWith("d", StringComparison.OrdinalIgnoreCase) == true;
-
-                             List<string> resolvedOrderByProperties = new(orderByProperties.Length);
-                             for (int orderByIndex = 0; orderByIndex < orderByProperties.Length; orderByIndex++)
-                             {
-                                 string orderByProperty = orderByProperties[orderByIndex];
-                                 if (string.IsNullOrWhiteSpace(orderByProperty) || !_sqliteColumnNames.Contains(orderByProperty))
-                                 {
-                                     continue;
-                                 }
-
-                                 bool descending = defaultDescending;
-                                 if ((orderByDirections != null) && (orderByIndex < orderByDirections.Length) && !string.IsNullOrWhiteSpace(orderByDirections[orderByIndex]))
-                                 {
-                                     descending = orderByDirections[orderByIndex].StartsWith("d", StringComparison.OrdinalIgnoreCase);
-                                 }
-
-                                 resolvedOrderByProperties.Add(quoteRuntimeIdent(orderByProperty) + (descending ? " DESC" : " ASC"));
-                             }
-
-                             return resolvedOrderByProperties.Count > 0
-                                 ? resolvedOrderByProperties.ToArray()
-                                 : null;
-                         }
+                         {{{emitResolveOrderByPropertiesMember()}}}
                      
                          public static bool CreateTable(IDbConnection dbConnection, string? dbTableName = null)
                          {
@@ -3312,17 +3244,9 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             return -1;
                         }
 
-                        private static readonly System.Text.RegularExpressions.Regex _htmlStripRegex = new("<.*?>", System.Text.RegularExpressions.RegexOptions.Compiled);
+                        {{{emitHtmlStripRegexField()}}}
 
-                        private static string StripHtml(string? input)
-                        {
-                            if (string.IsNullOrWhiteSpace(input))
-                            {
-                                return string.Empty;
-                            }
-
-                            return _htmlStripRegex.Replace(input, string.Empty).Trim();
-                        }
+                        {{{emitStripHtmlMethod()}}}
                     }
 
                     [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
@@ -3538,6 +3462,64 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
     // double-quotes must be C#-escaped (\") or they terminate the emitted string.
     // Use quoteIdent (bare ") only when the emission target is a raw string literal ($"""...""").
     private static string quoteIdentLit(string ident) => "\\\"" + ident + "\\\"";
+
+    // === E2: single-source emitted members shared by the table (`emit`) and FTS (`emitFts`) paths ===
+    // Each returns C# member text emitted VERBATIM into BOTH generated partials via a {{{ ... }}}
+    // interpolation. Keeping one source here removes the mirror-bug risk of hand-maintaining
+    // byte-identical copies in the two code paths. These members carry no per-model values, so the
+    // text is a plain (non-interpolated) raw string.
+    private static string emitResolveOrderByPropertiesMember() => """
+        private static string[]? ResolveOrderByProperties(string[]? orderByProperties, string[]? orderByDirections, string? orderByDirection)
+        {
+            if ((orderByProperties == null) || (orderByProperties.Length == 0))
+            {
+                return null;
+            }
+
+            bool defaultDescending = orderByDirection?.StartsWith("d", StringComparison.OrdinalIgnoreCase) == true;
+
+            List<string> resolvedOrderByProperties = new(orderByProperties.Length);
+            for (int orderByIndex = 0; orderByIndex < orderByProperties.Length; orderByIndex++)
+            {
+                string orderByProperty = orderByProperties[orderByIndex];
+                if (string.IsNullOrWhiteSpace(orderByProperty) || !_sqliteColumnNames.Contains(orderByProperty))
+                {
+                    continue;
+                }
+
+                bool descending = defaultDescending;
+                if ((orderByDirections != null) && (orderByIndex < orderByDirections.Length) && !string.IsNullOrWhiteSpace(orderByDirections[orderByIndex]))
+                {
+                    descending = orderByDirections[orderByIndex].StartsWith("d", StringComparison.OrdinalIgnoreCase);
+                }
+
+                resolvedOrderByProperties.Add(quoteRuntimeIdent(orderByProperty) + (descending ? " DESC" : " ASC"));
+            }
+
+            return resolvedOrderByProperties.Count > 0
+                ? resolvedOrderByProperties.ToArray()
+                : null;
+        }
+        """;
+
+    // Unified to `readonly` (the FTS path already emitted it readonly; the table path did not). A
+    // compiled Regex is never reassigned, so this is behavior-preserving and pre-empts F2's readonly
+    // request.
+    private static string emitHtmlStripRegexField() => """
+        private static readonly System.Text.RegularExpressions.Regex _htmlStripRegex = new("<.*?>", System.Text.RegularExpressions.RegexOptions.Compiled);
+        """;
+
+    private static string emitStripHtmlMethod() => """
+        private static string StripHtml(string? input)
+        {
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                return string.Empty;
+            }
+
+            return _htmlStripRegex.Replace(input, string.Empty).Trim();
+        }
+        """;
 
     private static Dictionary<string, string> _sqliteReadDirectives = new()
     {
