@@ -325,7 +325,7 @@ Detailed developer docs are in the [docs/](docs/) directory:
 ## Technical Details
 
 - Generator targets **netstandard2.0** for maximum IDE/SDK compatibility
-- Uses Roslyn **Microsoft.CodeAnalysis.CSharp 5.3.0**
+- Uses Roslyn **Microsoft.CodeAnalysis.CSharp 5.6.0**
 - Generated code uses only ADO.NET abstractions (`IDbConnection`, `IDbCommand`, `IDbTransaction`, `IDataReader`)
 - No runtime reflection for CRUD operations
 - Parameterized SQL for all values

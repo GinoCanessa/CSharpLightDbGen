@@ -18,8 +18,8 @@ packed as a NuGet analyzer (`analyzers/dotnet/cs`, `IsRoslynComponent=true`, `In
 
 ### NuGet Packages
 
-- `Microsoft.CodeAnalysis.Common` `5.3.0` (`PrivateAssets=all`)
-- `Microsoft.CodeAnalysis.CSharp` `5.3.0` (`PrivateAssets=all`)
+- `Microsoft.CodeAnalysis.Common` `5.6.0` (`PrivateAssets=all`)
+- `Microsoft.CodeAnalysis.CSharp` `5.6.0` (`PrivateAssets=all`)
 
 ### Purpose
 
@@ -33,11 +33,11 @@ Unit tests (generator contract verification). Multi-targets `net10.0;net9.0;net8
 
 ### NuGet Packages
 
-- `Microsoft.NET.Test.Sdk` `18.6.0`
+- `Microsoft.NET.Test.Sdk` `18.8.1`
 - `xunit` `2.9.3`
 - `xunit.runner.visualstudio` `3.1.5` (`PrivateAssets=all`)
 - `Shouldly` `4.3.0`
-- `Microsoft.CodeAnalysis.CSharp` `5.3.0`
+- `Microsoft.CodeAnalysis.CSharp` `5.6.0`
 
 ### Purpose
 
@@ -51,11 +51,11 @@ Integration tests (runtime SQLite behavior). Multi-targets `net10.0;net9.0;net8.
 
 ### NuGet Packages
 
-- `Microsoft.Data.Sqlite.Core` `10.0.9`
+- `Microsoft.Data.Sqlite.Core` `10.0.10`
 - `SQLitePCLRaw.provider.e_sqlite3` `2.1.11`
-- `SourceGear.sqlite3` `3.50.4.5`
+- `SourceGear.sqlite3` `3.53.3`
 - `Shouldly` `4.3.0`
-- `Microsoft.NET.Test.Sdk` `18.6.0`
+- `Microsoft.NET.Test.Sdk` `18.8.1`
 - `xunit` `2.9.3`
 - `xunit.runner.visualstudio` `3.1.5` (`PrivateAssets=all`)
 
@@ -74,11 +74,11 @@ BenchmarkDotNet comparisons. Targets `net10.0` (`OutputType=Exe`).
 - `BenchmarkDotNet` `0.15.8`
 - `Dapper` `2.1.79`
 - `Dapper.SqlBuilder` `2.1.66`
-- `Microsoft.Data.Sqlite.Core` `10.0.9`
-- `Microsoft.EntityFrameworkCore` `10.0.9`
-- `Microsoft.EntityFrameworkCore.Sqlite.Core` `10.0.9`
+- `Microsoft.Data.Sqlite.Core` `10.0.10`
+- `Microsoft.EntityFrameworkCore` `10.0.10`
+- `Microsoft.EntityFrameworkCore.Sqlite.Core` `10.0.10`
 - `SQLitePCLRaw.provider.e_sqlite3` `2.1.11`
-- `SourceGear.sqlite3` `3.50.4.5`
+- `SourceGear.sqlite3` `3.53.3`
 
 ### Purpose
 
