@@ -1,5 +1,6 @@
 using System.Data;
 using cslightdbgen.sqlitegen.integration.Models;
+using CsLightDbGen.SQLiteGenerator;
 
 namespace cslightdbgen.sqlitegen.integration;
 
@@ -1357,6 +1358,62 @@ public class LightSQLiteGenerator_IntegrationTests
         loadedNull.Buckets.ShouldBeEmpty();
 
         EnumRoundTripEntity.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Keyless_UpdateDelete_AffectZeroRows_NoThrow()
+    {
+        using SqliteConnection db = OpenInMemory();
+
+        KeylessLog.CreateTable(db).ShouldBeTrue();
+
+        KeylessLog.Insert(db, new KeylessLog { Message = "boot", Severity = 1 });
+        KeylessLog.Insert(db, new KeylessLog { Message = "warn", Severity = 2 });
+        KeylessLog.SelectCount(db).ShouldBe(2);
+
+        // A keyless model's by-key predicate is "1 = 0": every by-key Update/Delete affects zero
+        // rows and must return without throwing (single and bulk overloads alike).
+        KeylessLog target = new() { Message = "boot", Severity = 9 };
+        Should.NotThrow(() => KeylessLog.Update(db, target));
+        Should.NotThrow(() => KeylessLog.Update(db, new List<KeylessLog> { target }));
+        Should.NotThrow(() => KeylessLog.Delete(db, target));
+        Should.NotThrow(() => KeylessLog.Delete(db, new List<KeylessLog> { target }));
+
+        // No by-key mutation touched a row.
+        KeylessLog.SelectCount(db).ShouldBe(2);
+
+        KeylessLog.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void StaleKey_Update_ThrowsTypedException()
+    {
+        using SqliteConnection db = OpenInMemory();
+
+        Widget.CreateTable(db).ShouldBeTrue();
+
+        Widget live = new() { WidgetLabel = "live", Quantity = 1 };
+        Widget.Insert(db, live);
+
+        // A keyed model's by-key Update/Delete against a stale/already-gone key affects zero rows
+        // and throws the typed exception carrying the model name and offending SQL.
+        Widget ghost = new() { WidgetId = 999999, WidgetLabel = "gone", Quantity = 0 };
+
+        LdgCommandFailedException updateEx =
+            Should.Throw<LdgCommandFailedException>(() => { Widget.Update(db, ghost); });
+        updateEx.ModelName.ShouldBe("Widget");
+        updateEx.Sql.ShouldContain("UPDATE");
+
+        Should.Throw<LdgCommandFailedException>(() => Widget.Delete(db, ghost));
+
+        // The per-call opt-out suppresses the throw for both Update and Delete.
+        Should.NotThrow(() => { Widget.Update(db, ghost, throwOnZeroRowsAffected: false); });
+        Should.NotThrow(() => Widget.Delete(db, ghost, throwOnZeroRowsAffected: false));
+
+        // The real row is untouched throughout.
+        Widget.SelectCount(db).ShouldBe(1);
+
+        Widget.DropTable(db).ShouldBeTrue();
     }
 
     [Fact]

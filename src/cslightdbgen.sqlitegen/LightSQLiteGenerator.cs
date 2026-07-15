@@ -1034,6 +1034,14 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 ? "1 = 0"
                 : $"{quoteIdent(pkColName)} = ${pkColName}");
 
+        // A keyless model (no primary key, single or composite) has no row identity: its by-key
+        // Update/Delete predicate is "1 = 0", so it can never affect rows and never throws. Such
+        // models omit the throwOnZeroRowsAffected opt-out entirely (the knob would be a permanent
+        // no-op). Keyed models expose it (default true) so a stale/already-gone key throws
+        // LdgCommandFailedException unless the caller opts out per call.
+        bool isKeyless = (pkColName == null) && !compositePk;
+        string throwOnZeroParam = isKeyless ? string.Empty : ", bool throwOnZeroRowsAffected = true";
+
         // UPDATE ... SET assignments cover every non-primary-key column. A primary-key-only model
         // has none, so fall back to a harmless self-assignment of a key column to keep valid SQL
         // (an empty SET clause is a syntax error).
@@ -1779,7 +1787,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             }
                         }
 
-                        public static {{{className}}} Update(IDbConnection dbConnection, {{{className}}} value, string? dbTableName = null, IDbTransaction? transaction = null)
+                        public static {{{className}}} Update(IDbConnection dbConnection, {{{className}}} value, string? dbTableName = null, IDbTransaction? transaction = null{{{throwOnZeroParam}}})
                         {
                             dbTableName ??= "{{{tableName}}}";
                             {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
@@ -1797,7 +1805,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                         {{{pkWhereClause}}}
                                     """;
                     
-                                {{{string.Join(_line_3, getInsertCommandParamLines(true, pkIsIdentity ? pkColName : null, pkPropType, includeIdentity: true, isInsert: false))}}}
+                                {{{string.Join(_line_3, getInsertCommandParamLines(true, pkIsIdentity ? pkColName : null, pkPropType, includeIdentity: true, isInsert: false, byKeyMutation: true))}}}
                     
                                 if (_ownTxn) _txn.Commit();
                                 }
@@ -1850,7 +1858,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             }
                         }
 
-                        public static void Update(IDbConnection dbConnection, IEnumerable<{{{className}}}> values, string? dbTableName = null, IDbTransaction? transaction = null)
+                        public static void Update(IDbConnection dbConnection, IEnumerable<{{{className}}}> values, string? dbTableName = null, IDbTransaction? transaction = null{{{throwOnZeroParam}}})
                         {
                             dbTableName ??= "{{{tableName}}}";
                             {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
@@ -1876,7 +1884,8 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     pkPropType,
                                     createParameters: true,
                                     includeIdentity: true,
-                                    isInsert: false))}}}
+                                    isInsert: false,
+                                    byKeyMutation: true))}}}
                     
                                 foreach ({{{className}}} value in values)
                                 {
@@ -1890,7 +1899,8 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                         executeCommand: true,
                                         setIdentity: false,
                                         includeIdentity: true,
-                                        isInsert: false))}}}
+                                        isInsert: false,
+                                        byKeyMutation: true))}}}
                                 }
                     
                                 if (_ownTxn) _txn.Commit();
@@ -1901,7 +1911,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             }
                         }
 
-                        public static void Delete(IDbConnection dbConnection, {{{className}}} value, string? dbTableName = null, IDbTransaction? transaction = null)
+                        public static void Delete(IDbConnection dbConnection, {{{className}}} value, string? dbTableName = null, IDbTransaction? transaction = null{{{throwOnZeroParam}}})
                         {
                             dbTableName ??= "{{{tableName}}}";
                                         
@@ -1923,7 +1933,8 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     instantiateParameters: true,
                                     executeCommand: true,
                                     primaryKeyOnly: true,
-                                    setIdentity: false))}}}
+                                    setIdentity: false,
+                                    byKeyMutation: true))}}}
                     
                                 if (_ownTxn) _txn.Commit();
                                 }
@@ -1933,7 +1944,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             }
                         }
                     
-                        public static void Delete(IDbConnection dbConnection, IEnumerable<{{{className}}}> values, string? dbTableName = null, IDbTransaction? transaction = null)
+                        public static void Delete(IDbConnection dbConnection, IEnumerable<{{{className}}}> values, string? dbTableName = null, IDbTransaction? transaction = null{{{throwOnZeroParam}}})
                         {
                             dbTableName ??= "{{{tableName}}}";
                                                 
@@ -1966,7 +1977,8 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                         instantiateParameters: true,
                                         executeCommand: true,
                                         setIdentity: false,
-                                        primaryKeyOnly: true))}}}
+                                        primaryKeyOnly: true,
+                                        byKeyMutation: true))}}}
                                 }
                     
                                 if (_ownTxn) _txn.Commit();
@@ -2688,6 +2700,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             bool primaryKeyOnly = false,
             bool skipRawDefaults = false,
             bool isInsert = true,
+            bool byKeyMutation = false,
             string? ignoreDupeProperty = null)
         {
             // if no specific type is specified, default to true
@@ -2778,15 +2791,30 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             {
                 if ((identityColName == null) || (!setIdentity) || (!isInsert))
                 {
-                    if (ignoreDupeProperty == null)
+                    if (byKeyMutation)
+                    {
+                        // By-key Update/Delete. A keyless model's predicate is "1 = 0" (never matches),
+                        // so zero rows is expected and must not throw. A keyed model throws the typed
+                        // exception on a stale/already-gone key unless the caller opts out per call.
+                        if (isKeyless)
+                        {
+                            yield return "command.ExecuteNonQuery();";
+                        }
+                        else
+                        {
+                            yield return "int rowsAffected = command.ExecuteNonQuery();";
+                            yield return $"if ((rowsAffected == 0) && throwOnZeroRowsAffected) throw new global::CsLightDbGen.SQLiteGenerator.{GeneratorAttributes._ldgCommandFailedException}(\"{className}\", command.CommandText);";
+                        }
+                    }
+                    else if (ignoreDupeProperty == null)
                     {
                         yield return "int rowsAffected = command.ExecuteNonQuery();";
-                        yield return "if (rowsAffected == 0) throw new Exception(\"Command failed!\");";
+                        yield return $"if (rowsAffected == 0) throw new global::CsLightDbGen.SQLiteGenerator.{GeneratorAttributes._ldgCommandFailedException}(\"{className}\", command.CommandText);";
                     }
                     else
                     {
                         yield return "int rowsAffected = command.ExecuteNonQuery();";
-                        yield return $"if (!{ignoreDupeProperty} && (rowsAffected == 0)) throw new Exception(\"Command failed!\");";
+                        yield return $"if (!{ignoreDupeProperty} && (rowsAffected == 0)) throw new global::CsLightDbGen.SQLiteGenerator.{GeneratorAttributes._ldgCommandFailedException}(\"{className}\", command.CommandText);";
                     }
                 }
                 else
@@ -2794,7 +2822,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     if (ignoreDupeProperty == null)
                     {
                         yield return "object? commandResult = command.ExecuteScalar();";
-                        yield return "if (commandResult == null) throw new Exception(\"Command failed!\");";
+                        yield return $"if (commandResult == null) throw new global::CsLightDbGen.SQLiteGenerator.{GeneratorAttributes._ldgCommandFailedException}(\"{className}\", command.CommandText);";
 
                         switch (identityColType)
                         {
@@ -2812,7 +2840,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     else
                     {
                         yield return "object? commandResult = command.ExecuteScalar();";
-                        yield return $"if (!{ignoreDupeProperty} && (commandResult == null)) throw new Exception(\"Command failed!\");";
+                        yield return $"if (!{ignoreDupeProperty} && (commandResult == null)) throw new global::CsLightDbGen.SQLiteGenerator.{GeneratorAttributes._ldgCommandFailedException}(\"{className}\", command.CommandText);";
 
                         switch (identityColType)
                         {
@@ -3098,7 +3126,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     {{{string.Join(_line_4, getPopulateCleanLines(addParam: false))}}}
 
                                     int ra = command.ExecuteNonQuery();
-                                    if (ra == 0) throw new Exception("Failed to insert cleaned FTS value!");
+                                    if (ra == 0) throw new global::CsLightDbGen.SQLiteGenerator.{{{GeneratorAttributes._ldgCommandFailedException}}}("{{{className}}}", command.CommandText);
                                     rowsAffected += ra;
                                 }
 

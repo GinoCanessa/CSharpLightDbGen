@@ -394,3 +394,14 @@ public partial class DynEvent
 
     public string Payload { get; set; } = string.Empty;
 }
+
+// M2: keyless model (no [LdgSQLiteKey]). Its by-key Update/Delete predicate is "1 = 0", so those
+// mutations can never match a row. They must affect zero rows WITHOUT throwing and expose no
+// throwOnZeroRowsAffected opt-out (the knob would be a permanent no-op).
+[LdgSQLiteTable("keyless_logs")]
+public partial class KeylessLog
+{
+    public string Message { get; set; } = string.Empty;
+
+    public int Severity { get; set; }
+}

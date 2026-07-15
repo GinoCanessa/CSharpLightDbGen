@@ -21,6 +21,8 @@ public class GeneratorAttributes
     internal const string _ldgSQLiteFtsTable = "LdgSQLiteFtsTable";
     internal const string _ldgSQLiteFtsUnindexed = "LdgSQLiteFtsUnindexed";
 
+    internal const string _ldgCommandFailedException = "LdgCommandFailedException";
+
     internal static HashSet<string> _ldAttributes = [
         _ldgSQLiteBaseClass,
         _ldgSQLiteTable,
@@ -198,6 +200,26 @@ public class GeneratorAttributes
                 public {{{_ldgSQLiteFtsUnindexed}}}()
                 {
                 }
+            }
+
+            /// <summary>
+            /// Thrown by generated keyed by-key mutations (Update/Delete) when a command that was
+            /// expected to affect at least one row affected none (for example, a stale or
+            /// already-deleted key). Carries the originating model name and SQL text. Keyless
+            /// models never throw this because their by-key predicate matches nothing.
+            /// </summary>
+            public sealed class {{{_ldgCommandFailedException}}} : System.Exception
+            {
+                public {{{_ldgCommandFailedException}}}(string modelName, string sql)
+                    : base($"The command for model '{modelName}' affected no rows (expected at least one). SQL: {sql}")
+                {
+                    ModelName = modelName;
+                    Sql = sql;
+                }
+
+                public string ModelName { get; }
+
+                public string Sql { get; }
             }
         }
         #nullable restore

@@ -107,11 +107,11 @@ This document summarizes the generated API surface developers should expect for 
 - `Insert(IDbConnection dbConnection, List<T> values, ..., bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)`
 - `Insert(IDbConnection dbConnection, IEnumerable<T> values, ..., bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)`
 - `InsertReturning(IDbConnection dbConnection, T value, string? dbTableName = null, bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)` → returns the hydrated `T?`, or `null` when no row is produced
-- `Update(IDbConnection dbConnection, T value, string? dbTableName = null, IDbTransaction? transaction = null)`
+- `Update(IDbConnection dbConnection, T value, string? dbTableName = null, IDbTransaction? transaction = null, bool throwOnZeroRowsAffected = true)`
 - `UpdateReturning(IDbConnection dbConnection, T value, string? dbTableName = null, IDbTransaction? transaction = null)` → returns the hydrated `T?`, or `null` when no row matched
-- `Update(IDbConnection dbConnection, IEnumerable<T> values, string? dbTableName = null, IDbTransaction? transaction = null)`
-- `Delete(IDbConnection dbConnection, T value, string? dbTableName = null, IDbTransaction? transaction = null)`
-- `Delete(IDbConnection dbConnection, IEnumerable<T> values, string? dbTableName = null, IDbTransaction? transaction = null)`
+- `Update(IDbConnection dbConnection, IEnumerable<T> values, string? dbTableName = null, IDbTransaction? transaction = null, bool throwOnZeroRowsAffected = true)`
+- `Delete(IDbConnection dbConnection, T value, string? dbTableName = null, IDbTransaction? transaction = null, bool throwOnZeroRowsAffected = true)`
+- `Delete(IDbConnection dbConnection, IEnumerable<T> values, string? dbTableName = null, IDbTransaction? transaction = null, bool throwOnZeroRowsAffected = true)`
 - `Delete(IDbConnection dbConnection, ..., [filter params], IDbTransaction? transaction = null)`
 - `Upsert(IDbConnection dbConnection, T value, string[]? conflictColumns = null, string[]? updateColumns = null, string[]? incrementColumns = null, string? dbTableName = null, IDbTransaction? transaction = null)`
 
@@ -120,6 +120,15 @@ This document summarizes the generated API surface developers should expect for 
 - `ignoreDuplicates`: emits `INSERT OR IGNORE`.
 - `insertPrimaryKey`: includes PK in insert statement instead of identity behavior.
 - List/enumerable `Insert` overloads surface each element's generated identity key back onto the passed instances.
+
+### Zero-Rows Behavior (by-key `Update`/`Delete`)
+
+By-key `Update(value)`/`Delete(value)` (single and bulk) enforce that the targeted row exists:
+
+- **Keyed models** throw `LdgCommandFailedException` (namespace `CsLightDbGen.SQLiteGenerator`, carrying `ModelName` and the offending `Sql`) when a by-key mutation affects **zero** rows — the typical cause is a stale or already-deleted key. Pass `throwOnZeroRowsAffected: false` to opt out **per call** (the mutation then silently affects zero rows). The opt-out is a per-call parameter rather than a process-global toggle so it is thread-safe and localized.
+- **Keyless models** (no primary key) can never match a row on a by-key mutation (their predicate is `1 = 0`), so they **never** throw and **omit** the `throwOnZeroRowsAffected` parameter entirely (it would be a permanent no-op).
+- `Insert` failure (and FTS `Populate` failure) likewise throws `LdgCommandFailedException` rather than a bare `System.Exception`; the `ignoreDuplicates`/`Upsert` conflict guards are preserved (an ignored conflict does not throw).
+- `UpdateReturning` is unaffected: it signals "no row matched" by returning `null`, not by throwing.
 
 ### RETURNING / Hydration Options
 
@@ -147,7 +156,7 @@ Models with no insertable or no updatable columns still generate valid, compilab
 
 - **Identity-only** (a single auto-increment key, no other columns): the default `Insert` has no columns to supply, so it emits `INSERT INTO <table> DEFAULT VALUES` (not the invalid `() VALUES ()`). Each insert persists a row and auto-assigns the key.
 - **Primary-key-only** (a single natural key, no data columns): `Update`/`UpdateReturning` have no assignable columns, so the `SET` clause falls back to a harmless self-assignment of the key column (`"Key" = "Key"`) instead of an empty (invalid) `SET`.
-- **Keyless** (no primary key): the by-key `Update`/`Delete(value)` overloads have no row identity, so their `WHERE` predicate is the valid no-op `1 = 0` — they affect zero rows rather than emitting a broken ` = ` predicate. Use the filter-based `Delete(..., [filter params])` overload to remove keyless rows.
+- **Keyless** (no primary key): the by-key `Update`/`Delete(value)` overloads have no row identity, so their `WHERE` predicate is the valid no-op `1 = 0` — they affect zero rows rather than emitting a broken ` = ` predicate. Because zero rows is expected, they **never** throw and omit the `throwOnZeroRowsAffected` opt-out (see *Zero-Rows Behavior*). Use the filter-based `Delete(..., [filter params])` overload to remove keyless rows.
 
 ### Transaction Enrollment
 
