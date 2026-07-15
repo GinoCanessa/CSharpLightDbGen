@@ -78,6 +78,42 @@ internal static class GeneratorTestHost
             generated);
     }
 
+    /// <summary>
+    /// Runs the generator with incremental-step tracking enabled, then re-runs the SAME driver after
+    /// appending an unrelated syntax tree (one that declares no generator targets). Because the
+    /// original sources are unchanged, a correctly-cached incremental pipeline reuses each model's
+    /// transform output on the second run. Returns the second run's result so a caching test can
+    /// assert the reuse via <see cref="GeneratorDriverRunResult.Results"/> tracked steps.
+    /// </summary>
+    public static GeneratorDriverRunResult RunAndReRunWithUnrelatedTree(string unrelatedSource, params string[] sourceTexts)
+    {
+        if (sourceTexts.Length == 0)
+        {
+            throw new ArgumentException("At least one source text is required.", nameof(sourceTexts));
+        }
+
+        SyntaxTree[] syntaxTrees = sourceTexts
+            .Select(static text => CSharpSyntaxTree.ParseText(text))
+            .ToArray();
+
+        CSharpCompilation compilation = CSharpCompilation.Create(
+            assemblyName: "GeneratorCachingTestsAssembly",
+            syntaxTrees: syntaxTrees,
+            references: GetMetadataReferences(),
+            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            generators: [new LightSQLiteGenerator().AsSourceGenerator()],
+            driverOptions: new GeneratorDriverOptions(IncrementalGeneratorOutputKind.None, trackIncrementalGeneratorSteps: true));
+
+        driver = driver.RunGenerators(compilation);
+
+        Compilation updatedCompilation = compilation.AddSyntaxTrees(CSharpSyntaxTree.ParseText(unrelatedSource));
+        driver = driver.RunGenerators(updatedCompilation);
+
+        return driver.GetRunResult();
+    }
+
     public static string GetGeneratedSourceByHintSuffix(GeneratorRunResult runResult, string suffix)
     {
         var match = runResult.GeneratedSources

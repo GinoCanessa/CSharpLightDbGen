@@ -9,6 +9,7 @@ using System.Data;
 using System.Data.Common;
 using System.Data.SqlTypes;
 using System.Text;
+using System.Threading;
 using System.Xml.Linq;
 
 namespace CsLightDbGen.SQLiteGenerator;
@@ -28,11 +29,14 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
     private const string _comma_line_5 = ",\r\n                    ";
     private const string _comma_line_6 = ",\r\n                        ";
 
-    private enum LdGenCategory
-    {
-        Class,
-        Record,
-    }
+    /// <summary>Namespace the generator emits its attribute types into (see <see cref="GeneratorAttributes.LdgAttributes"/>).</summary>
+    internal const string AttributesNamespace = "CsLightDbGen.SQLiteGenerator";
+
+    /// <summary>Tracking name for the regular-table equatable model step (asserted by caching tests).</summary>
+    public const string TableModelTrackingName = "LdgTableModel";
+
+    /// <summary>Tracking name for the FTS equatable model step (asserted by caching tests).</summary>
+    public const string FtsModelTrackingName = "LdgFtsModel";
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -48,26 +52,32 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             "LdgSQLiteGeneratorAttributes.g.cs",
             SourceText.From(GeneratorAttributes.LdgAttributes, Encoding.UTF8)));
 
-        IncrementalValuesProvider<ClassDeclarationSyntax> cDeclarations = context.SyntaxProvider
-            .CreateSyntaxProvider(
-                predicate: static (s, _) => IsSyntaxTargetClassDec(s),
-                transform: static (ctx, _) => GetClassTargetForGeneration(ctx));
+        // Regular [LdgSQLiteTable] models. ForAttributeWithMetadataName finds targets cheaply and,
+        // paired with a fully value-equatable TableModel, lets the pipeline cache each model
+        // independently: editing one model (or unrelated code) no longer re-runs generation for
+        // every model in the compilation.
+        IncrementalValuesProvider<TableModel> tableModels = context.SyntaxProvider
+            .ForAttributeWithMetadataName(
+                $"{AttributesNamespace}.{GeneratorAttributes._ldgSQLiteTable}",
+                predicate: static (node, _) => IsSyntaxTargetClassDec(node) || IsSyntaxTargetRecordDec(node),
+                transform: static (ctx, ct) => TransformTable(ctx, ct))
+            .Where(static model => model is not null)
+            .Select(static (model, _) => model!.Value)
+            .WithTrackingName(TableModelTrackingName);
 
-        IncrementalValueProvider<(Compilation, ImmutableArray<ClassDeclarationSyntax>)> ivpClasses =
-                context.CompilationProvider.Combine(cDeclarations.Collect());
+        context.RegisterSourceOutput(tableModels, static (spc, model) => emit(model, spc));
 
-        context.RegisterSourceOutput(ivpClasses, (spc, source) => Execute(source.Item1, source.Item2, spc));
+        // FTS5 [LdgSQLiteFtsTable] models follow the same equatable pipeline shape.
+        IncrementalValuesProvider<FtsModel> ftsModels = context.SyntaxProvider
+            .ForAttributeWithMetadataName(
+                $"{AttributesNamespace}.{GeneratorAttributes._ldgSQLiteFtsTable}",
+                predicate: static (node, _) => IsSyntaxTargetClassDec(node) || IsSyntaxTargetRecordDec(node),
+                transform: static (ctx, ct) => TransformFts(ctx, ct))
+            .Where(static model => model is not null)
+            .Select(static (model, _) => model!.Value)
+            .WithTrackingName(FtsModelTrackingName);
 
-
-        IncrementalValuesProvider<RecordDeclarationSyntax> rDeclarations = context.SyntaxProvider
-            .CreateSyntaxProvider(
-                predicate: static (s, _) => IsSyntaxTargetRecordDec(s),
-                transform: static (ctx, _) => GetRecordTargetForGeneration(ctx));
-
-        IncrementalValueProvider<(Compilation, ImmutableArray<RecordDeclarationSyntax>)> ivpRecords =
-                context.CompilationProvider.Combine(rDeclarations.Collect());
-
-        context.RegisterSourceOutput(ivpRecords, (spc, source) => Execute(source.Item1, source.Item2, spc));
+        context.RegisterSourceOutput(ftsModels, static (spc, model) => emitFts(model, spc));
     }
 
 
@@ -98,157 +108,6 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             rDeclarationSyntax.AttributeLists.Any(al => al.Attributes.Any(a => GeneratorAttributes._ldClassAttributes.Contains(a.Name.ToString())));
     }
 
-
-    /// <summary>
-    /// Retrieves the target class declaration syntax for generation.
-    /// </summary>
-    /// <param name="context">The generator syntax context.</param>
-    /// <returns>The class declaration syntax node.</returns>
-    public static ClassDeclarationSyntax GetClassTargetForGeneration(GeneratorSyntaxContext context)
-    {
-        ClassDeclarationSyntax cDeclarationSyntax = (ClassDeclarationSyntax)context.Node;
-        return cDeclarationSyntax;
-    }
-
-    /// <summary>
-    /// Retrieves the target class declaration syntax for generation.
-    /// </summary>
-    /// <param name="context">The generator syntax context.</param>
-    /// <returns>The record declaration syntax node.</returns>
-    public static RecordDeclarationSyntax GetRecordTargetForGeneration(GeneratorSyntaxContext context)
-    {
-        RecordDeclarationSyntax rDeclarationSyntax = (RecordDeclarationSyntax)context.Node;
-        return rDeclarationSyntax;
-    }
-
-    public void Execute(Compilation compilation, ImmutableArray<ClassDeclarationSyntax> classes, SourceProductionContext context)
-    {
-        HashSet<ISymbol> seenTargets = new(SymbolEqualityComparer.Default);
-
-        foreach (ClassDeclarationSyntax classSyntax in classes.Where(c => c.AttributeLists.Any(al => al.Attributes.Any(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteTable))))
-        {
-            // Converting the class to a semantic model to access much more meaningful data.
-            SemanticModel model = compilation.GetSemanticModel(classSyntax.SyntaxTree);
-
-            // Parse to declared symbol, so you can access each part of code separately,
-            // such as interfaces, methods, members, contructor parameters etc.
-            ISymbol? symbol = model.GetDeclaredSymbol(classSyntax);
-
-            if (symbol == null)
-            {
-                continue;
-            }
-
-            if (!seenTargets.Add(symbol))
-            {
-                continue;
-            }
-
-            List<IPropertySymbol> members = CollectColumnProperties((INamedTypeSymbol)symbol);
-
-            execute(
-                compilation,
-                symbol,
-                members,
-                context,
-                LdGenCategory.Class);
-        }
-
-        foreach (ClassDeclarationSyntax classSyntax in classes.Where(c => c.AttributeLists.Any(al => al.Attributes.Any(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteFtsTable))))
-        {
-            // Converting the class to a semantic model to access much more meaningful data.
-            SemanticModel model = compilation.GetSemanticModel(classSyntax.SyntaxTree);
-
-            // Parse to declared symbol, so you can access each part of code separately,
-            // such as interfaces, methods, members, contructor parameters etc.
-            ISymbol? symbol = model.GetDeclaredSymbol(classSyntax);
-
-            if (symbol == null)
-            {
-                continue;
-            }
-
-            if (!seenTargets.Add(symbol))
-            {
-                continue;
-            }
-
-            List<IPropertySymbol> members = CollectColumnProperties((INamedTypeSymbol)symbol);
-
-            executeForFts(
-                compilation,
-                symbol,
-                members,
-                context,
-                LdGenCategory.Class);
-        }
-    }
-
-    public void Execute(
-        Compilation compilation,
-        ImmutableArray<RecordDeclarationSyntax> records,
-        SourceProductionContext context)
-    {
-        HashSet<ISymbol> seenTargets = new(SymbolEqualityComparer.Default);
-
-        foreach (RecordDeclarationSyntax recordSyntax in records.Where(c => c.AttributeLists.Any(al => al.Attributes.Any(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteTable))))
-        {
-            // Converting the record to a semantic model to access much more meaningful data.
-            SemanticModel model = compilation.GetSemanticModel(recordSyntax.SyntaxTree);
-
-            // Parse to declared symbol, so you can access each part of code separately,
-            // such as interfaces, methods, members, contructor parameters etc.
-            ISymbol? symbol = model.GetDeclaredSymbol(recordSyntax);
-
-            if (symbol == null)
-            {
-                continue;
-            }
-
-            if (!seenTargets.Add(symbol))
-            {
-                continue;
-            }
-
-            List<IPropertySymbol> members = CollectColumnProperties((INamedTypeSymbol)symbol);
-
-            execute(
-                compilation,
-                symbol,
-                members,
-                context,
-                LdGenCategory.Record);
-        }
-
-        foreach (RecordDeclarationSyntax recordSyntax in records.Where(c => c.AttributeLists.Any(al => al.Attributes.Any(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteFtsTable))))
-        {
-            // Converting the record to a semantic model to access much more meaningful data.
-            SemanticModel model = compilation.GetSemanticModel(recordSyntax.SyntaxTree);
-
-            // Parse to declared symbol, so you can access each part of code separately,
-            // such as interfaces, methods, members, contructor parameters etc.
-            ISymbol? symbol = model.GetDeclaredSymbol(recordSyntax);
-
-            if (symbol == null)
-            {
-                continue;
-            }
-
-            if (!seenTargets.Add(symbol))
-            {
-                continue;
-            }
-
-            List<IPropertySymbol> members = CollectColumnProperties((INamedTypeSymbol)symbol);
-
-            executeForFts(
-                compilation,
-                symbol,
-                members,
-                context,
-                LdGenCategory.Record);
-        }
-    }
 
     private record struct TableColInfoRec(
         string name,
@@ -407,21 +266,441 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         return new ColumnClassification(isEnum, enumTypeName, isNonScalar, jsonTypeName);
     }
 
-    private void execute(
-        Compilation compilation,
-        ISymbol symbol,
-        List<IPropertySymbol> members,
-        SourceProductionContext context,
-        LdGenCategory genCategory)
+    /// <summary>
+    /// Pipeline transform for a regular <c>[LdgSQLiteTable]</c> target: projects the target symbol
+    /// and its column properties into a fully value-equatable <see cref="TableModel"/>. Keeping the
+    /// <see cref="Compilation"/> and every <see cref="ISymbol"/> out of the returned value lets the
+    /// incremental generator cache an unchanged model and skip re-emitting its source.
+    /// </summary>
+    private static TableModel? TransformTable(GeneratorAttributeSyntaxContext context, CancellationToken cancellationToken)
     {
-        string className = symbol.Name;
-        string? classNamespace = symbol.ContainingNamespace?.ToDisplayString();
+        if (context.TargetSymbol is not INamedTypeSymbol typeSymbol)
+        {
+            return null;
+        }
 
-        ILookup<string?, AttributeData> symbolAttributeLookup = symbol.GetAttributes().ToLookup(a => a.AttributeClass?.Name);
+        LdGenCategory genCategory = context.TargetNode is RecordDeclarationSyntax ? LdGenCategory.Record : LdGenCategory.Class;
+
+        string className = typeSymbol.Name;
+        string? classNamespace = typeSymbol.ContainingNamespace?.ToDisplayString();
+
+        ILookup<string?, AttributeData> symbolAttributeLookup = typeSymbol.GetAttributes().ToLookup(a => a.AttributeClass?.Name);
 
         string tableName = symbolAttributeLookup.Contains(GeneratorAttributes._ldgSQLiteTable)
             ? symbolAttributeLookup[GeneratorAttributes._ldgSQLiteTable].First().ConstructorArguments.FirstOrDefault().Value?.ToString() ?? className
             : className;
+
+        List<IPropertySymbol> members = CollectColumnProperties(typeSymbol);
+
+        List<ColumnInput> columns = [];
+        foreach (IPropertySymbol propSymbol in members)
+        {
+            if (HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteIgnore))
+            {
+                continue;
+            }
+
+            columns.Add(BuildColumnInput(propSymbol));
+        }
+
+        // class-level composite foreign keys, pre-rendered to DDL fragments
+        List<string> compositeFkLines = [];
+        if (symbolAttributeLookup.Contains(GeneratorAttributes._ldgSQLiteForeignKeyComposite))
+        {
+            foreach (AttributeData ad in symbolAttributeLookup[GeneratorAttributes._ldgSQLiteForeignKeyComposite])
+            {
+                ImmutableArray<TypedConstant> ctorArgs = ad.ConstructorArguments;
+                if (ctorArgs.Length < 3)
+                {
+                    continue;
+                }
+
+                string[] fkColumns = ctorArgs[0].Values
+                    .Select(tc => tc.Value?.ToString() ?? string.Empty)
+                    .Where(v => !string.IsNullOrEmpty(v))
+                    .ToArray();
+                string fkRefTable = ctorArgs[1].Value?.ToString() ?? string.Empty;
+                string[] fkRefColumns = ctorArgs[2].Values
+                    .Select(tc => tc.Value?.ToString() ?? string.Empty)
+                    .Where(v => !string.IsNullOrEmpty(v))
+                    .ToArray();
+
+                if ((fkColumns.Length == 0) || string.IsNullOrEmpty(fkRefTable) || (fkRefColumns.Length == 0))
+                {
+                    continue;
+                }
+
+                string compositeActions = string.Empty;
+                if (ctorArgs.Length > 3)
+                {
+                    string onDelete = fkActionFromValue(ctorArgs[3].Value);
+                    if (onDelete != "NO ACTION")
+                    {
+                        compositeActions += $" ON DELETE {onDelete}";
+                    }
+                }
+
+                if (ctorArgs.Length > 4)
+                {
+                    string onUpdate = fkActionFromValue(ctorArgs[4].Value);
+                    if (onUpdate != "NO ACTION")
+                    {
+                        compositeActions += $" ON UPDATE {onUpdate}";
+                    }
+                }
+
+                compositeFkLines.Add($"FOREIGN KEY ({string.Join(", ", fkColumns.Select(quoteIdent))}) REFERENCES {quoteIdent(fkRefTable)} ({string.Join(", ", fkRefColumns.Select(quoteIdent))}){compositeActions}");
+            }
+        }
+
+        // class-level [LdgSQLiteUnique(cols...)] column sets (used both as a table constraint and to
+        // re-assert the composite UNIQUE as an index during additive migration)
+        List<EquatableColumnSet> classUniqueColumnSets = [];
+        if (symbolAttributeLookup.Contains(GeneratorAttributes._ldgSQLiteUnique))
+        {
+            foreach (AttributeData ad in symbolAttributeLookup[GeneratorAttributes._ldgSQLiteUnique])
+            {
+                string[] uniqueColumns = ad.ConstructorArguments
+                    .FirstOrDefault()
+                    .Values
+                    .Select(tc => tc.Value?.ToString() ?? string.Empty)
+                    .Where(v => !string.IsNullOrEmpty(v))
+                    .ToArray();
+
+                if (uniqueColumns.Length == 0)
+                {
+                    continue;
+                }
+
+                classUniqueColumnSets.Add(new EquatableColumnSet(uniqueColumns.ToEquatableArray()));
+            }
+        }
+
+        // class-level [LdgSQLiteIndex] definitions (rendered to CREATE INDEX statements at emit time)
+        List<IndexInfo> indexes = [];
+        if (symbolAttributeLookup.Contains(GeneratorAttributes._ldgSQLiteIndex))
+        {
+            foreach (AttributeData ad in symbolAttributeLookup[GeneratorAttributes._ldgSQLiteIndex])
+            {
+                string[] indexColumns = ad.ConstructorArguments
+                    .FirstOrDefault()
+                    .Values
+                    .Select(tc => tc.Value?.ToString() ?? string.Empty)
+                    .Where(v => !string.IsNullOrEmpty(v))
+                    .ToArray();
+
+                if (indexColumns.Length == 0)
+                {
+                    continue;
+                }
+
+                bool unique = false;
+                string? whereClause = null;
+                foreach (KeyValuePair<string, TypedConstant> na in ad.NamedArguments)
+                {
+                    if (na.Key == "Unique")
+                    {
+                        unique = na.Value.Value is bool b && b;
+                    }
+                    else if (na.Key == "Where")
+                    {
+                        whereClause = na.Value.Value?.ToString();
+                    }
+                }
+
+                indexes.Add(new IndexInfo(indexColumns.ToEquatableArray(), unique, whereClause));
+            }
+        }
+
+        return new TableModel(
+            className,
+            classNamespace,
+            tableName,
+            genCategory,
+            LocationInfo.From(typeSymbol),
+            columns.ToEquatableArray(),
+            compositeFkLines.ToEquatableArray(),
+            classUniqueColumnSets.ToEquatableArray(),
+            indexes.ToEquatableArray());
+    }
+
+    /// <summary>
+    /// Pipeline transform for an FTS5 <c>[LdgSQLiteFtsTable]</c> target: the FTS counterpart of
+    /// <see cref="TransformTable"/>, producing a reduced value-equatable <see cref="FtsModel"/>
+    /// (no keys, foreign keys, indexes, or column defaults).
+    /// </summary>
+    private static FtsModel? TransformFts(GeneratorAttributeSyntaxContext context, CancellationToken cancellationToken)
+    {
+        if (context.TargetSymbol is not INamedTypeSymbol typeSymbol)
+        {
+            return null;
+        }
+
+        LdGenCategory genCategory = context.TargetNode is RecordDeclarationSyntax ? LdGenCategory.Record : LdGenCategory.Class;
+
+        string className = typeSymbol.Name;
+        string? classNamespace = typeSymbol.ContainingNamespace?.ToDisplayString();
+
+        ILookup<string?, AttributeData> symbolAttributeLookup = typeSymbol.GetAttributes().ToLookup(a => a.AttributeClass?.Name);
+
+        List<TypedConstant> ftsTableArgs = symbolAttributeLookup.Contains(GeneratorAttributes._ldgSQLiteFtsTable)
+            ? symbolAttributeLookup[GeneratorAttributes._ldgSQLiteFtsTable].First().ConstructorArguments.ToList()
+            : [];
+
+        string sourceTableName = ftsTableArgs.Count > 0
+            ? ftsTableArgs[0].Value?.ToString() ?? className
+            : className;
+
+        string tableName = ftsTableArgs.Count > 1
+            ? ftsTableArgs[1].Value?.ToString() ?? (className + "_fts")
+            : (className + "_fts");
+
+        string? tokenizer = ftsTableArgs.Count > 2
+            ? ftsTableArgs[2].Value?.ToString()
+            : null;
+
+        List<IPropertySymbol> members = CollectColumnProperties(typeSymbol);
+
+        List<ColumnInput> columns = [];
+        foreach (IPropertySymbol propSymbol in members)
+        {
+            if (HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteIgnore))
+            {
+                continue;
+            }
+
+            columns.Add(BuildColumnInput(propSymbol));
+        }
+
+        return new FtsModel(
+            className,
+            classNamespace,
+            tableName,
+            sourceTableName,
+            tokenizer,
+            genCategory,
+            LocationInfo.From(typeSymbol),
+            columns.ToEquatableArray());
+    }
+
+    /// <summary>
+    /// Extracts every value the emitter needs from a single column property (and its declaration
+    /// syntax) into a value-equatable <see cref="ColumnInput"/>. This is where the symbol/syntax
+    /// reads that used to live inline in the per-column emit loop now happen, once, in the pipeline
+    /// transform.
+    /// </summary>
+    private static ColumnInput BuildColumnInput(IPropertySymbol propSymbol)
+    {
+        PropertyDeclarationSyntax? pds = TryGetPropertySyntax(propSymbol);
+        string propName = propSymbol.Name;
+
+        string propTypeName = PropertyTypeName(propSymbol, pds);
+        INamedTypeSymbol? namedTypeSymbol = propSymbol.Type as INamedTypeSymbol;
+
+        bool nullable = propTypeName.EndsWith("?") || (namedTypeSymbol?.NullableAnnotation == NullableAnnotation.Annotated);
+        if (nullable)
+        {
+            propTypeName = propTypeName.Substring(0, propTypeName.Length - 1);
+        }
+
+        bool isPrimaryKey = HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteKey);
+
+        // Decode [LdgSQLiteKey(autoIncrement)] — constructor arg 0 or the named AutoIncrement
+        // property (default true). AttributeData yields the effective value even for
+        // referenced-assembly symbols; the syntax pass records whether AutoIncrement was written
+        // explicitly, which is needed to diagnose (but not over-report) composite + AutoIncrement.
+        bool keyAutoIncrement = true;
+        bool keyAutoIncrementExplicit = false;
+        if (isPrimaryKey)
+        {
+            AttributeData? keyAttrData = propSymbol.GetAttributes()
+                .FirstOrDefault(a => a.AttributeClass?.Name == GeneratorAttributes._ldgSQLiteKey);
+            if (keyAttrData != null)
+            {
+                if ((keyAttrData.ConstructorArguments.Length > 0) && (keyAttrData.ConstructorArguments[0].Value is bool ctorAutoInc))
+                {
+                    keyAutoIncrement = ctorAutoInc;
+                }
+
+                foreach (KeyValuePair<string, TypedConstant> namedArg in keyAttrData.NamedArguments)
+                {
+                    if ((namedArg.Key == "AutoIncrement") && (namedArg.Value.Value is bool namedAutoInc))
+                    {
+                        keyAutoIncrement = namedAutoInc;
+                    }
+                }
+            }
+
+            foreach (AttributeListSyntax keyAls in pds?.AttributeLists ?? default)
+            {
+                foreach (AttributeSyntax keyAttr in keyAls.Attributes.Where(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteKey))
+                {
+                    if ((keyAttr.ArgumentList?.Arguments.Count ?? 0) > 0)
+                    {
+                        keyAutoIncrementExplicit = true;
+                    }
+                }
+            }
+        }
+
+        bool isUnique = HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteUnique);
+        bool isUnindexed = HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteFtsUnindexed);
+        bool hasMultiSelectAttr = HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteMultiSelect);
+
+        ColumnClassification classification = ClassifyColumn(propSymbol.Type);
+
+        // check for a column default (literal, boolean, numeric, or raw SQL expression)
+        string defaultClause = string.Empty;
+        bool defaultIsRaw = false;
+        foreach (AttributeListSyntax defAls in pds?.AttributeLists ?? default)
+        {
+            foreach (AttributeSyntax defAttr in defAls.Attributes.Where(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteDefault))
+            {
+                ExpressionSyntax? defaultValueExpr = null;
+                bool defaultRaw = false;
+                int positional = 0;
+
+                foreach (AttributeArgumentSyntax arg in defAttr.ArgumentList?.Arguments ?? [])
+                {
+                    string? argName = arg.NameColon?.Name.ToString() ?? arg.NameEquals?.Name.ToString();
+
+                    if ((argName == "raw") || (argName == "Raw"))
+                    {
+                        defaultRaw = arg.Expression.ToString() == "true";
+                    }
+                    else if ((argName == "value") || (argName == "Value"))
+                    {
+                        defaultValueExpr = arg.Expression;
+                    }
+                    else if (argName == null)
+                    {
+                        if (positional == 0)
+                        {
+                            defaultValueExpr = arg.Expression;
+                        }
+                        else if (positional == 1)
+                        {
+                            defaultRaw = arg.Expression.ToString() == "true";
+                        }
+
+                        positional++;
+                    }
+                }
+
+                defaultClause = formatDefault(defaultValueExpr, defaultRaw);
+                defaultIsRaw = defaultRaw;
+            }
+        }
+
+        // check for foreign key property information
+        string? foreignTable = null;
+        string? foreignColumn = null;
+        string? foreignModelType = null;
+        string fkActions = string.Empty;
+        foreach (AttributeListSyntax als in pds?.AttributeLists ?? default)
+        {
+            foreach (AttributeSyntax a in als.Attributes.Where(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteForeignKey))
+            {
+                string? fkOnDelete = null;
+                string? fkOnUpdate = null;
+                int fkPositional = 0;
+
+                foreach (AttributeArgumentSyntax arg in a.ArgumentList?.Arguments ?? [])
+                {
+                    string? argName = arg.NameEquals?.Name.ToString() ?? arg.NameColon?.Name.ToString();
+
+                    // Positional constructor arguments carry no name; map them to the
+                    // LdgSQLiteForeignKey constructor order:
+                    // (referenceTable, referenceColumn, modelTypeName, onDelete, onUpdate).
+                    if (argName == null)
+                    {
+                        switch (fkPositional)
+                        {
+                            case 0:
+                                foreignTable = arg.Expression.ToString();
+                                break;
+                            case 1:
+                                foreignColumn = arg.Expression.ToString();
+                                break;
+                            case 2:
+                                foreignModelType = arg.Expression.ToString();
+                                break;
+                            case 3:
+                                fkOnDelete = fkActionFromExpr(arg.Expression.ToString());
+                                break;
+                            case 4:
+                                fkOnUpdate = fkActionFromExpr(arg.Expression.ToString());
+                                break;
+                        }
+
+                        fkPositional++;
+                        continue;
+                    }
+
+                    if (argName == "ReferenceTable")
+                    {
+                        foreignTable = arg.Expression.ToString();
+                    }
+                    else if (argName == "ReferenceColumn")
+                    {
+                        foreignColumn = arg.Expression.ToString();
+                    }
+                    else if (argName == "ModelTypeName")
+                    {
+                        foreignModelType = arg.Expression.ToString();
+                    }
+                    else if ((argName == "OnDelete") || (argName == "onDelete"))
+                    {
+                        fkOnDelete = fkActionFromExpr(arg.Expression.ToString());
+                    }
+                    else if ((argName == "OnUpdate") || (argName == "onUpdate"))
+                    {
+                        fkOnUpdate = fkActionFromExpr(arg.Expression.ToString());
+                    }
+                }
+
+                if ((fkOnDelete != null) && (fkOnDelete != "NO ACTION"))
+                {
+                    fkActions += $" ON DELETE {fkOnDelete}";
+                }
+
+                if ((fkOnUpdate != null) && (fkOnUpdate != "NO ACTION"))
+                {
+                    fkActions += $" ON UPDATE {fkOnUpdate}";
+                }
+            }
+        }
+
+        return new ColumnInput(
+            propName,
+            propTypeName,
+            nullable,
+            isPrimaryKey,
+            keyAutoIncrement,
+            keyAutoIncrementExplicit,
+            isUnique,
+            isUnindexed,
+            hasMultiSelectAttr,
+            propSymbol.Type.IsValueType,
+            classification.IsEnum,
+            classification.EnumTypeName,
+            classification.IsNonScalar,
+            classification.JsonTypeName,
+            defaultClause,
+            defaultIsRaw,
+            foreignTable,
+            foreignColumn,
+            foreignModelType,
+            fkActions,
+            LocationInfo.From(propSymbol));
+    }
+
+    private static void emit(TableModel model, SourceProductionContext context)
+    {
+        string className = model.ClassName;
+        string? classNamespace = model.ClassNamespace;
+        LdGenCategory genCategory = model.GenCategory;
+        string tableName = model.TableName;
 
         int? pkColIndex = null;
         string? pkColName = null;
@@ -433,23 +712,11 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         // before the per-property column loop builds createColLines / TableColInfoRec.isIdentity,
         // so it cannot be decided retroactively in a single forward pass.
         List<(string name, string propType)> pkCols = [];
-        foreach (IPropertySymbol preProp in members)
+        foreach (ColumnInput preCol in model.Columns)
         {
-            if (HasLdgAttribute(preProp, GeneratorAttributes._ldgSQLiteIgnore))
+            if (preCol.IsKey)
             {
-                continue;
-            }
-
-            if (HasLdgAttribute(preProp, GeneratorAttributes._ldgSQLiteKey))
-            {
-                PropertyDeclarationSyntax? preSyntax = TryGetPropertySyntax(preProp);
-                string preType = PropertyTypeName(preProp, preSyntax);
-                if (preType.EndsWith("?"))
-                {
-                    preType = preType.Substring(0, preType.Length - 1);
-                }
-
-                pkCols.Add((preProp.Name, preType));
+                pkCols.Add((preCol.Name, preCol.TypeName));
             }
         }
 
@@ -461,66 +728,14 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         HashSet<string> rawDefaultColumnNames = new(System.StringComparer.Ordinal);
         List<TableColInfoRec> tableColInfo = [];
 
-        foreach (IPropertySymbol propSymbol in members)
+        foreach (ColumnInput col in model.Columns)
         {
-            // check for ignore property
-            if (HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteIgnore))
-            {
-                continue;
-            }
-
-            PropertyDeclarationSyntax? pds = TryGetPropertySyntax(propSymbol);
-            string propName = propSymbol.Name;
-
-            string propTypeName = PropertyTypeName(propSymbol, pds);
-            INamedTypeSymbol? namedTypeSymbol = propSymbol.Type as INamedTypeSymbol;
-
-            bool nullable = propTypeName.EndsWith("?") || (namedTypeSymbol?.NullableAnnotation == NullableAnnotation.Annotated);
-            if (nullable)
-            {
-                propTypeName = propTypeName.Substring(0, propTypeName.Length - 1);
-            }
-
-            // check for primary key property
-            bool isPrimaryKey = HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteKey);
-
-            // Decode [LdgSQLiteKey(autoIncrement)] — constructor arg 0 or the named AutoIncrement
-            // property (default true). AttributeData yields the effective value even for
-            // referenced-assembly symbols; the syntax pass records whether AutoIncrement was written
-            // explicitly, which is needed to diagnose (but not over-report) composite + AutoIncrement.
-            bool keyAutoIncrement = true;
-            bool keyAutoIncrementExplicit = false;
-            if (isPrimaryKey)
-            {
-                AttributeData? keyAttrData = propSymbol.GetAttributes()
-                    .FirstOrDefault(a => a.AttributeClass?.Name == GeneratorAttributes._ldgSQLiteKey);
-                if (keyAttrData != null)
-                {
-                    if ((keyAttrData.ConstructorArguments.Length > 0) && (keyAttrData.ConstructorArguments[0].Value is bool ctorAutoInc))
-                    {
-                        keyAutoIncrement = ctorAutoInc;
-                    }
-
-                    foreach (KeyValuePair<string, TypedConstant> namedArg in keyAttrData.NamedArguments)
-                    {
-                        if ((namedArg.Key == "AutoIncrement") && (namedArg.Value.Value is bool namedAutoInc))
-                        {
-                            keyAutoIncrement = namedAutoInc;
-                        }
-                    }
-                }
-
-                foreach (AttributeListSyntax keyAls in pds?.AttributeLists ?? default)
-                {
-                    foreach (AttributeSyntax keyAttr in keyAls.Attributes.Where(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteKey))
-                    {
-                        if ((keyAttr.ArgumentList?.Arguments.Count ?? 0) > 0)
-                        {
-                            keyAutoIncrementExplicit = true;
-                        }
-                    }
-                }
-            }
+            string propName = col.Name;
+            string propTypeName = col.TypeName;
+            bool nullable = col.Nullable;
+            bool isPrimaryKey = col.IsKey;
+            bool keyAutoIncrement = col.KeyAutoIncrement;
+            bool keyAutoIncrementExplicit = col.KeyAutoIncrementExplicit;
 
             if (isPrimaryKey)
             {
@@ -536,7 +751,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     GeneratorDiagnostics.Report(
                         context,
                         GeneratorDiagnostics.CompositeKeyAutoIncrementConflict,
-                        propSymbol,
+                        col.Location?.ToLocation(),
                         className,
                         propName);
                 }
@@ -549,7 +764,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     GeneratorDiagnostics.Report(
                         context,
                         GeneratorDiagnostics.UnsupportedModelShape,
-                        symbol,
+                        model.Location?.ToLocation(),
                         className,
                         $"has a primary key property '{propName}' whose resolved key column name could not be established");
                     return;
@@ -563,24 +778,23 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             // has not been disabled via [LdgSQLiteKey(false)].
             bool colIsIdentity = isPrimaryKey && !compositePk && (propTypeName == "int" || propTypeName == "long") && keyAutoIncrement;
 
-            bool isUnique = HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteUnique);
+            bool isUnique = col.IsUnique;
 
-            bool hasMultiSelectAttr = HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteMultiSelect);
+            bool hasMultiSelectAttr = col.HasMultiSelectAttr;
 
-            ColumnClassification classification = ClassifyColumn(propSymbol.Type);
-            bool memberIsEnum = classification.IsEnum;
-            string? enumTypeName = classification.EnumTypeName;
-            bool memberIsNonScalar = classification.IsNonScalar;
-            string? jsonTypeName = classification.JsonTypeName;
+            bool memberIsEnum = col.IsEnum;
+            string? enumTypeName = col.EnumTypeName;
+            bool memberIsNonScalar = col.IsNonScalar;
+            string? jsonTypeName = col.JsonTypeName;
 
             bool useJson = !memberIsEnum && !_sqliteTypeMap.ContainsKey(propTypeName);
 
             // A value type with no scalar mapping cannot be persisted: the JSON helpers are
             // reference-type-only (where T : class), so routing it there would emit code that does
             // not compile. Report CSLDG001 and skip the column instead of emitting broken output.
-            if (useJson && propSymbol.Type.IsValueType)
+            if (useJson && col.IsValueType)
             {
-                GeneratorDiagnostics.Report(context, GeneratorDiagnostics.UnmappedValueTypeColumn, propSymbol, propName, className, propTypeName);
+                GeneratorDiagnostics.Report(context, GeneratorDiagnostics.UnmappedValueTypeColumn, col.Location?.ToLocation(), propName, className, propTypeName);
                 continue;
             }
 
@@ -593,47 +807,8 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 (hasMultiSelectAttr || isPrimaryKey || propName.EndsWith("Key"));
 
             // check for a column default (literal, boolean, numeric, or raw SQL expression)
-            string defaultClause = string.Empty;
-            bool defaultIsRaw = false;
-            foreach (AttributeListSyntax defAls in pds?.AttributeLists ?? default)
-            {
-                foreach (AttributeSyntax defAttr in defAls.Attributes.Where(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteDefault))
-                {
-                    ExpressionSyntax? defaultValueExpr = null;
-                    bool defaultRaw = false;
-                    int positional = 0;
-
-                    foreach (AttributeArgumentSyntax arg in defAttr.ArgumentList?.Arguments ?? [])
-                    {
-                        string? argName = arg.NameColon?.Name.ToString() ?? arg.NameEquals?.Name.ToString();
-
-                        if ((argName == "raw") || (argName == "Raw"))
-                        {
-                            defaultRaw = arg.Expression.ToString() == "true";
-                        }
-                        else if ((argName == "value") || (argName == "Value"))
-                        {
-                            defaultValueExpr = arg.Expression;
-                        }
-                        else if (argName == null)
-                        {
-                            if (positional == 0)
-                            {
-                                defaultValueExpr = arg.Expression;
-                            }
-                            else if (positional == 1)
-                            {
-                                defaultRaw = arg.Expression.ToString() == "true";
-                            }
-
-                            positional++;
-                        }
-                    }
-
-                    defaultClause = formatDefault(defaultValueExpr, defaultRaw);
-                    defaultIsRaw = defaultRaw;
-                }
-            }
+            string defaultClause = col.DefaultClause;
+            bool defaultIsRaw = col.DefaultIsRaw;
 
             // Columns whose default is a raw SQL expression (e.g. CURRENT_TIMESTAMP) are computed
             // by the database. InsertReturning omits them from the INSERT so the engine fills them,
@@ -682,83 +857,10 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             }
 
             // check for foreign key property information
-            string? foreignTable = null;
-            string? foreignColumn = null;
-            string? foreignModelType = null;
-            string fkActions = string.Empty;
-            foreach (AttributeListSyntax als in pds?.AttributeLists ?? default)
-            {
-                foreach (AttributeSyntax a in als.Attributes.Where(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteForeignKey))
-                {
-                    string? fkOnDelete = null;
-                    string? fkOnUpdate = null;
-                    int fkPositional = 0;
-
-                    foreach (AttributeArgumentSyntax arg in a.ArgumentList?.Arguments ?? [])
-                    {
-                        string? argName = arg.NameEquals?.Name.ToString() ?? arg.NameColon?.Name.ToString();
-
-                        // Positional constructor arguments carry no name; map them to the
-                        // LdgSQLiteForeignKey constructor order:
-                        // (referenceTable, referenceColumn, modelTypeName, onDelete, onUpdate).
-                        if (argName == null)
-                        {
-                            switch (fkPositional)
-                            {
-                                case 0:
-                                    foreignTable = arg.Expression.ToString();
-                                    break;
-                                case 1:
-                                    foreignColumn = arg.Expression.ToString();
-                                    break;
-                                case 2:
-                                    foreignModelType = arg.Expression.ToString();
-                                    break;
-                                case 3:
-                                    fkOnDelete = fkActionFromExpr(arg.Expression.ToString());
-                                    break;
-                                case 4:
-                                    fkOnUpdate = fkActionFromExpr(arg.Expression.ToString());
-                                    break;
-                            }
-
-                            fkPositional++;
-                            continue;
-                        }
-
-                        if (argName == "ReferenceTable")
-                        {
-                            foreignTable = arg.Expression.ToString();
-                        }
-                        else if (argName == "ReferenceColumn")
-                        {
-                            foreignColumn = arg.Expression.ToString();
-                        }
-                        else if (argName == "ModelTypeName")
-                        {
-                            foreignModelType = arg.Expression.ToString();
-                        }
-                        else if ((argName == "OnDelete") || (argName == "onDelete"))
-                        {
-                            fkOnDelete = fkActionFromExpr(arg.Expression.ToString());
-                        }
-                        else if ((argName == "OnUpdate") || (argName == "onUpdate"))
-                        {
-                            fkOnUpdate = fkActionFromExpr(arg.Expression.ToString());
-                        }
-                    }
-
-                    if ((fkOnDelete != null) && (fkOnDelete != "NO ACTION"))
-                    {
-                        fkActions += $" ON DELETE {fkOnDelete}";
-                    }
-
-                    if ((fkOnUpdate != null) && (fkOnUpdate != "NO ACTION"))
-                    {
-                        fkActions += $" ON UPDATE {fkOnUpdate}";
-                    }
-                }
-            }
+            string? foreignTable = col.ForeignTable;
+            string? foreignColumn = col.ForeignColumn;
+            string? foreignModelType = col.ForeignModelType;
+            string fkActions = col.FkActions;
 
             if ((foreignTable != null) && (foreignColumn != null))
             {
@@ -771,7 +873,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 GeneratorDiagnostics.Report(
                     context,
                     GeneratorDiagnostics.UnsupportedKeyOrForeignKeyCombination,
-                    propSymbol,
+                    col.Location?.ToLocation(),
                     propName,
                     className,
                     "a foreign key must specify both a reference table and a reference column");
@@ -905,54 +1007,8 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             }
         }
 
-        // class-level composite foreign keys
-        if (symbolAttributeLookup.Contains(GeneratorAttributes._ldgSQLiteForeignKeyComposite))
-        {
-            foreach (AttributeData ad in symbolAttributeLookup[GeneratorAttributes._ldgSQLiteForeignKeyComposite])
-            {
-                ImmutableArray<TypedConstant> ctorArgs = ad.ConstructorArguments;
-                if (ctorArgs.Length < 3)
-                {
-                    continue;
-                }
-
-                string[] fkColumns = ctorArgs[0].Values
-                    .Select(tc => tc.Value?.ToString() ?? string.Empty)
-                    .Where(v => !string.IsNullOrEmpty(v))
-                    .ToArray();
-                string fkRefTable = ctorArgs[1].Value?.ToString() ?? string.Empty;
-                string[] fkRefColumns = ctorArgs[2].Values
-                    .Select(tc => tc.Value?.ToString() ?? string.Empty)
-                    .Where(v => !string.IsNullOrEmpty(v))
-                    .ToArray();
-
-                if ((fkColumns.Length == 0) || string.IsNullOrEmpty(fkRefTable) || (fkRefColumns.Length == 0))
-                {
-                    continue;
-                }
-
-                string compositeActions = string.Empty;
-                if (ctorArgs.Length > 3)
-                {
-                    string onDelete = fkActionFromValue(ctorArgs[3].Value);
-                    if (onDelete != "NO ACTION")
-                    {
-                        compositeActions += $" ON DELETE {onDelete}";
-                    }
-                }
-
-                if (ctorArgs.Length > 4)
-                {
-                    string onUpdate = fkActionFromValue(ctorArgs[4].Value);
-                    if (onUpdate != "NO ACTION")
-                    {
-                        compositeActions += $" ON UPDATE {onUpdate}";
-                    }
-                }
-
-                createFKLines.Add($"FOREIGN KEY ({string.Join(", ", fkColumns.Select(quoteIdent))}) REFERENCES {quoteIdent(fkRefTable)} ({string.Join(", ", fkRefColumns.Select(quoteIdent))}){compositeActions}");
-            }
-        }
+        // class-level composite foreign keys (pre-rendered to DDL fragments in the transform)
+        createFKLines.AddRange(model.CompositeFkLines);
 
         // WHERE predicate used by the by-key Update/Delete overloads. Composite keys AND-join
         // every primary-key column; a single key uses "col = $col". A keyless model has no row
@@ -982,24 +1038,9 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         }
 
         // class-level [LdgSQLiteUnique(cols...)] declares a multi-column UNIQUE table constraint.
-        if (symbolAttributeLookup.Contains(GeneratorAttributes._ldgSQLiteUnique))
+        foreach (EquatableColumnSet uniqueSet in model.ClassUniqueColumnSets)
         {
-            foreach (AttributeData ad in symbolAttributeLookup[GeneratorAttributes._ldgSQLiteUnique])
-            {
-                string[] uniqueColumns = ad.ConstructorArguments
-                    .FirstOrDefault()
-                    .Values
-                    .Select(tc => tc.Value?.ToString() ?? string.Empty)
-                    .Where(v => !string.IsNullOrEmpty(v))
-                    .ToArray();
-
-                if (uniqueColumns.Length == 0)
-                {
-                    continue;
-                }
-
-                createTableLines.Add($"UNIQUE ({string.Join(", ", uniqueColumns.Select(quoteIdent))})");
-            }
+            createTableLines.Add($"UNIQUE ({string.Join(", ", uniqueSet.Columns.Select(quoteIdent))})");
         }
 
         // Upsert conflict-target defaulting. Composite and natural (non-identity) primary keys
@@ -2353,39 +2394,18 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
         IEnumerable<string> getIndexLines()
         {
-            if (!symbolAttributeLookup.Contains(GeneratorAttributes._ldgSQLiteIndex))
-            {
-                yield break;
-            }
-
             // generate any indexes
-            foreach (AttributeData ad in symbolAttributeLookup[GeneratorAttributes._ldgSQLiteIndex])
+            foreach (IndexInfo idx in model.Indexes)
             {
-                string[] columns = ad.ConstructorArguments
-                    .FirstOrDefault()
-                    .Values
-                    .Select(tc => tc.Value?.ToString() ?? string.Empty)
-                    .Where(v => !string.IsNullOrEmpty(v)).
-                    ToArray();
+                string[] columns = [.. idx.Columns];
 
                 if (columns.Length == 0)
                 {
                     continue;
                 }
 
-                bool unique = false;
-                string? whereClause = null;
-                foreach (KeyValuePair<string, TypedConstant> na in ad.NamedArguments)
-                {
-                    if (na.Key == "Unique")
-                    {
-                        unique = na.Value.Value is bool b && b;
-                    }
-                    else if (na.Key == "Where")
-                    {
-                        whereClause = na.Value.Value?.ToString();
-                    }
-                }
+                bool unique = idx.Unique;
+                string? whereClause = idx.Where;
 
                 bool hasWhere = !string.IsNullOrWhiteSpace(whereClause);
 
@@ -2438,19 +2458,9 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         // carries the table constraint, so a table it creates fresh needs no extra index.
         IEnumerable<string> getEnsureUniqueConstraintIndexLines()
         {
-            if (!symbolAttributeLookup.Contains(GeneratorAttributes._ldgSQLiteUnique))
+            foreach (EquatableColumnSet uniqueSet in model.ClassUniqueColumnSets)
             {
-                yield break;
-            }
-
-            foreach (AttributeData ad in symbolAttributeLookup[GeneratorAttributes._ldgSQLiteUnique])
-            {
-                string[] columns = ad.ConstructorArguments
-                    .FirstOrDefault()
-                    .Values
-                    .Select(tc => tc.Value?.ToString() ?? string.Empty)
-                    .Where(v => !string.IsNullOrEmpty(v))
-                    .ToArray();
+                string[] columns = [.. uniqueSet.Columns];
 
                 if (columns.Length == 0)
                 {
@@ -2891,74 +2901,40 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         }
     }
 
-    private void executeForFts(
-        Compilation compilation,
-        ISymbol symbol,
-        List<IPropertySymbol> members,
-        SourceProductionContext context,
-        LdGenCategory genCategory)
+    private static void emitFts(FtsModel model, SourceProductionContext context)
     {
-        string className = symbol.Name;
-        string? classNamespace = symbol.ContainingNamespace?.ToDisplayString();
-
-        ILookup<string?, AttributeData> symbolAttributeLookup = symbol.GetAttributes().ToLookup(a => a.AttributeClass?.Name);
-
-        List<TypedConstant> ftsTableArgs = symbolAttributeLookup.Contains(GeneratorAttributes._ldgSQLiteFtsTable)
-            ? symbolAttributeLookup[GeneratorAttributes._ldgSQLiteFtsTable].First().ConstructorArguments.ToList()
-            : [];
-
-        string sourceTableName = ftsTableArgs.Count > 0
-            ? ftsTableArgs[0].Value?.ToString() ?? className
-            : className;
-
-        string tableName = ftsTableArgs.Count > 1
-            ? ftsTableArgs[1].Value?.ToString() ?? (className + "_fts")
-            : (className + "_fts");
-
-        string? tokenizer = ftsTableArgs.Count > 2
-            ? ftsTableArgs[2].Value?.ToString()
-            : null;
+        string className = model.ClassName;
+        string? classNamespace = model.ClassNamespace;
+        LdGenCategory genCategory = model.GenCategory;
+        string sourceTableName = model.SourceTableName;
+        string tableName = model.TableName;
+        string? tokenizer = model.Tokenizer;
 
         List<string> createColLines = [];
         List<string> createForeignKeyLines = [];
         List<TableColInfoRec> tableColInfo = [];
 
-        foreach (IPropertySymbol propSymbol in members)
+        foreach (ColumnInput col in model.Columns)
         {
-            // check for ignore property
-            if (HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteIgnore))
-            {
-                continue;
-            }
+            string propName = col.Name;
+            string propTypeName = col.TypeName;
+            bool nullable = col.Nullable;
 
-            PropertyDeclarationSyntax? pds = TryGetPropertySyntax(propSymbol);
-            string propName = propSymbol.Name;
+            bool isUnique = col.IsUnique;
+            bool isUnindexed = col.IsUnindexed;
 
-            string propTypeName = PropertyTypeName(propSymbol, pds);
-            INamedTypeSymbol? namedTypeSymbol = propSymbol.Type as INamedTypeSymbol;
-
-            bool nullable = propTypeName.EndsWith("?") || (namedTypeSymbol?.NullableAnnotation == NullableAnnotation.Annotated);
-            if (nullable)
-            {
-                propTypeName = propTypeName.Substring(0, propTypeName.Length - 1);
-            }
-
-            bool isUnique = HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteUnique);
-            bool isUnindexed = HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteFtsUnindexed);
-
-            ColumnClassification classification = ClassifyColumn(propSymbol.Type);
-            bool memberIsEnum = classification.IsEnum;
-            string? enumTypeName = classification.EnumTypeName;
-            bool memberIsNonScalar = classification.IsNonScalar;
-            string? jsonTypeName = classification.JsonTypeName;
+            bool memberIsEnum = col.IsEnum;
+            string? enumTypeName = col.EnumTypeName;
+            bool memberIsNonScalar = col.IsNonScalar;
+            string? jsonTypeName = col.JsonTypeName;
 
             bool useJson = !memberIsEnum && !_sqliteTypeMap.ContainsKey(propTypeName);
 
             // A value type with no scalar mapping cannot be persisted (JSON helpers are
             // reference-type-only). Report CSLDG001 and skip the column.
-            if (useJson && propSymbol.Type.IsValueType)
+            if (useJson && col.IsValueType)
             {
-                GeneratorDiagnostics.Report(context, GeneratorDiagnostics.UnmappedValueTypeColumn, propSymbol, propName, className, propTypeName);
+                GeneratorDiagnostics.Report(context, GeneratorDiagnostics.UnmappedValueTypeColumn, col.Location?.ToLocation(), propName, className, propTypeName);
                 continue;
             }
 
