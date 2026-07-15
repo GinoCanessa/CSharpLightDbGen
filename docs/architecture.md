@@ -28,9 +28,11 @@ Provides attribute source text injected into consuming compilations:
 - `LdgSQLiteIndex`
 - `LdgSQLiteKey`
 - `LdgSQLiteForeignKey`
+- `LdgSQLiteForeignKeyComposite`
 - `LdgSQLiteIgnore`
 - `LdgSQLiteUnique`
 - `LdgSQLiteMultiSelect`
+- `LdgSQLiteDefault`
 - `LdgSQLiteFtsTable`
 - `LdgSQLiteFtsUnindexed`
 
@@ -50,9 +52,9 @@ Implements `IIncrementalGenerator` and does the following:
 
 For regular table models (`[LdgSQLiteTable]`):
 
-- DDL: create/drop table, index creation
+- DDL: create/drop table, index creation, additive `EnsureSchema` migration
 - Queries: `SelectSingle`, `SelectList`, `SelectEnumerable`, `SelectDict`, `SelectCount`
-- Mutations: `Insert`, `Update`, `Delete`
+- Mutations: `Insert`, `InsertReturning`, `Update`, `UpdateReturning`, `Upsert`, `Delete`
 - Helpers: max-key loading, numeric operator mapping, JSON serialization/parsing helpers
 - Extensions: convenience overloads on `IDbConnection`, model instances, and collections
 
@@ -101,7 +103,7 @@ This keeps the generator package lean and lets consuming applications choose the
 
 ## Known Architectural Tradeoffs
 
-- Attribute detection is name-string based; naming/qualification conventions matter.
+- Attribute discovery is primarily metadata-name based (Roslyn `ForAttributeWithMetadataName` for the `[LdgSQLiteTable]`/`[LdgSQLiteFtsTable]` providers); base-class and syntax detection still use the attribute name-string sets (`_ldAttributes` / `_ldClassAttributes`), so naming/qualification conventions still matter for that residual path.
 - `orderByProperties` and table names are interpolated SQL fragments; they should be treated as trusted internal inputs.
 - Base-member discovery is type-name based in generator logic, which can be ambiguous in duplicate-name namespace scenarios.
 - **Auto-increment identity keys use a process-wide `static` counter (`_indexValue`) per generated

@@ -9,13 +9,16 @@ Implements the Roslyn incremental generator that emits SQLite/FTS data-access co
 ### Key Files
 
 - `GeneratorAttributes.cs`: attribute names and generated attribute source text.
+- `GeneratorModel.cs`: value-equatable semantic model types (table/FTS/column descriptors, `EquatableArray<T>`, `LdGenCategory`) that feed the incremental pipeline and enable generator output caching.
+- `GeneratorDiagnostics.cs`: registry of CSLDG diagnostic descriptors (CSLDG001/003/005/006); the generator reports and skips a bad model rather than throwing.
 - `LightSQLiteGenerator.cs`: syntax discovery, semantic analysis, and source emission.
 - `cslightdbgen.sqlitegen.csproj`: analyzer packaging + Roslyn dependencies.
 
 ### Notable Internal Areas
 
 - Syntax targets: `IsSyntaxTargetClassDec`, `IsSyntaxTargetRecordDec`
-- Semantic pipeline: class/record `Execute(...)`
+- Registration: two `ForAttributeWithMetadataName` providers — one for regular `[LdgSQLiteTable]` models, one for `[LdgSQLiteFtsTable]` models
+- Emission entry points: `emit(...)` (regular tables) and `emitFts(...)` (FTS virtual tables)
 - Table generation path: CRUD/select/filter + extension methods
 - FTS generation path: virtual-table creation, populate, select, count
 - Type handling: nullable/scalar/enum/JSON collection serialization support
@@ -44,6 +47,7 @@ Unit-level verification of generation contracts and syntax behavior.
   - Verifies FTS generation specifics
 - `LdgSQLiteUtils_Tests.cs` + `LdgSQLiteUtilsFixture.cs`
   - Tests helper parity for serialization/parsing/html stripping logic
+- The suite has since grown to over 20 focused test files. Beyond those listed above it covers composite keys, column defaults, CSLDG diagnostics, `EnsureSchema`, enums, foreign keys, multi-select (`IN`/`NOT IN`) filters, ordering, `RETURNING` writes, transactions, unique/partial indexes, `Upsert`, reserved-word quoting, cross-project usage, and incremental caching. The entries above are representative, not exhaustive.
 
 ## Module: `tests/cslightdbgen.sqlitegen.integration`
 
