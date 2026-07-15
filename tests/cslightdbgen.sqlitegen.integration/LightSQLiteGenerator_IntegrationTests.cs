@@ -103,7 +103,8 @@ public class LightSQLiteGenerator_IntegrationTests
 
         var deleteOne = Customer.SelectSingle(db, Name: "Mu");
         deleteOne.ShouldNotBeNull();
-        Should.Throw<InvalidOperationException>(() => Customer.Delete(db, deleteOne!));
+        Customer.Delete(db, deleteOne!);
+        Customer.SelectSingle(db, Name: "Mu").ShouldBeNull();
 
         var deleteMany = Customer.SelectList(db, resultLimit: 2);
         Customer.Delete(db, deleteMany);
@@ -114,14 +115,14 @@ public class LightSQLiteGenerator_IntegrationTests
         var xi = NewCustomer("Xi", 35, 110, 73);
         Customer.Insert(db, new List<Customer> { nu, xi });
 
-        Should.Throw<InvalidOperationException>(() => db.Delete(nu));
+        db.Delete(nu);
         db.Delete((IEnumerable<Customer>)new[] { xi });
 
         var omicron = NewCustomer("Omicron", 37, 120, 68);
         var pi = NewCustomer("Pi", 38, 130, 72);
         Customer.Insert(db, new List<Customer> { omicron, pi });
 
-        Should.Throw<InvalidOperationException>(() => omicron.Delete(db));
+        omicron.Delete(db);
         ((IEnumerable<Customer>)new[] { pi }).Delete(db);
 
         db.Delete(compareStringsWithLike: true, Name: "T%");
@@ -147,9 +148,7 @@ public class LightSQLiteGenerator_IntegrationTests
         Order.Update(db, loaded);
 
         Order.SelectCount(db, Description: "updated").ShouldBe(1);
-        Should.Throw<InvalidOperationException>(() => Order.Delete(db, loaded));
-
-        Order.Delete(db, Description: "updated");
+        Order.Delete(db, loaded!);
         Order.SelectCount(db).ShouldBe(0);
 
         Order.DropTable(db).ShouldBeTrue();
@@ -854,6 +853,67 @@ public class LightSQLiteGenerator_IntegrationTests
         var loaded = ScalarSample.SelectSingle(db, Label: "timespan-row");
         loaded.ShouldNotBeNull();
         loaded!.Duration.ShouldBe(duration);
+    }
+
+    [Fact]
+    public void Delete_SingleValue_BindsAllPrimaryKeyShapes()
+    {
+        using var db = OpenInMemory();
+
+        // Identity (int) key: static, connection-extension, and model-extension overloads.
+        Customer.CreateTable(db).ShouldBeTrue();
+        var cA = NewCustomer("A", 20, 1, 10);
+        var cB = NewCustomer("B", 21, 1, 11);
+        var cC = NewCustomer("C", 22, 1, 12);
+        Customer.Insert(db, new List<Customer> { cA, cB, cC });
+        Customer.Delete(db, cA);
+        db.Delete(cB);
+        cC.Delete(db);
+        Customer.SelectCount(db).ShouldBe(0);
+
+        // Natural single string key (caller-supplied).
+        StringKeyEntity.CreateTable(db).ShouldBeTrue();
+        var sA = new StringKeyEntity { Id = "s-a", StringName = "alpha" };
+        var sB = new StringKeyEntity { Id = "s-b", StringName = "bravo" };
+        var sC = new StringKeyEntity { Id = "s-c", StringName = "charlie" };
+        StringKeyEntity.Insert(db, new List<StringKeyEntity> { sA, sB, sC });
+        StringKeyEntity.Delete(db, sA);
+        db.Delete(sB);
+        sC.Delete(db);
+        StringKeyEntity.SelectCount(db).ShouldBe(0);
+
+        // Natural single Guid key (auto-generated on insert).
+        GuidKeyEntity.CreateTable(db).ShouldBeTrue();
+        var gA = new GuidKeyEntity { GuidName = "alpha" };
+        var gB = new GuidKeyEntity { GuidName = "bravo" };
+        var gC = new GuidKeyEntity { GuidName = "charlie" };
+        GuidKeyEntity.Insert(db, new List<GuidKeyEntity> { gA, gB, gC });
+        GuidKeyEntity.Delete(db, gA);
+        db.Delete(gB);
+        gC.Delete(db);
+        GuidKeyEntity.SelectCount(db).ShouldBe(0);
+
+        // Long identity key.
+        LongKeyEntity.CreateTable(db).ShouldBeTrue();
+        var lA = new LongKeyEntity { LongName = "alpha" };
+        var lB = new LongKeyEntity { LongName = "bravo" };
+        var lC = new LongKeyEntity { LongName = "charlie" };
+        LongKeyEntity.Insert(db, new List<LongKeyEntity> { lA, lB, lC });
+        LongKeyEntity.Delete(db, lA);
+        db.Delete(lB);
+        lC.Delete(db);
+        LongKeyEntity.SelectCount(db).ShouldBe(0);
+
+        // Composite key: single-object delete must bind every key column.
+        UserWebsite.CreateTable(db).ShouldBeTrue();
+        var uA = new UserWebsite { UserId = 1, WebsiteId = 10, Role = "a" };
+        var uB = new UserWebsite { UserId = 1, WebsiteId = 20, Role = "b" };
+        var uC = new UserWebsite { UserId = 2, WebsiteId = 10, Role = "c" };
+        UserWebsite.Insert(db, new List<UserWebsite> { uA, uB, uC });
+        UserWebsite.Delete(db, uA);
+        db.Delete(uB);
+        uC.Delete(db);
+        UserWebsite.SelectCount(db).ShouldBe(0);
     }
 
     private static SqliteConnection OpenInMemory()

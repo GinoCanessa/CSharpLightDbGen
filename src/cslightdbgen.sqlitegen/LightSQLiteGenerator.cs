@@ -1749,9 +1749,10 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     true,
                                     pkIsIdentity ? pkColName : null,
                                     pkPropType,
+                                    createParameters: true,
+                                    instantiateParameters: true,
                                     executeCommand: true,
-                                    includeIdentity: true,
-                                    identityOnly: !compositePk, primaryKeyOnly: compositePk,
+                                    primaryKeyOnly: true,
                                     setIdentity: false))}}}
                     
                                 if (_ownTxn) _txn.Commit();
@@ -1781,8 +1782,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     pkIsIdentity ? pkColName : null,
                                     pkPropType,
                                     createParameters: true,
-                                    includeIdentity: true,
-                                    identityOnly: !compositePk, primaryKeyOnly: compositePk,
+                                    primaryKeyOnly: true,
                                     setIdentity: false))}}}
                     
                                 foreach ({{{className}}} value in values)
@@ -1796,8 +1796,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                         instantiateParameters: true,
                                         executeCommand: true,
                                         setIdentity: false,
-                                        includeIdentity: true,
-                                        identityOnly: !compositePk, primaryKeyOnly: compositePk))}}}
+                                        primaryKeyOnly: true))}}}
                                 }
                     
                                 if (_ownTxn) _txn.Commit();
