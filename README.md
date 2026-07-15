@@ -90,7 +90,7 @@ customer.Delete(db);
 | `LdgSQLiteDefault(value?, raw?)` | Property | Emits a column `DEFAULT` clause. String values are SQL-quoted (embedded `'` doubled); `bool` maps to `1`/`0`; numeric values render as-is. Set `raw: true` to emit an unquoted SQL expression such as `CURRENT_TIMESTAMP`. |
 | `LdgSQLiteMultiSelect` | Property | Emits `IEnumerable<T>? {Name}Values` (SQL `IN (...)`) and `IEnumerable<T>? {Name}NotInValues` (SQL `NOT IN (...)`) parameters on filter/delete helpers. Implicitly applied to `[LdgSQLiteKey]` primary keys and to any non-array property whose name ends in `Key`. Non-scalar / JSON / collection properties are not eligible. |
 | `LdgSQLiteIgnore` | Property | Excludes the property from generation |
-| `LdgSQLiteFtsTable(sourceTable, tableName?)` | Class | Generates an FTS5 full-text search table |
+| `LdgSQLiteFtsTable(sourceTable, tableName?, tokenizer?)` | Class | Generates an FTS5 full-text search table. `tokenizer?` sets the FTS5 `tokenize=` option (e.g. `porter`, `unicode61`, `trigram`) when supplied. |
 | `LdgSQLiteFtsUnindexed` | Property | Marks an FTS column as `UNINDEXED` |
 
 ## Generated API Surface
@@ -318,6 +318,7 @@ Detailed developer docs are in the [docs/](docs/) directory:
 - [Onboarding Guide](docs/onboarding.md)
 - [Architecture Overview](docs/architecture.md)
 - [Process Flows](docs/process-flows.md)
+- [Modules and Libraries](docs/modules-and-libraries.md)
 - [Generated API Contract](docs/api-contracts.md)
 - [Commands and Options](docs/commands.md)
 - [Dependencies](docs/dependencies.md)
@@ -331,6 +332,10 @@ Detailed developer docs are in the [docs/](docs/) directory:
 - Parameterized SQL for all values
 - C# 14.0 language features
 - **SQLite version:** all generated APIs run on modern SQLite. Two write helpers use newer syntax — `Upsert` (`INSERT … ON CONFLICT`) requires **SQLite ≥ 3.24**, and `InsertReturning`/`UpdateReturning` (`RETURNING`) require **SQLite ≥ 3.35**. Foreign-key referential actions require `PRAGMA foreign_keys = ON` per connection (see the note above).
+
+## Release History
+
+See [CHANGELOG.md](CHANGELOG.md) for the curated, user-visible change history.
 
 ## License
 
