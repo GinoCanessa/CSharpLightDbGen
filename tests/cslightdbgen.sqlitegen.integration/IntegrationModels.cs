@@ -308,6 +308,19 @@ public partial class TemporalSample
     public DateTime? MaybeAt { get; set; }
 }
 
+// H2: DateTimeOffset scalar columns (TEXT-backed) must round-trip with the stored offset intact,
+// including the nullable variant.
+[LdgSQLiteTable("dto_samples")]
+public partial class DateTimeOffsetSample
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+
+    public DateTimeOffset OccurredAt { get; set; }
+
+    public DateTimeOffset? MaybeAt { get; set; }
+}
+
 // H1: foreign key with ON DELETE SET NULL. The referencing column must be nullable so the action
 // can null it when the parent is removed.
 [LdgSQLiteTable("sn_children")]

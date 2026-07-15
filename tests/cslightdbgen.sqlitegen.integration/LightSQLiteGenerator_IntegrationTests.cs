@@ -1288,6 +1288,36 @@ public class LightSQLiteGenerator_IntegrationTests
     }
 
     [Fact]
+    public void Column_DateTimeOffset_RoundTrip()
+    {
+        using SqliteConnection db = OpenInMemory();
+
+        DateTimeOffsetSample.CreateTable(db).ShouldBeTrue();
+
+        DateTimeOffset occurred = new(2020, 6, 15, 12, 0, 0, TimeSpan.FromHours(5));
+        int nullId = DateTimeOffsetSample.Insert(db, new DateTimeOffsetSample { OccurredAt = occurred, MaybeAt = null });
+
+        DateTimeOffsetSample? loadedNull = DateTimeOffsetSample.SelectSingle(db, Id: nullId);
+        loadedNull.ShouldNotBeNull();
+        loadedNull!.OccurredAt.Offset.ShouldBe(TimeSpan.FromHours(5));
+        loadedNull.OccurredAt.ShouldBe(occurred);
+        loadedNull.OccurredAt.UtcDateTime.ShouldBe(occurred.UtcDateTime);
+        loadedNull.MaybeAt.ShouldBeNull();
+
+        DateTimeOffset later = new(2025, 1, 2, 3, 4, 5, TimeSpan.FromHours(-8));
+        int valueId = DateTimeOffsetSample.Insert(db, new DateTimeOffsetSample { OccurredAt = occurred, MaybeAt = later });
+
+        DateTimeOffsetSample? loadedValue = DateTimeOffsetSample.SelectSingle(db, Id: valueId);
+        loadedValue.ShouldNotBeNull();
+        loadedValue!.OccurredAt.ShouldBe(occurred);
+        loadedValue.MaybeAt.ShouldNotBeNull();
+        loadedValue.MaybeAt!.Value.Offset.ShouldBe(TimeSpan.FromHours(-8));
+        loadedValue.MaybeAt.Value.ShouldBe(later);
+
+        DateTimeOffsetSample.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
     public void ForeignKey_OnDeleteSetNull_NullsChildReference()
     {
         using SqliteConnection db = OpenInMemory();
