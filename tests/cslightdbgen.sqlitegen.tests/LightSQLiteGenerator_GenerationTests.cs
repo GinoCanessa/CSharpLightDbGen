@@ -83,6 +83,82 @@ public class LightSQLiteGenerator_GenerationTests
         source.ShouldContain("JsonTag>");
     }
 
+    [Fact]
+    public void Classification_ArrayAndValueTypeCollection_RouteCorrectly()
+    {
+        // Regression guard for A1: arrays (IArrayTypeSymbol) and value-type collections must be
+        // classified as non-scalar array/collection columns (JSON[] read path -> ParseArrayFromDb),
+        // NOT as single-object reference-JSON columns (ParseFromDb). Prior to symbol-based
+        // classification, `int[]` fell through to the single-object bucket because arrays are not
+        // INamedTypeSymbol.
+        const string source = """
+            using System.Collections.Generic;
+            using CsLightDbGen.SQLiteGenerator;
+
+            namespace CsLightDbGen.SQLiteGenerator;
+
+            [LdgSQLiteTable("array_routing")]
+            public partial class ArrayRoutingEntity
+            {
+                [LdgSQLiteKey]
+                public int Id { get; set; }
+
+                public int[] Numbers { get; set; } = [];
+
+                public List<int> Scores { get; set; } = new();
+            }
+            """;
+
+        var run = GeneratorTestHost.Run(source);
+        string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "ArrayRoutingEntitySQLite.g.cs");
+
+        // Both the array and the List<T> route to the JSON-array read directive...
+        generated.ShouldContain("ParseArrayFromDb<System.Int32>");
+        // ...and neither is misrouted to the single-object reference-JSON read directive.
+        generated.ShouldNotContain("ParseFromDb<System.Int32>");
+        generated.ShouldContain("\"Numbers\"");
+        generated.ShouldContain("\"Scores\"");
+    }
+
+    [Fact]
+    public void PartialClassAcrossSyntaxTrees_CollectsAllMembers()
+    {
+        // A1 switches member iteration to INamedTypeSymbol.GetMembers(), which spans every partial
+        // declaration across all syntax trees. A property declared in a second partial file must be
+        // collected as a column.
+        const string partOne = """
+            using CsLightDbGen.SQLiteGenerator;
+
+            namespace CsLightDbGen.SQLiteGenerator;
+
+            [LdgSQLiteTable("split_table")]
+            public partial class SplitEntity
+            {
+                [LdgSQLiteKey]
+                public int Id { get; set; }
+
+                public string FirstPart { get; set; } = string.Empty;
+            }
+            """;
+
+        const string partTwo = """
+            namespace CsLightDbGen.SQLiteGenerator;
+
+            public partial class SplitEntity
+            {
+                public string SecondPart { get; set; } = string.Empty;
+            }
+            """;
+
+        var run = GeneratorTestHost.Run(partOne, partTwo);
+        string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "SplitEntitySQLite.g.cs");
+
+        generated.ShouldContain("\"FirstPart\"");
+        generated.ShouldContain("\"SecondPart\"");
+        run.Errors.ShouldBeEmpty();
+        run.CompilationErrors.ShouldBeEmpty();
+    }
+
     public static IEnumerable<object[]> AllFixtureNames()
     {
         return typeof(FixtureSources)

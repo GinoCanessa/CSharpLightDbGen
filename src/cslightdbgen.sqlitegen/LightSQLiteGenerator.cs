@@ -123,8 +123,6 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
     public void Execute(Compilation compilation, ImmutableArray<ClassDeclarationSyntax> classes, SourceProductionContext context)
     {
-        ILookup<string, ClassDeclarationSyntax> classLookup = classes.ToLookup(c => c.Identifier.Text);
-
         foreach (ClassDeclarationSyntax classSyntax in classes.Where(c => c.AttributeLists.Any(al => al.Attributes.Any(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteTable))))
         {
             // Converting the class to a semantic model to access much more meaningful data.
@@ -139,24 +137,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 continue;
             }
 
-            List<MemberDeclarationSyntax> members = [];
-
-            string? btn = ((INamedTypeSymbol)symbol).BaseType?.Name;
-            while (btn != null)
-            {
-                ClassDeclarationSyntax? btcs = classLookup[btn].FirstOrDefault();
-                if (btcs == null)
-                {
-                    break;
-                }
-
-                members.AddRange(btcs.Members);
-                btn = compilation.GetSemanticModel(btcs.SyntaxTree).GetDeclaredSymbol(btcs) is INamedTypeSymbol ints
-                    ? ints.BaseType?.Name
-                    : null;
-            }
-
-            members.AddRange(classSyntax.Members);
+            List<IPropertySymbol> members = CollectColumnProperties((INamedTypeSymbol)symbol);
 
             execute(
                 compilation,
@@ -180,24 +161,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 continue;
             }
 
-            List<MemberDeclarationSyntax> members = [];
-
-            string? btn = ((INamedTypeSymbol)symbol).BaseType?.Name;
-            while (btn != null)
-            {
-                ClassDeclarationSyntax? btcs = classLookup[btn].FirstOrDefault();
-                if (btcs == null)
-                {
-                    break;
-                }
-
-                members.AddRange(btcs.Members);
-                btn = compilation.GetSemanticModel(btcs.SyntaxTree).GetDeclaredSymbol(btcs) is INamedTypeSymbol ints
-                    ? ints.BaseType?.Name
-                    : null;
-            }
-
-            members.AddRange(classSyntax.Members);
+            List<IPropertySymbol> members = CollectColumnProperties((INamedTypeSymbol)symbol);
 
             executeForFts(
                 compilation,
@@ -213,8 +177,6 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         ImmutableArray<RecordDeclarationSyntax> records,
         SourceProductionContext context)
     {
-        ILookup<string, RecordDeclarationSyntax> recordLookup = records.ToLookup(c => c.Identifier.Text);
-
         foreach (RecordDeclarationSyntax recordSyntax in records.Where(c => c.AttributeLists.Any(al => al.Attributes.Any(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteTable))))
         {
             // Converting the record to a semantic model to access much more meaningful data.
@@ -229,23 +191,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 continue;
             }
 
-            List<MemberDeclarationSyntax> members = [];
-            string? btn = ((INamedTypeSymbol)symbol).BaseType?.Name;
-            while (btn != null)
-            {
-                RecordDeclarationSyntax? btcs = recordLookup[btn].FirstOrDefault();
-                if (btcs == null)
-                {
-                    break;
-                }
-
-                members.AddRange(btcs.Members);
-                btn = compilation.GetSemanticModel(btcs.SyntaxTree).GetDeclaredSymbol(btcs) is INamedTypeSymbol ints
-                    ? ints.BaseType?.Name
-                    : null;
-            }
-
-            members.AddRange(recordSyntax.Members);
+            List<IPropertySymbol> members = CollectColumnProperties((INamedTypeSymbol)symbol);
 
             execute(
                 compilation,
@@ -269,23 +215,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 continue;
             }
 
-            List<MemberDeclarationSyntax> members = [];
-            string? btn = ((INamedTypeSymbol)symbol).BaseType?.Name;
-            while (btn != null)
-            {
-                RecordDeclarationSyntax? btcs = recordLookup[btn].FirstOrDefault();
-                if (btcs == null)
-                {
-                    break;
-                }
-
-                members.AddRange(btcs.Members);
-                btn = compilation.GetSemanticModel(btcs.SyntaxTree).GetDeclaredSymbol(btcs) is INamedTypeSymbol ints
-                    ? ints.BaseType?.Name
-                    : null;
-            }
-
-            members.AddRange(recordSyntax.Members);
+            List<IPropertySymbol> members = CollectColumnProperties((INamedTypeSymbol)symbol);
 
             executeForFts(
                 compilation,
@@ -313,16 +243,155 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         string? foreignColumn = null,
         string? foreignModelType = null);
 
+    private record struct ColumnClassification(
+        bool IsEnum,
+        string? EnumTypeName,
+        bool IsNonScalar,
+        string? JsonTypeName);
+
+    /// <summary>
+    /// Collects the properties that become table columns: the properties of any
+    /// <c>[LdgSQLiteBaseClass]</c>-annotated base classes (nearest base first), followed by the
+    /// type's own properties. <see cref="INamedTypeSymbol.GetMembers"/> aggregates every partial
+    /// declaration and also resolves bases declared in referenced assemblies (which have no syntax).
+    /// </summary>
+    private static List<IPropertySymbol> CollectColumnProperties(INamedTypeSymbol type)
+    {
+        List<IPropertySymbol> members = [];
+
+        INamedTypeSymbol? baseType = type.BaseType;
+        while ((baseType != null) &&
+               baseType.GetAttributes().Any(a => a.AttributeClass?.Name == GeneratorAttributes._ldgSQLiteBaseClass))
+        {
+            members.AddRange(baseType.GetMembers().OfType<IPropertySymbol>().Where(IsColumnCandidate));
+            baseType = baseType.BaseType;
+        }
+
+        members.AddRange(type.GetMembers().OfType<IPropertySymbol>().Where(IsColumnCandidate));
+        return members;
+    }
+
+    /// <summary>
+    /// Determines whether a property should be materialized as a table column. Excludes
+    /// compiler-synthesized members (e.g. a record's <c>EqualityContract</c>) and indexers.
+    /// </summary>
+    private static bool IsColumnCandidate(IPropertySymbol property) =>
+        !property.IsImplicitlyDeclared && !property.IsIndexer;
+
+    /// <summary>
+    /// Returns whether <paramref name="symbol"/> carries the generator attribute whose simple class
+    /// name is <paramref name="attributeName"/>.
+    /// </summary>
+    private static bool HasLdgAttribute(ISymbol symbol, string attributeName) =>
+        symbol.GetAttributes().Any(a => a.AttributeClass?.Name == attributeName);
+
+    /// <summary>
+    /// Recovers the declaring <see cref="PropertyDeclarationSyntax"/> for a property, or
+    /// <see langword="null"/> when the property has no syntax (e.g. it is declared in a referenced
+    /// assembly).
+    /// </summary>
+    private static PropertyDeclarationSyntax? TryGetPropertySyntax(IPropertySymbol property)
+    {
+        foreach (SyntaxReference reference in property.DeclaringSyntaxReferences)
+        {
+            if (reference.GetSyntax() is PropertyDeclarationSyntax pds)
+            {
+                return pds;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Resolves the source-level type name for a property. Uses the declaration syntax when
+    /// available (preserving the exact spelling, e.g. <c>int?</c>) and otherwise falls back to a
+    /// minimally-qualified symbol display.
+    /// </summary>
+    private static string PropertyTypeName(IPropertySymbol property, PropertyDeclarationSyntax? syntax) =>
+        syntax != null
+            ? syntax.Type.ToString()
+            : property.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
+
+    /// <summary>
+    /// Renders the "<c>namespace.Name</c>" (or "<c>namespace.Outer.Name</c>" for a nested type) form
+    /// used when emitting enum and JSON element type names.
+    /// </summary>
+    private static string QualifiedTypeName(ITypeSymbol type) =>
+        type.ContainingType == null
+            ? $"{type.ContainingNamespace}.{type.Name}"
+            : $"{type.ContainingType.ContainingNamespace}.{type.ContainingType.Name}.{type.Name}";
+
+    /// <summary>
+    /// Classifies a property's type into the buckets the column emitter switches on: enum, non-scalar
+    /// collection (arrays, <c>List&lt;T&gt;</c>, <c>IEnumerable&lt;T&gt;</c>), or single reference
+    /// object. Arrays are detected via <see cref="IArrayTypeSymbol"/> and routed to the JSON-array bucket.
+    /// </summary>
+    private static ColumnClassification ClassifyColumn(ITypeSymbol? typeSymbol)
+    {
+        if (typeSymbol is IArrayTypeSymbol arrayType)
+        {
+            return new ColumnClassification(false, null, true, QualifiedTypeName(arrayType.ElementType));
+        }
+
+        INamedTypeSymbol? namedTypeSymbol = typeSymbol as INamedTypeSymbol;
+
+        bool isEnum = false;
+        string? enumTypeName = null;
+        bool isNonScalar = false;
+        string? jsonTypeName = null;
+
+        if ((namedTypeSymbol != null) &&
+            (
+                (namedTypeSymbol.TypeKind == TypeKind.Enum) ||
+                ((namedTypeSymbol.TypeArguments.Length != 0) && (namedTypeSymbol.TypeArguments[0].TypeKind == TypeKind.Enum)) ||
+                ((namedTypeSymbol.TypeKind == TypeKind.Struct) && (namedTypeSymbol.TypeArguments.Length != 0) && !namedTypeSymbol.TypeArguments[0].ContainingNamespace.Name.StartsWith("System"))
+            ))
+        {
+            isEnum = true;
+
+            if (namedTypeSymbol.TypeKind == TypeKind.Enum)
+            {
+                enumTypeName = QualifiedTypeName(namedTypeSymbol);
+            }
+            else if (namedTypeSymbol.TypeArguments.Length != 0)
+            {
+                enumTypeName = QualifiedTypeName(namedTypeSymbol.TypeArguments[0]);
+            }
+            else
+            {
+                enumTypeName = namedTypeSymbol.Name;
+            }
+        }
+        else if (namedTypeSymbol != null)
+        {
+            if (namedTypeSymbol.TypeArguments.Length != 0)
+            {
+                if (namedTypeSymbol.Name.Contains("List") || namedTypeSymbol.Name.Contains("Enumerable"))
+                {
+                    isNonScalar = true;
+                }
+
+                jsonTypeName = QualifiedTypeName(namedTypeSymbol.TypeArguments[0]);
+            }
+            else
+            {
+                jsonTypeName = QualifiedTypeName(namedTypeSymbol);
+            }
+        }
+
+        return new ColumnClassification(isEnum, enumTypeName, isNonScalar, jsonTypeName);
+    }
+
     private void execute(
         Compilation compilation,
         ISymbol symbol,
-        List<MemberDeclarationSyntax> members,
+        List<IPropertySymbol> members,
         SourceProductionContext context,
         LdGenCategory genCategory)
     {
         string className = symbol.Name;
         string? classNamespace = symbol.ContainingNamespace?.ToDisplayString();
-        string? classAssembly = symbol.ContainingAssembly?.Name;
 
         ILookup<string?, AttributeData> symbolAttributeLookup = symbol.GetAttributes().ToLookup(a => a.AttributeClass?.Name);
 
@@ -340,27 +409,23 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         // before the per-property column loop builds createColLines / TableColInfoRec.isIdentity,
         // so it cannot be decided retroactively in a single forward pass.
         List<(string name, string propType)> pkCols = [];
-        foreach (MemberDeclarationSyntax preMember in members)
+        foreach (IPropertySymbol preProp in members)
         {
-            if (preMember is not PropertyDeclarationSyntax preProp)
+            if (HasLdgAttribute(preProp, GeneratorAttributes._ldgSQLiteIgnore))
             {
                 continue;
             }
 
-            if (preProp.AttributeLists.Any(al => al.Attributes.Any(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteIgnore)))
+            if (HasLdgAttribute(preProp, GeneratorAttributes._ldgSQLiteKey))
             {
-                continue;
-            }
-
-            if (preProp.AttributeLists.Any(al => al.Attributes.Any(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteKey)))
-            {
-                string preType = preProp.Type.ToString();
+                PropertyDeclarationSyntax? preSyntax = TryGetPropertySyntax(preProp);
+                string preType = PropertyTypeName(preProp, preSyntax);
                 if (preType.EndsWith("?"))
                 {
                     preType = preType.Substring(0, preType.Length - 1);
                 }
 
-                pkCols.Add((preProp.Identifier.ToString(), preType));
+                pkCols.Add((preProp.Name, preType));
             }
         }
 
@@ -372,34 +437,19 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         HashSet<string> rawDefaultColumnNames = new(System.StringComparer.Ordinal);
         List<TableColInfoRec> tableColInfo = [];
 
-        foreach (MemberDeclarationSyntax member in members)
+        foreach (IPropertySymbol propSymbol in members)
         {
-            // only process properties
-            if (member is not PropertyDeclarationSyntax pds)
-            {
-                continue;
-            }
-
-            SemanticModel pModel = compilation.GetSemanticModel(pds.SyntaxTree);
-            //ISymbol? pSymbol = pModel.GetDeclaredSymbol(pds);
-
-            //if (pSymbol == null)
-            //{
-            //    continue;
-            //}
-
             // check for ignore property
-            if (pds.AttributeLists.Any(al => al.Attributes.Any(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteIgnore)))
+            if (HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteIgnore))
             {
                 continue;
             }
 
-            Type memberType = pds.GetType();
-            string propName = pds.Identifier.ToString();
+            PropertyDeclarationSyntax? pds = TryGetPropertySyntax(propSymbol);
+            string propName = propSymbol.Name;
 
-            TypeInfo propTypeInfo = pModel.GetTypeInfo(pds.Type);
-            string propTypeName = pds.Type.ToString();
-            INamedTypeSymbol? namedTypeSymbol = propTypeInfo.Type is INamedTypeSymbol ints ? ints : null;
+            string propTypeName = PropertyTypeName(propSymbol, pds);
+            INamedTypeSymbol? namedTypeSymbol = propSymbol.Type as INamedTypeSymbol;
 
             bool nullable = propTypeName.EndsWith("?") || (namedTypeSymbol?.NullableAnnotation == NullableAnnotation.Annotated);
             if (nullable)
@@ -408,7 +458,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             }
 
             // check for primary key property
-            bool isPrimaryKey = pds.AttributeLists.Any(al => al.Attributes.Any(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteKey));
+            bool isPrimaryKey = HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteKey);
             if (isPrimaryKey)
             {
                 pkColName = propName;
@@ -436,106 +486,15 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             // (composite keys are inserted explicitly and never auto-assigned).
             bool colIsIdentity = isPrimaryKey && !compositePk && (propTypeName == "int" || propTypeName == "long");
 
-            bool isUnique = pds.AttributeLists.Any(al => al.Attributes.Any(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteUnique));
+            bool isUnique = HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteUnique);
 
-            bool hasMultiSelectAttr = pds.AttributeLists.Any(al => al.Attributes.Any(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteMultiSelect));
+            bool hasMultiSelectAttr = HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteMultiSelect);
 
-            // check for any kind of non-scalar type
-            bool memberIsNonScalar = memberType.IsArray || (memberType.IsGenericType && typeof(IEnumerable<object>).IsAssignableFrom(memberType));
-
-            // check for type nullability
-            //bool nullable = Nullable.GetUnderlyingType(member.) != null;
-            //bool nullable = new NullabilityInfoContext().Create(prop).WriteState is NullabilityState.Nullable;
-
-            string? jsonTypeName = null;
-            string? enumTypeName = null;
-            bool memberIsEnum = false;
-
-            if ((namedTypeSymbol != null) &&
-                (
-                    (namedTypeSymbol.TypeKind == TypeKind.Enum) ||
-                    ((namedTypeSymbol.TypeArguments.Length != 0) && (namedTypeSymbol.TypeArguments[0].TypeKind == TypeKind.Enum)) ||
-                    ((namedTypeSymbol.TypeKind == TypeKind.Struct) && (namedTypeSymbol.TypeArguments.Length != 0) && !namedTypeSymbol.TypeArguments[0].ContainingNamespace.Name.StartsWith("System"))
-                ))
-            {
-                memberIsEnum = true;
-
-                // grab the enum type name
-                if (namedTypeSymbol.TypeKind == TypeKind.Enum)
-                {
-                    if (namedTypeSymbol.ContainingType == null)
-                    {
-                        enumTypeName = $"{namedTypeSymbol.ContainingNamespace}.{namedTypeSymbol.Name}";
-                    }
-                    else
-                    {
-                        enumTypeName = $"{namedTypeSymbol.ContainingType.ContainingNamespace}.{namedTypeSymbol.ContainingType.Name}.{namedTypeSymbol.Name}";
-                    }
-                }
-                else if (namedTypeSymbol.TypeArguments.Length != 0)
-                {
-                    if (namedTypeSymbol.TypeArguments[0].ContainingType == null)
-                    {
-                        enumTypeName = $"{namedTypeSymbol.TypeArguments[0].ContainingNamespace}.{namedTypeSymbol.TypeArguments[0].Name}";
-                    }
-                    else
-                    {
-                        enumTypeName = $"{namedTypeSymbol.TypeArguments[0].ContainingType.ContainingNamespace}.{namedTypeSymbol.TypeArguments[0].ContainingType.Name}.{namedTypeSymbol.TypeArguments[0].Name}";
-                    }
-                }
-                else
-                {
-                    enumTypeName = namedTypeSymbol.Name;
-                }
-            }
-            else if (namedTypeSymbol != null)
-            {
-                if (namedTypeSymbol.TypeArguments.Length != 0)
-                {
-                    if (namedTypeSymbol.Name.Contains("List") ||
-                        namedTypeSymbol.Name.Contains("Enumerable"))
-                    {
-                        memberIsNonScalar = true;
-                        if (namedTypeSymbol.TypeArguments[0].ContainingType == null)
-                        {
-                            //jsonTypeName = $"System.Collections.Generic.List<{namedTypeSymbol.TypeArguments[0].ContainingNamespace}.{namedTypeSymbol.TypeArguments[0].Name}>";
-                            jsonTypeName = $"{namedTypeSymbol.TypeArguments[0].ContainingNamespace}.{namedTypeSymbol.TypeArguments[0].Name}";
-                        }
-                        else
-                        {
-                            //jsonTypeName = $"System.Collections.Generic.List<{namedTypeSymbol.TypeArguments[0].ContainingType.ContainingNamespace}.{namedTypeSymbol.TypeArguments[0].ContainingType.Name}.{namedTypeSymbol.TypeArguments[0].Name}>";
-                            jsonTypeName = $"{namedTypeSymbol.TypeArguments[0].ContainingType.ContainingNamespace}.{namedTypeSymbol.TypeArguments[0].ContainingType.Name}.{namedTypeSymbol.TypeArguments[0].Name}";
-                        }
-                    }
-                    else
-                    {
-                        if (namedTypeSymbol.TypeArguments[0].ContainingType == null)
-                        {
-                            jsonTypeName = $"{namedTypeSymbol.TypeArguments[0].ContainingNamespace}.{namedTypeSymbol.TypeArguments[0].Name}";
-                        }
-                        else
-                        {
-                            jsonTypeName = $"{namedTypeSymbol.TypeArguments[0].ContainingType.ContainingNamespace}.{namedTypeSymbol.TypeArguments[0].ContainingType.Name}.{namedTypeSymbol.TypeArguments[0].Name}";
-                        }
-                    }
-                }
-                else
-                {
-                    if (namedTypeSymbol.ContainingType == null)
-                    {
-                        jsonTypeName = $"{namedTypeSymbol.ContainingNamespace}.{namedTypeSymbol.Name}";
-                    }
-                    else
-                    {
-                        jsonTypeName = $"{namedTypeSymbol.ContainingType.ContainingNamespace}.{namedTypeSymbol.ContainingType.Name}.{namedTypeSymbol.Name}";
-                    }
-                }
-
-                //if (nullable)
-                //{
-                //    jsonTypeName += "?";
-                //}
-            }
+            ColumnClassification classification = ClassifyColumn(propSymbol.Type);
+            bool memberIsEnum = classification.IsEnum;
+            string? enumTypeName = classification.EnumTypeName;
+            bool memberIsNonScalar = classification.IsNonScalar;
+            string? jsonTypeName = classification.JsonTypeName;
 
             bool useJson = !memberIsEnum && !_sqliteTypeMap.ContainsKey(propTypeName);
 
@@ -550,7 +509,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             // check for a column default (literal, boolean, numeric, or raw SQL expression)
             string defaultClause = string.Empty;
             bool defaultIsRaw = false;
-            foreach (AttributeListSyntax defAls in pds.AttributeLists)
+            foreach (AttributeListSyntax defAls in pds?.AttributeLists ?? default)
             {
                 foreach (AttributeSyntax defAttr in defAls.Attributes.Where(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteDefault))
                 {
@@ -595,12 +554,12 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             // then hydrates the computed value back via RETURNING.
             if (defaultIsRaw && (defaultClause.Length > 0))
             {
-                rawDefaultColumnNames.Add(pds.Identifier.ToString());
+                rawDefaultColumnNames.Add(propName);
             }
 
             // add our column line
             createColLines.Add(
-                $"{pds.Identifier.ToString()} {getSqlType(propTypeName, memberIsEnum, useJson, memberIsNonScalar)}" +
+                $"{propName} {getSqlType(propTypeName, memberIsEnum, useJson, memberIsNonScalar)}" +
                 $"{((isPrimaryKey && !compositePk) ? getPkDirective(pkPropType) : string.Empty)}" +
                 $"{(isUnique ? " UNIQUE" : string.Empty)}" +
                 $"{((nullable || (isPrimaryKey && !compositePk)) ? string.Empty : " NOT NULL")}" +
@@ -618,8 +577,8 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 string addColNotNull = (!nullable && hasConstDefault) ? " NOT NULL" : string.Empty;
 
                 alterAddColumns.Add((
-                    pds.Identifier.ToString(),
-                    $"{pds.Identifier.ToString()} {getSqlType(propTypeName, memberIsEnum, useJson, memberIsNonScalar)}{addColDefault}{addColNotNull}"));
+                    propName,
+                    $"{propName} {getSqlType(propTypeName, memberIsEnum, useJson, memberIsNonScalar)}{addColDefault}{addColNotNull}"));
             }
 
             // check for foreign key property information
@@ -627,7 +586,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             string? foreignColumn = null;
             string? foreignModelType = null;
             string fkActions = string.Empty;
-            foreach (AttributeListSyntax als in pds.AttributeLists)
+            foreach (AttributeListSyntax als in pds?.AttributeLists ?? default)
             {
                 foreach (AttributeSyntax a in als.Attributes.Where(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteForeignKey))
                 {
@@ -674,7 +633,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
             if ((foreignTable != null) && (foreignColumn != null))
             {
-                createFKLines.Add($"FOREIGN KEY ({pds.Identifier}) REFERENCES {foreignTable}({foreignColumn}){fkActions}");
+                createFKLines.Add($"FOREIGN KEY ({propName}) REFERENCES {foreignTable}({foreignColumn}){fkActions}");
             }
 
             // create the select retrieval pair
@@ -683,8 +642,8 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 tableColInfo.Add(new (
                     propName,
                     propTypeName,
-                    string.Format(readFormat.Remove(0, 6), pds.Identifier.ToString(), "reader", tableColInfo.Count),
-                    string.Format(readFormat, pds.Identifier.ToString(), "reader", tableColInfo.Count),
+                    string.Format(readFormat.Remove(0, 6), propName, "reader", tableColInfo.Count),
+                    string.Format(readFormat, propName, "reader", tableColInfo.Count),
                     isPrimaryKey,
                     colIsIdentity,
                     nullable,
@@ -702,8 +661,8 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 tableColInfo.Add(new (
                     propName,
                     propTypeName,
-                    string.Format(readFormat.Remove(0, 6), pds.Identifier.ToString(), "reader", tableColInfo.Count),
-                    string.Format(readFormat, pds.Identifier.ToString(), "reader", tableColInfo.Count),
+                    string.Format(readFormat.Remove(0, 6), propName, "reader", tableColInfo.Count),
+                    string.Format(readFormat, propName, "reader", tableColInfo.Count),
                     isPrimaryKey,
                     colIsIdentity,
                     nullable,
@@ -725,11 +684,11 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     propName,
                     propTypeName,
                     nullable
-                        ? string.Format(_sqliteNullableReadDirectives["enum"].Remove(0, 6), pds.Identifier.ToString(), "reader", tableColInfo.Count, enumTypeName)
-                        : string.Format(_sqliteReadDirectives["enum"].Remove(0, 6), pds.Identifier.ToString(), "reader", tableColInfo.Count, enumTypeName),
+                        ? string.Format(_sqliteNullableReadDirectives["enum"].Remove(0, 6), propName, "reader", tableColInfo.Count, enumTypeName)
+                        : string.Format(_sqliteReadDirectives["enum"].Remove(0, 6), propName, "reader", tableColInfo.Count, enumTypeName),
                     nullable
-                        ? string.Format(_sqliteNullableReadDirectives["enum"], pds.Identifier.ToString(), "reader", tableColInfo.Count, enumTypeName)
-                        : string.Format(_sqliteReadDirectives["enum"], pds.Identifier.ToString(), "reader", tableColInfo.Count, enumTypeName),
+                        ? string.Format(_sqliteNullableReadDirectives["enum"], propName, "reader", tableColInfo.Count, enumTypeName)
+                        : string.Format(_sqliteReadDirectives["enum"], propName, "reader", tableColInfo.Count, enumTypeName),
                     isPrimaryKey,
                     colIsIdentity,
                     nullable,
@@ -747,14 +706,14 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 anyColIsJson = true;
 
                 tableColInfo.Add(new(
-                    pds.Identifier.ToString(),
+                    propName,
                     propTypeName,
                     nullable
-                        ? string.Format(_sqliteNullableReadDirectives["JSON[]"].Remove(0, 6), pds.Identifier.ToString(), "reader", tableColInfo.Count, jsonTypeName)
-                        : string.Format(_sqliteReadDirectives["JSON[]"].Remove(0, 6), pds.Identifier.ToString(), "reader", tableColInfo.Count, jsonTypeName),
+                        ? string.Format(_sqliteNullableReadDirectives["JSON[]"].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName)
+                        : string.Format(_sqliteReadDirectives["JSON[]"].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName),
                     nullable
-                        ? string.Format(_sqliteNullableReadDirectives["JSON[]"], pds.Identifier.ToString(), "reader", tableColInfo.Count, jsonTypeName)
-                        : string.Format(_sqliteReadDirectives["JSON[]"], pds.Identifier.ToString(), "reader", tableColInfo.Count, jsonTypeName),
+                        ? string.Format(_sqliteNullableReadDirectives["JSON[]"], propName, "reader", tableColInfo.Count, jsonTypeName)
+                        : string.Format(_sqliteReadDirectives["JSON[]"], propName, "reader", tableColInfo.Count, jsonTypeName),
                     isPrimaryKey,
                     colIsIdentity,
                     nullable,
@@ -770,7 +729,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             else
             {
                 // tableColInfo.Add((
-                //     pds.Identifier.ToString(),
+                //     propName,
                 //     propTypeName,
                 //     $"// ERROR: could not determine retrieval directive for type {propName}:{propTypeName}",
                 //     $"// ERROR: could not determine retrieval directive for type {propName}:{propTypeName}",
@@ -783,14 +742,14 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 anyColIsJson = true;
 
                 tableColInfo.Add(new(
-                    pds.Identifier.ToString(),
+                    propName,
                     propTypeName,
                     nullable
-                        ? string.Format(_sqliteNullableReadDirectives["JSON"].Remove(0, 6), pds.Identifier.ToString(), "reader", tableColInfo.Count, jsonTypeName)
-                        : string.Format(_sqliteReadDirectives["JSON"].Remove(0, 6), pds.Identifier.ToString(), "reader", tableColInfo.Count, jsonTypeName),
+                        ? string.Format(_sqliteNullableReadDirectives["JSON"].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName)
+                        : string.Format(_sqliteReadDirectives["JSON"].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName),
                     nullable
-                        ? string.Format(_sqliteNullableReadDirectives["JSON"], pds.Identifier.ToString(), "reader", tableColInfo.Count, jsonTypeName)
-                        : string.Format(_sqliteReadDirectives["JSON"], pds.Identifier.ToString(), "reader", tableColInfo.Count, jsonTypeName),
+                        ? string.Format(_sqliteNullableReadDirectives["JSON"], propName, "reader", tableColInfo.Count, jsonTypeName)
+                        : string.Format(_sqliteReadDirectives["JSON"], propName, "reader", tableColInfo.Count, jsonTypeName),
                     isPrimaryKey,
                     colIsIdentity,
                     nullable,
@@ -2726,13 +2685,12 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
     private void executeForFts(
         Compilation compilation,
         ISymbol symbol,
-        List<MemberDeclarationSyntax> members,
+        List<IPropertySymbol> members,
         SourceProductionContext context,
         LdGenCategory genCategory)
     {
         string className = symbol.Name;
         string? classNamespace = symbol.ContainingNamespace?.ToDisplayString();
-        string? classAssembly = symbol.ContainingAssembly?.Name;
 
         ILookup<string?, AttributeData> symbolAttributeLookup = symbol.GetAttributes().ToLookup(a => a.AttributeClass?.Name);
 
@@ -2756,28 +2714,19 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         List<string> createForeignKeyLines = [];
         List<TableColInfoRec> tableColInfo = [];
 
-        foreach (MemberDeclarationSyntax member in members)
+        foreach (IPropertySymbol propSymbol in members)
         {
-            // only process properties
-            if (member is not PropertyDeclarationSyntax pds)
-            {
-                continue;
-            }
-
-            SemanticModel pModel = compilation.GetSemanticModel(pds.SyntaxTree);
-
             // check for ignore property
-            if (pds.AttributeLists.Any(al => al.Attributes.Any(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteIgnore)))
+            if (HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteIgnore))
             {
                 continue;
             }
 
-            Type memberType = pds.GetType();
-            string propName = pds.Identifier.ToString();
+            PropertyDeclarationSyntax? pds = TryGetPropertySyntax(propSymbol);
+            string propName = propSymbol.Name;
 
-            TypeInfo propTypeInfo = pModel.GetTypeInfo(pds.Type);
-            string propTypeName = pds.Type.ToString();
-            INamedTypeSymbol? namedTypeSymbol = propTypeInfo.Type is INamedTypeSymbol ints ? ints : null;
+            string propTypeName = PropertyTypeName(propSymbol, pds);
+            INamedTypeSymbol? namedTypeSymbol = propSymbol.Type as INamedTypeSymbol;
 
             bool nullable = propTypeName.EndsWith("?") || (namedTypeSymbol?.NullableAnnotation == NullableAnnotation.Annotated);
             if (nullable)
@@ -2785,105 +2734,25 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 propTypeName = propTypeName.Substring(0, propTypeName.Length - 1);
             }
 
-            bool isUnique = pds.AttributeLists.Any(al => al.Attributes.Any(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteUnique));
-            bool isUnindexed = pds.AttributeLists.Any(al => al.Attributes.Any(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteFtsUnindexed));
+            bool isUnique = HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteUnique);
+            bool isUnindexed = HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteFtsUnindexed);
 
-            // check for any kind of non-scalar type
-            bool memberIsNonScalar = memberType.IsArray || (memberType.IsGenericType && typeof(IEnumerable<object>).IsAssignableFrom(memberType));
-
-            string? jsonTypeName = null;
-            string? enumTypeName = null;
-            bool memberIsEnum = false;
-
-            if ((namedTypeSymbol != null) &&
-                (
-                    (namedTypeSymbol.TypeKind == TypeKind.Enum) ||
-                    ((namedTypeSymbol.TypeArguments.Length != 0) && (namedTypeSymbol.TypeArguments[0].TypeKind == TypeKind.Enum)) ||
-                    ((namedTypeSymbol.TypeKind == TypeKind.Struct) && (namedTypeSymbol.TypeArguments.Length != 0) && !namedTypeSymbol.TypeArguments[0].ContainingNamespace.Name.StartsWith("System"))
-                ))
-            {
-                memberIsEnum = true;
-
-                // grab the enum type name
-                if (namedTypeSymbol.TypeKind == TypeKind.Enum)
-                {
-                    if (namedTypeSymbol.ContainingType == null)
-                    {
-                        enumTypeName = $"{namedTypeSymbol.ContainingNamespace}.{namedTypeSymbol.Name}";
-                    }
-                    else
-                    {
-                        enumTypeName = $"{namedTypeSymbol.ContainingType.ContainingNamespace}.{namedTypeSymbol.ContainingType.Name}.{namedTypeSymbol.Name}";
-                    }
-                }
-                else if (namedTypeSymbol.TypeArguments.Length != 0)
-                {
-                    if (namedTypeSymbol.TypeArguments[0].ContainingType == null)
-                    {
-                        enumTypeName = $"{namedTypeSymbol.TypeArguments[0].ContainingNamespace}.{namedTypeSymbol.TypeArguments[0].Name}";
-                    }
-                    else
-                    {
-                        enumTypeName = $"{namedTypeSymbol.TypeArguments[0].ContainingType.ContainingNamespace}.{namedTypeSymbol.TypeArguments[0].ContainingType.Name}.{namedTypeSymbol.TypeArguments[0].Name}";
-                    }
-                }
-                else
-                {
-                    enumTypeName = namedTypeSymbol.Name;
-                }
-            }
-            else if (namedTypeSymbol != null)
-            {
-                if (namedTypeSymbol.TypeArguments.Length != 0)
-                {
-                    if (namedTypeSymbol.Name.Contains("List") ||
-                        namedTypeSymbol.Name.Contains("Enumerable"))
-                    {
-                        memberIsNonScalar = true;
-                        if (namedTypeSymbol.TypeArguments[0].ContainingType == null)
-                        {
-                            jsonTypeName = $"{namedTypeSymbol.TypeArguments[0].ContainingNamespace}.{namedTypeSymbol.TypeArguments[0].Name}";
-                        }
-                        else
-                        {
-                            jsonTypeName = $"{namedTypeSymbol.TypeArguments[0].ContainingType.ContainingNamespace}.{namedTypeSymbol.TypeArguments[0].ContainingType.Name}.{namedTypeSymbol.TypeArguments[0].Name}";
-                        }
-                    }
-                    else
-                    {
-                        if (namedTypeSymbol.TypeArguments[0].ContainingType == null)
-                        {
-                            jsonTypeName = $"{namedTypeSymbol.TypeArguments[0].ContainingNamespace}.{namedTypeSymbol.TypeArguments[0].Name}";
-                        }
-                        else
-                        {
-                            jsonTypeName = $"{namedTypeSymbol.TypeArguments[0].ContainingType.ContainingNamespace}.{namedTypeSymbol.TypeArguments[0].ContainingType.Name}.{namedTypeSymbol.TypeArguments[0].Name}";
-                        }
-                    }
-                }
-                else
-                {
-                    if (namedTypeSymbol.ContainingType == null)
-                    {
-                        jsonTypeName = $"{namedTypeSymbol.ContainingNamespace}.{namedTypeSymbol.Name}";
-                    }
-                    else
-                    {
-                        jsonTypeName = $"{namedTypeSymbol.ContainingType.ContainingNamespace}.{namedTypeSymbol.ContainingType.Name}.{namedTypeSymbol.Name}";
-                    }
-                }
-            }
+            ColumnClassification classification = ClassifyColumn(propSymbol.Type);
+            bool memberIsEnum = classification.IsEnum;
+            string? enumTypeName = classification.EnumTypeName;
+            bool memberIsNonScalar = classification.IsNonScalar;
+            string? jsonTypeName = classification.JsonTypeName;
 
             bool useJson = !memberIsEnum && !_sqliteTypeMap.ContainsKey(propTypeName);
 
             // add our column line
             if (isUnindexed)
             {
-                createColLines.Add(pds.Identifier.ToString() + " UNINDEXED");
+                createColLines.Add(propName + " UNINDEXED");
             }
             else
             {
-                createColLines.Add(pds.Identifier.ToString());
+                createColLines.Add(propName);
             }
 
             // create the select retrieval pair
@@ -2892,8 +2761,8 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 tableColInfo.Add(new(
                     propName,
                     propTypeName,
-                    string.Format(readFormat.Remove(0, 6), pds.Identifier.ToString(), "reader", tableColInfo.Count),
-                    string.Format(readFormat, pds.Identifier.ToString(), "reader", tableColInfo.Count),
+                    string.Format(readFormat.Remove(0, 6), propName, "reader", tableColInfo.Count),
+                    string.Format(readFormat, propName, "reader", tableColInfo.Count),
                     false,
                     false,
                     nullable,
@@ -2907,8 +2776,8 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 tableColInfo.Add(new(
                     propName,
                     propTypeName,
-                    string.Format(readFormat.Remove(0, 6), pds.Identifier.ToString(), "reader", tableColInfo.Count),
-                    string.Format(readFormat, pds.Identifier.ToString(), "reader", tableColInfo.Count),
+                    string.Format(readFormat.Remove(0, 6), propName, "reader", tableColInfo.Count),
+                    string.Format(readFormat, propName, "reader", tableColInfo.Count),
                     false,
                     false,
                     nullable,
@@ -2926,11 +2795,11 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     propName,
                     propTypeName,
                     nullable
-                        ? string.Format(_sqliteNullableReadDirectives["enum"].Remove(0, 6), pds.Identifier.ToString(), "reader", tableColInfo.Count, enumTypeName)
-                        : string.Format(_sqliteReadDirectives["enum"].Remove(0, 6), pds.Identifier.ToString(), "reader", tableColInfo.Count, enumTypeName),
+                        ? string.Format(_sqliteNullableReadDirectives["enum"].Remove(0, 6), propName, "reader", tableColInfo.Count, enumTypeName)
+                        : string.Format(_sqliteReadDirectives["enum"].Remove(0, 6), propName, "reader", tableColInfo.Count, enumTypeName),
                     nullable
-                        ? string.Format(_sqliteNullableReadDirectives["enum"], pds.Identifier.ToString(), "reader", tableColInfo.Count, enumTypeName)
-                        : string.Format(_sqliteReadDirectives["enum"], pds.Identifier.ToString(), "reader", tableColInfo.Count, enumTypeName),
+                        ? string.Format(_sqliteNullableReadDirectives["enum"], propName, "reader", tableColInfo.Count, enumTypeName)
+                        : string.Format(_sqliteReadDirectives["enum"], propName, "reader", tableColInfo.Count, enumTypeName),
                     false,
                     false,
                     nullable,
@@ -2942,14 +2811,14 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             else if (memberIsNonScalar)
             {
                 tableColInfo.Add(new(
-                    pds.Identifier.ToString(),
+                    propName,
                     propTypeName,
                     nullable
-                        ? string.Format(_sqliteNullableReadDirectives["JSON[]"].Remove(0, 6), pds.Identifier.ToString(), "reader", tableColInfo.Count, jsonTypeName)
-                        : string.Format(_sqliteReadDirectives["JSON[]"].Remove(0, 6), pds.Identifier.ToString(), "reader", tableColInfo.Count, jsonTypeName),
+                        ? string.Format(_sqliteNullableReadDirectives["JSON[]"].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName)
+                        : string.Format(_sqliteReadDirectives["JSON[]"].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName),
                     nullable
-                        ? string.Format(_sqliteNullableReadDirectives["JSON[]"], pds.Identifier.ToString(), "reader", tableColInfo.Count, jsonTypeName)
-                        : string.Format(_sqliteReadDirectives["JSON[]"], pds.Identifier.ToString(), "reader", tableColInfo.Count, jsonTypeName),
+                        ? string.Format(_sqliteNullableReadDirectives["JSON[]"], propName, "reader", tableColInfo.Count, jsonTypeName)
+                        : string.Format(_sqliteReadDirectives["JSON[]"], propName, "reader", tableColInfo.Count, jsonTypeName),
                     false,
                     false,
                     nullable,
@@ -2961,14 +2830,14 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             else
             {
                 tableColInfo.Add(new(
-                    pds.Identifier.ToString(),
+                    propName,
                     propTypeName,
                     nullable
-                        ? string.Format(_sqliteNullableReadDirectives["JSON"].Remove(0, 6), pds.Identifier.ToString(), "reader", tableColInfo.Count, jsonTypeName)
-                        : string.Format(_sqliteReadDirectives["JSON"].Remove(0, 6), pds.Identifier.ToString(), "reader", tableColInfo.Count, jsonTypeName),
+                        ? string.Format(_sqliteNullableReadDirectives["JSON"].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName)
+                        : string.Format(_sqliteReadDirectives["JSON"].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName),
                     nullable
-                        ? string.Format(_sqliteNullableReadDirectives["JSON"], pds.Identifier.ToString(), "reader", tableColInfo.Count, jsonTypeName)
-                        : string.Format(_sqliteReadDirectives["JSON"], pds.Identifier.ToString(), "reader", tableColInfo.Count, jsonTypeName),
+                        ? string.Format(_sqliteNullableReadDirectives["JSON"], propName, "reader", tableColInfo.Count, jsonTypeName)
+                        : string.Format(_sqliteReadDirectives["JSON"], propName, "reader", tableColInfo.Count, jsonTypeName),
                     false,
                     false,
                     nullable,
