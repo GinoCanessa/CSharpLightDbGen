@@ -916,6 +916,66 @@ public class LightSQLiteGenerator_IntegrationTests
         UserWebsite.SelectCount(db).ShouldBe(0);
     }
 
+    [Fact]
+    public void Key_AutoIncrementFalse_UsesSuppliedIntegerKey()
+    {
+        using var db = OpenInMemory();
+        SuppliedKeyEntity.CreateTable(db).ShouldBeTrue();
+
+        SuppliedKeyEntity.Insert(db, new SuppliedKeyEntity { Id = 42, SuppliedLabel = "answer" });
+        SuppliedKeyEntity.Insert(db, new SuppliedKeyEntity { Id = 7, SuppliedLabel = "lucky" });
+
+        // The caller-supplied integer keys must be preserved verbatim — no counter reassignment.
+        var fortyTwo = SuppliedKeyEntity.SelectSingle(db, Id: 42);
+        fortyTwo.ShouldNotBeNull();
+        fortyTwo!.SuppliedLabel.ShouldBe("answer");
+
+        var seven = SuppliedKeyEntity.SelectSingle(db, Id: 7);
+        seven.ShouldNotBeNull();
+        seven!.SuppliedLabel.ShouldBe("lucky");
+
+        SuppliedKeyEntity.SelectCount(db).ShouldBe(2);
+    }
+
+    [Fact]
+    public void ForeignKey_PositionalConstructorArguments_EmitAndEnforceConstraint()
+    {
+        using var db = OpenInMemory();
+
+        using (IDbCommand pragma = db.CreateCommand())
+        {
+            pragma.CommandText = "PRAGMA foreign_keys = ON;";
+            pragma.ExecuteNonQuery();
+        }
+
+        FkParent.CreateTable(db).ShouldBeTrue();
+        PosFkChild.CreateTable(db).ShouldBeTrue();
+
+        FkParent parent = new() { Label = "pos-root" };
+        FkParent.Insert(db, parent);
+        parent.ParentId.ShouldBeGreaterThan(0);
+
+        // A child referencing an existing parent is accepted.
+        PosFkChild.Insert(db, new PosFkChild { PosParentRef = parent.ParentId, PosNote = "ok" });
+        PosFkChild.SelectCount(db).ShouldBe(1);
+
+        // A child referencing a non-existent parent violates the positional FK constraint.
+        Should.Throw<SqliteException>(() =>
+            PosFkChild.Insert(db, new PosFkChild { PosParentRef = 999999, PosNote = "orphan" }));
+
+        // The positional onDelete: Cascade argument cascades the delete to children.
+        using (IDbCommand delete = db.CreateCommand())
+        {
+            delete.CommandText = "DELETE FROM fk_parents WHERE ParentId = " + parent.ParentId + ";";
+            delete.ExecuteNonQuery();
+        }
+
+        PosFkChild.SelectCount(db).ShouldBe(0);
+
+        PosFkChild.DropTable(db).ShouldBeTrue();
+        FkParent.DropTable(db).ShouldBeTrue();
+    }
+
     private static SqliteConnection OpenInMemory()
     {
         var connection = new SqliteConnection("Data Source=:memory:");

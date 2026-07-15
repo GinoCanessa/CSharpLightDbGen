@@ -285,6 +285,121 @@ public class LightSQLiteGenerator_GenerationTests
         run.CompilationErrors.ShouldBeEmpty();
     }
 
+    [Fact]
+    public void Key_AutoIncrementFalse_UsesSuppliedIntegerKey()
+    {
+        // A6: [LdgSQLiteKey(false)] on an integer single key must NOT be treated as an identity —
+        // no counter, no LoadMaxKey, no RETURNING-driven overwrite. The caller supplies the key.
+        const string source = """
+            using CsLightDbGen.SQLiteGenerator;
+
+            namespace CsLightDbGen.SQLiteGenerator;
+
+            [LdgSQLiteTable("supplied_keys")]
+            public partial class SuppliedKeyEntity
+            {
+                [LdgSQLiteKey(false)]
+                public int Id { get; set; }
+
+                public string Label { get; set; } = string.Empty;
+            }
+            """;
+
+        var run = GeneratorTestHost.Run(source);
+
+        string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "SuppliedKeyEntity.Table.g.cs");
+        generated.ShouldNotContain("Interlocked.Increment");
+        generated.ShouldNotContain("LoadMaxKey");
+        run.Errors.ShouldBeEmpty();
+        run.CompilationErrors.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ForeignKey_PositionalConstructorArguments_EmitConstraint()
+    {
+        // A6: the positional [LdgSQLiteForeignKey("table", "column")] form must emit the FK
+        // constraint, exactly like the named ReferenceTable / ReferenceColumn spelling.
+        const string source = """
+            using CsLightDbGen.SQLiteGenerator;
+
+            namespace CsLightDbGen.SQLiteGenerator;
+
+            [LdgSQLiteTable("positional_fk_children")]
+            public partial class PositionalFkChild
+            {
+                [LdgSQLiteKey]
+                public int ChildId { get; set; }
+
+                [LdgSQLiteForeignKey("fk_parents", "Id", onDelete: LdgSQLiteFkAction.Cascade)]
+                public int ParentRef { get; set; }
+            }
+            """;
+
+        var run = GeneratorTestHost.Run(source);
+
+        string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "PositionalFkChild.Table.g.cs");
+        generated.ShouldContain("FOREIGN KEY (ParentRef) REFERENCES \"fk_parents\"(\"Id\") ON DELETE CASCADE");
+        run.Errors.ShouldBeEmpty();
+        run.CompilationErrors.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void CompositeKey_ExplicitAutoIncrement_EmitsCSLDG003()
+    {
+        // A6 / Step 3: an explicit AutoIncrement request on a composite-key member is unsupported by
+        // SQLite and must be diagnosed (a bare [LdgSQLiteKey] composite member is NOT flagged).
+        const string source = """
+            using CsLightDbGen.SQLiteGenerator;
+
+            namespace CsLightDbGen.SQLiteGenerator;
+
+            [LdgSQLiteTable("composite_auto")]
+            public partial class CompositeAutoEntity
+            {
+                [LdgSQLiteKey(true)]
+                public int PartA { get; set; }
+
+                [LdgSQLiteKey]
+                public int PartB { get; set; }
+
+                public string Label { get; set; } = string.Empty;
+            }
+            """;
+
+        var run = GeneratorTestHost.Run(source);
+
+        run.Errors.ShouldContain(static d => d.Id == "CSLDG003");
+        // Generation still produces a coherent composite-key table (AutoIncrement simply ignored).
+        run.CompilationErrors.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ForeignKey_MissingReferenceColumn_EmitsCSLDG005()
+    {
+        // A6 / Step 3: an incomplete foreign key (reference table without a reference column) would
+        // be silently dropped; it must be diagnosed instead.
+        const string source = """
+            using CsLightDbGen.SQLiteGenerator;
+
+            namespace CsLightDbGen.SQLiteGenerator;
+
+            [LdgSQLiteTable("incomplete_fk")]
+            public partial class IncompleteFkEntity
+            {
+                [LdgSQLiteKey]
+                public int Id { get; set; }
+
+                [LdgSQLiteForeignKey(ReferenceTable = "somewhere")]
+                public int Ref { get; set; }
+            }
+            """;
+
+        var run = GeneratorTestHost.Run(source);
+
+        run.Errors.ShouldContain(static d => d.Id == "CSLDG005");
+        run.CompilationErrors.ShouldBeEmpty();
+    }
+
     public static IEnumerable<object[]> AllFixtureNames()
     {
         return typeof(FixtureSources)

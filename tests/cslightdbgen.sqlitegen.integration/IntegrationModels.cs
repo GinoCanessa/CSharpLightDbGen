@@ -198,3 +198,26 @@ public partial class ScalarSample
 
     public TimeSpan Duration { get; set; }
 }
+
+// A6: integer single key with AutoIncrement disabled. The caller supplies the key; no counter.
+[LdgSQLiteTable("supplied_keys")]
+public partial class SuppliedKeyEntity
+{
+    [LdgSQLiteKey(false)]
+    public int Id { get; set; }
+
+    public string SuppliedLabel { get; set; } = string.Empty;
+}
+
+// A6: foreign key declared with positional constructor arguments (table, column, onDelete).
+[LdgSQLiteTable("pos_fk_children")]
+public partial class PosFkChild
+{
+    [LdgSQLiteKey]
+    public int PosChildId { get; set; }
+
+    [LdgSQLiteForeignKey("fk_parents", "ParentId", onDelete: LdgSQLiteFkAction.Cascade)]
+    public int PosParentRef { get; set; }
+
+    public string PosNote { get; set; } = string.Empty;
+}

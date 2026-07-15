@@ -483,11 +483,63 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
             // check for primary key property
             bool isPrimaryKey = HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteKey);
+
+            // Decode [LdgSQLiteKey(autoIncrement)] — constructor arg 0 or the named AutoIncrement
+            // property (default true). AttributeData yields the effective value even for
+            // referenced-assembly symbols; the syntax pass records whether AutoIncrement was written
+            // explicitly, which is needed to diagnose (but not over-report) composite + AutoIncrement.
+            bool keyAutoIncrement = true;
+            bool keyAutoIncrementExplicit = false;
+            if (isPrimaryKey)
+            {
+                AttributeData? keyAttrData = propSymbol.GetAttributes()
+                    .FirstOrDefault(a => a.AttributeClass?.Name == GeneratorAttributes._ldgSQLiteKey);
+                if (keyAttrData != null)
+                {
+                    if ((keyAttrData.ConstructorArguments.Length > 0) && (keyAttrData.ConstructorArguments[0].Value is bool ctorAutoInc))
+                    {
+                        keyAutoIncrement = ctorAutoInc;
+                    }
+
+                    foreach (KeyValuePair<string, TypedConstant> namedArg in keyAttrData.NamedArguments)
+                    {
+                        if ((namedArg.Key == "AutoIncrement") && (namedArg.Value.Value is bool namedAutoInc))
+                        {
+                            keyAutoIncrement = namedAutoInc;
+                        }
+                    }
+                }
+
+                foreach (AttributeListSyntax keyAls in pds?.AttributeLists ?? default)
+                {
+                    foreach (AttributeSyntax keyAttr in keyAls.Attributes.Where(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteKey))
+                    {
+                        if ((keyAttr.ArgumentList?.Arguments.Count ?? 0) > 0)
+                        {
+                            keyAutoIncrementExplicit = true;
+                        }
+                    }
+                }
+            }
+
             if (isPrimaryKey)
             {
                 pkColName = propName;
                 pkPropType = propTypeName;
-                pkIsIdentity = !compositePk && (propTypeName == "int" || propTypeName == "long");
+                pkIsIdentity = !compositePk && (propTypeName == "int" || propTypeName == "long") && keyAutoIncrement;
+
+                // SQLite AUTOINCREMENT applies only to a single INTEGER primary key. Diagnose an
+                // explicit AutoIncrement request on a composite key; a bare [LdgSQLiteKey] on a
+                // composite member is the normal, supported spelling and must not be flagged.
+                if (compositePk && keyAutoIncrement && keyAutoIncrementExplicit)
+                {
+                    GeneratorDiagnostics.Report(
+                        context,
+                        GeneratorDiagnostics.CompositeKeyAutoIncrementConflict,
+                        propSymbol,
+                        className,
+                        propName);
+                }
             }
 
             if (isPrimaryKey)
@@ -507,8 +559,9 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             }
 
             // a column is an auto-increment identity only when it is the sole primary key
-            // (composite keys are inserted explicitly and never auto-assigned).
-            bool colIsIdentity = isPrimaryKey && !compositePk && (propTypeName == "int" || propTypeName == "long");
+            // (composite keys are inserted explicitly and never auto-assigned) and AutoIncrement
+            // has not been disabled via [LdgSQLiteKey(false)].
+            bool colIsIdentity = isPrimaryKey && !compositePk && (propTypeName == "int" || propTypeName == "long") && keyAutoIncrement;
 
             bool isUnique = HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteUnique);
 
@@ -625,10 +678,39 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 {
                     string? fkOnDelete = null;
                     string? fkOnUpdate = null;
+                    int fkPositional = 0;
 
                     foreach (AttributeArgumentSyntax arg in a.ArgumentList?.Arguments ?? [])
                     {
                         string? argName = arg.NameEquals?.Name.ToString() ?? arg.NameColon?.Name.ToString();
+
+                        // Positional constructor arguments carry no name; map them to the
+                        // LdgSQLiteForeignKey constructor order:
+                        // (referenceTable, referenceColumn, modelTypeName, onDelete, onUpdate).
+                        if (argName == null)
+                        {
+                            switch (fkPositional)
+                            {
+                                case 0:
+                                    foreignTable = arg.Expression.ToString();
+                                    break;
+                                case 1:
+                                    foreignColumn = arg.Expression.ToString();
+                                    break;
+                                case 2:
+                                    foreignModelType = arg.Expression.ToString();
+                                    break;
+                                case 3:
+                                    fkOnDelete = fkActionFromExpr(arg.Expression.ToString());
+                                    break;
+                                case 4:
+                                    fkOnUpdate = fkActionFromExpr(arg.Expression.ToString());
+                                    break;
+                            }
+
+                            fkPositional++;
+                            continue;
+                        }
 
                         if (argName == "ReferenceTable")
                         {
@@ -667,6 +749,18 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             if ((foreignTable != null) && (foreignColumn != null))
             {
                 createFKLines.Add($"FOREIGN KEY ({propName}) REFERENCES {foreignTable}({foreignColumn}){fkActions}");
+            }
+            else if ((foreignTable != null) || (foreignColumn != null))
+            {
+                // An incomplete foreign key (only one of table / column supplied) would otherwise be
+                // silently dropped; surface it so the missing constraint is not a surprise.
+                GeneratorDiagnostics.Report(
+                    context,
+                    GeneratorDiagnostics.UnsupportedKeyOrForeignKeyCombination,
+                    propSymbol,
+                    propName,
+                    className,
+                    "a foreign key must specify both a reference table and a reference column");
             }
 
             // create the select retrieval pair
