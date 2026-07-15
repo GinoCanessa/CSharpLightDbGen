@@ -2316,17 +2316,18 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 IDbCommand command = dbConnection.CreateCommand();
                 command.CommandText = $"SELECT MAX({{quoteIdentLit(maxCol)}}) FROM {dbTableName}";
 
-                try
+                object? result = command.ExecuteScalar();
+                if (result is {{counterType}} value)
                 {
-                    object? result = command.ExecuteScalar();
-                    if (result is {{counterType}} value)
-                    {
-                        _indexValue = value;
-                    }
-                    {{loadElse}}
+                    _indexValue = value;
                 }
-                catch (Exception)
+                {{loadElse}}
+                else
                 {
+                    // MAX(...) over an empty table is NULL, so ExecuteScalar returns DBNull and the
+                    // counter resets to its default. Provider/SQL/connection errors are intentionally
+                    // NOT caught here: a genuine failure must propagate so CreateTable/EnsureSchema
+                    // cannot report success while the counter is silently wrong.
                     _indexValue = defaultValue;
                 }
             }

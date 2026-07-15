@@ -772,6 +772,25 @@ public class LightSQLiteGenerator_IntegrationTests
     }
 
     [Fact]
+    public void LoadMaxKey_PropagatesProviderError()
+    {
+        using var db = OpenInMemory();
+
+        // The customers table was never created, so SELECT MAX(...) fails at the provider.
+        // LoadMaxKey must let that error propagate instead of swallowing it and silently
+        // resetting the counter (which would let CreateTable/EnsureSchema report false success).
+        Should.Throw<SqliteException>(() => Customer.LoadMaxKey(db));
+
+        // An empty but existing table is NOT an error: MAX(...) is NULL, so the counter resets to
+        // its default and no exception is thrown.
+        Customer.CreateTable(db).ShouldBeTrue();
+        Should.NotThrow(() => Customer.LoadMaxKey(db));
+        Customer.SelectMaxKey(db).ShouldBeNull();
+
+        Customer.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
     public void PrimaryKey_Guid_RoundTrip()
     {
         using var db = OpenInMemory();
