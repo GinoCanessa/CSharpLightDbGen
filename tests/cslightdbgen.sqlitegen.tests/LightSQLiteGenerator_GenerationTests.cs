@@ -2,6 +2,7 @@ using cslightdbgen.sqlitegen.tests.TestFixtures;
 using cslightdbgen.sqlitegen.tests.TestInfrastructure;
 using Shouldly;
 using Microsoft.CodeAnalysis;
+using System.Reflection;
 
 namespace cslightdbgen.sqlitegen.tests;
 
@@ -82,27 +83,29 @@ public class LightSQLiteGenerator_GenerationTests
         source.ShouldContain("JsonTag>");
     }
 
-    [Fact]
-    public void CompileContract_BasicFixture_HasNoErrors()
+    public static IEnumerable<object[]> AllFixtureNames()
     {
-        var run = GeneratorTestHost.Run(FixtureSources.BasicTableFixture);
-
-        run.OutputCompilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ShouldBeEmpty();
+        return typeof(FixtureSources)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(static f => f.IsLiteral && f.FieldType == typeof(string))
+            .Select(static f => new object[] { f.Name })
+            .ToList();
     }
 
-    [Fact]
-    public void CompileContract_RecordFixture_HasNoErrors()
+    [Theory]
+    [MemberData(nameof(AllFixtureNames))]
+    public void CompileContract_EveryFixture_ProducesNoCompilationErrors(string fixtureName)
     {
-        var run = GeneratorTestHost.Run(FixtureSources.RecordTableFixture);
+        FieldInfo? field = typeof(FixtureSources).GetField(fixtureName, BindingFlags.Public | BindingFlags.Static);
+        field.ShouldNotBeNull();
 
-        run.OutputCompilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ShouldBeEmpty();
-    }
+        string source = (string)field!.GetRawConstantValue()!;
 
-    [Fact]
-    public void CompileContract_InheritanceFixture_HasNoErrors()
-    {
-        var run = GeneratorTestHost.Run(FixtureSources.InheritanceFixture);
+        var run = GeneratorTestHost.Run(source);
 
-        run.OutputCompilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ShouldBeEmpty();
+        var errors = run.CompilationErrors.ToList();
+        errors.ShouldBeEmpty(
+            $"Fixture '{fixtureName}' produced {errors.Count} compilation error(s):\n" +
+            string.Join("\n", errors.Select(static e => e.ToString())));
     }
 }

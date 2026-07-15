@@ -13,6 +13,8 @@ internal sealed record GeneratorRunResult(
     IReadOnlyDictionary<string, string> GeneratedSources)
 {
     public IEnumerable<Diagnostic> Errors => OutputDiagnostics.Where(d => d.Severity == DiagnosticSeverity.Error);
+
+    public IEnumerable<Diagnostic> CompilationErrors => OutputCompilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error);
 }
 
 internal static class GeneratorTestHost
@@ -24,12 +26,7 @@ internal static class GeneratorTestHost
             throw new ArgumentException("At least one source text is required.", nameof(sourceTexts));
         }
 
-        var allSources = new[]
-        {
-            "global using System;\nglobal using System.Threading;"
-        }.Concat(sourceTexts);
-
-        var syntaxTrees = allSources
+        var syntaxTrees = sourceTexts
             .Select(static text => CSharpSyntaxTree.ParseText(text))
             .ToArray();
 

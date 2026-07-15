@@ -954,11 +954,13 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                     #nullable enable
 
+                    using System;
                     using System.Collections.Generic;
                     using System.Data;
                     using System.Diagnostics.CodeAnalysis;
                     using System.Text;
                     using System.Text.Json;
+                    using System.Threading;
                                     
                     namespace {{{classNamespace}}};
                 
@@ -2990,10 +2992,12 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                     #nullable enable
 
+                    using System;
                     using System.Collections.Generic;
                     using System.Data;
                     using System.Text;
                     using System.Text.Json;
+                    using System.Threading;
                                     
                     namespace {{{classNamespace}}};
                 
