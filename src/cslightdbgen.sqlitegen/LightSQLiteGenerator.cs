@@ -2872,6 +2872,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         List<string> createColLines = [];
         List<string> createForeignKeyLines = [];
         List<TableColInfoRec> tableColInfo = [];
+        bool anyColIsJson = false;
 
         foreach (ColumnInput col in model.Columns)
         {
@@ -2962,6 +2963,8 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             }
             else if (memberIsNonScalar)
             {
+                anyColIsJson = true;
+
                 string jsonArrKey = col.IsArray ? "JSON[]array" : "JSON[]";
 
                 tableColInfo.Add(new(
@@ -2983,6 +2986,8 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             }
             else
             {
+                anyColIsJson = true;
+
                 tableColInfo.Add(new(
                     propName,
                     propTypeName,
@@ -3023,6 +3028,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     using System;
                     using System.Collections.Generic;
                     using System.Data;
+                    using System.Diagnostics.CodeAnalysis;
                     using System.Text;
                     using System.Text.Json;
                     using System.Threading;
@@ -3236,6 +3242,8 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                         {{{emitHtmlStripRegexField()}}}
 
                         {{{emitStripHtmlMethod()}}}
+
+                        {{{(anyColIsJson ? emitJsonHelperMembers() : string.Empty)}}}
                     }
 
                     [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
