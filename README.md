@@ -173,9 +173,52 @@ public partial record class Order
 }
 ```
 
-## Performance
+## Multi-Project Setup
 
-Benchmarked against Dapper and EF Core on .NET 10 (BenchmarkDotNet v0.15.6, i9-13900KF):
+The generator's attribute types (`LdgSQLiteTable`, `LdgSQLiteKey`, …) are emitted as **public**
+types into whichever project runs the analyzer, and the generated DAL (`CreateTable`, `Insert`,
+`SelectList`, `SQLiteColumnNames`, …) is public and `static`. Both are therefore usable across
+project boundaries — as long as the analyzer runs in **exactly one** project.
+
+**Recommended topology — host the analyzer once:**
+
+1. Put your `[LdgSQLiteTable]` / `[LdgSQLiteFtsTable]` models in a single "data" project and reference
+   the generator there with `OutputItemType="Analyzer"` (as in [Quick Start](#1-install)).
+2. From every other project, reference that data project with an **ordinary** `ProjectReference`
+   (no `OutputItemType="Analyzer"`). Downstream code consumes the generated public DAL and the public
+   attributes directly:
+
+   ```xml
+   <!-- Consumer.csproj — references the data project, does NOT run the analyzer -->
+   <ItemGroup>
+     <ProjectReference Include="../MyApp.Data/MyApp.Data.csproj" />
+   </ItemGroup>
+   ```
+
+   ```csharp
+   using MyApp.Data;              // generated Customer.CreateTable / Insert / SelectList …
+   using CsLightDbGen.SQLiteGenerator; // the public attribute types, if you need to reference them
+
+   Customer.CreateTable(db);
+   ```
+
+Because only the data project runs the analyzer, the attribute types are declared once and imported
+everywhere else as metadata — there is **no duplicate-type conflict**.
+
+**If two mutually-referencing projects both run the analyzer**, each emits its own copy of the public
+attribute types. Where one such project references the other, the compiler sees the attribute type
+both in source (locally generated) and in metadata (from the reference) and reports **`CS0436`**. This
+is a **warning, not an error** — the build still succeeds and uses the local copy — but the clean fix
+is to host the analyzer in only one project. If you deliberately keep the analyzer in both, silence
+the warning in the consuming project:
+
+```xml
+<PropertyGroup>
+  <NoWarn>$(NoWarn);CS0436</NoWarn>
+</PropertyGroup>
+```
+
+## Performance
 
 ### Single Record Select
 

@@ -34,6 +34,9 @@ Provides attribute source text injected into consuming compilations:
 - `LdgSQLiteFtsTable`
 - `LdgSQLiteFtsUnindexed`
 
+These attribute types are emitted as **`public`** (not `internal`) so that models and generated APIs
+remain usable across assembly boundaries in a multi-project solution (see [Multi-Project Placement](#4-multi-project-placement-cs0436)).
+
 ### 2) Incremental Generator (`LightSQLiteGenerator.cs`)
 
 Implements `IIncrementalGenerator` and does the following:
@@ -59,6 +62,27 @@ For FTS models (`[LdgSQLiteFtsTable]`):
 - Population from source table (`Populate`)
 - Search by term list (`MATCH`) and count
 - Optional text sanitization with HTML stripping
+
+### 4) Multi-Project Placement (CS0436)
+
+Attribute definitions are added via `RegisterPostInitializationOutput`, so **every project that runs
+the analyzer** gets its own copy of the (public) attribute types. Because the types are public and the
+generated DAL is public and `static`, the supported multi-project model is:
+
+- **Host the analyzer in exactly one project.** Other projects take an ordinary `ProjectReference`
+  (without `OutputItemType="Analyzer"`) to that project and consume the generated public DAL and
+  public attribute types as metadata. The attribute types are declared once, so there is no
+  duplicate-type conflict.
+- **If two mutually-referencing projects both host the analyzer**, the downstream project sees the
+  attribute types both in its own source-generated output and in the referenced assembly's metadata.
+  The compiler reports **`CS0436`** ("type conflicts with the imported type") — a **warning**, not an
+  error; the build still succeeds using the locally-generated copy. The recommended fix is the
+  single-host topology above; alternatively the consuming project can set
+  `<NoWarn>$(NoWarn);CS0436</NoWarn>`.
+
+The attributes are intentionally **not** internalized: internal attribute types would break the
+first (recommended) topology, where downstream projects reference the generated types across the
+assembly boundary.
 
 ## Runtime Boundary
 

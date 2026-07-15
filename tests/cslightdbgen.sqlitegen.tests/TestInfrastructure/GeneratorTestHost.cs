@@ -114,6 +114,35 @@ internal static class GeneratorTestHost
         return driver.GetRunResult();
     }
 
+    /// <summary>
+    /// Compiles the recommended multi-project topology: <paramref name="analyzerHostSource"/> is the
+    /// single project that hosts the generator (so it alone gets the post-initialization attribute
+    /// types and the generated DAL), and <paramref name="consumerSource"/> is a downstream project
+    /// that references the host as METADATA ONLY and does not run the generator itself. Returns both
+    /// compilations so a test can assert the consumer binds the host's <em>public</em> attribute
+    /// types and generated APIs with no <c>CS0436</c> duplicate-type conflict.
+    /// </summary>
+    public static (CSharpCompilation AnalyzerHost, CSharpCompilation Consumer) CompileConsumerReferencingGeneratedProject(
+        string analyzerHostSource, string consumerSource)
+    {
+        CSharpCompilation hostCompilation = CSharpCompilation.Create(
+            assemblyName: "AnalyzerHostProject",
+            syntaxTrees: [CSharpSyntaxTree.ParseText(analyzerHostSource)],
+            references: GetMetadataReferences(),
+            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+
+        CSharpGeneratorDriver.Create(new LightSQLiteGenerator())
+            .RunGeneratorsAndUpdateCompilation(hostCompilation, out Compilation hostOutput, out _);
+
+        CSharpCompilation consumerCompilation = CSharpCompilation.Create(
+            assemblyName: "ConsumerProject",
+            syntaxTrees: [CSharpSyntaxTree.ParseText(consumerSource)],
+            references: GetMetadataReferences().Append(((CSharpCompilation)hostOutput).ToMetadataReference()),
+            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+
+        return ((CSharpCompilation)hostOutput, consumerCompilation);
+    }
+
     public static string GetGeneratedSourceByHintSuffix(GeneratorRunResult runResult, string suffix)
     {
         var match = runResult.GeneratedSources
