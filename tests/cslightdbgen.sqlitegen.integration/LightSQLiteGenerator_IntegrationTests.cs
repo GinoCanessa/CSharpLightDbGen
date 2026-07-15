@@ -1548,6 +1548,35 @@ public class LightSQLiteGenerator_IntegrationTests
     }
 
     [Fact]
+    public void GetIndex_Concurrent_AssignsUniquePerTableKeys()
+    {
+        // DynEvent has DynamicTableNames + an integer identity key, so its client-side key counter
+        // must be per-table and atomic. Parallel GetIndex calls on one table must never collide, and
+        // two distinct tables must not share a counter. These table names are unique to this test so
+        // the process-global per-table counters start empty.
+        const int perTable = 1000;
+        System.Collections.Concurrent.ConcurrentBag<int> alpha = [];
+        System.Collections.Concurrent.ConcurrentBag<int> beta = [];
+
+        Parallel.For(0, perTable, _ =>
+        {
+            alpha.Add(DynEvent.GetIndex("dyn_conc_alpha"));
+            beta.Add(DynEvent.GetIndex("dyn_conc_beta"));
+        });
+
+        // Atomic increment => every value handed out within a table is distinct.
+        alpha.Count.ShouldBe(perTable);
+        alpha.Distinct().Count().ShouldBe(perTable);
+        beta.Distinct().Count().ShouldBe(perTable);
+
+        // Per-table counters => each sequence is independently 1..perTable. A single shared counter
+        // would instead spread 1..(2*perTable) across the two bags (distinct union == 2*perTable).
+        alpha.Concat(beta).Distinct().Count().ShouldBe(perTable);
+        alpha.OrderBy(x => x).ShouldBe(Enumerable.Range(1, perTable));
+        beta.OrderBy(x => x).ShouldBe(Enumerable.Range(1, perTable));
+    }
+
+    [Fact]
     public void Insert_WithInsertPrimaryKey_PersistsSuppliedIdentityKey()
     {
         using SqliteConnection db = OpenInMemory();

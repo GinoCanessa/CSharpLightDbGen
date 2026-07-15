@@ -27,8 +27,9 @@ public class LightSQLiteGenerator_GenerationTests
         source.ShouldContain("UNIQUE");
         source.ShouldContain("ParentForeignKey");
         source.ShouldContain("REFERENCES");
-        source.ShouldContain("_indexValue");
-        source.ShouldContain("GetIndex() => Interlocked.Increment(ref _indexValue)");
+        source.ShouldContain("_indexValues");
+        source.ShouldContain("public static int GetIndex(string? dbTableName = null)");
+        source.ShouldContain("Interlocked.Increment(ref _indexSlot(_tableIdent).Value)");
         source.ShouldContain("public static IReadOnlyCollection<string> SQLiteColumnNames");
         source.ShouldContain("\"Id\"");
         source.ShouldContain("\"UniqueCode\"");

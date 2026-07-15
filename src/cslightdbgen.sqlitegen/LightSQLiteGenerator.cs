@@ -2360,7 +2360,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 ? $"value.{pkColName} = Guid.NewGuid();"
                 : string.Empty;
 
-        // Emits the auto-increment key counter (_indexValue/GetIndex) plus LoadMaxKey/SelectMaxKey,
+        // Emits the per-table auto-increment key counter (_indexValues/GetIndex) plus LoadMaxKey/SelectMaxKey,
         // but only for a single integer identity key. Natural keys (Guid/string), composite keys,
         // and keyless models are inserted explicitly and never auto-assigned, so the counter
         // machinery is omitted entirely (avoids CS0037/CS0029 on non-integer key types).
@@ -2377,28 +2377,34 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             // SQLite returns Int64 for INTEGER columns, so an int counter must also narrow the
             // long result; a long counter takes the value directly and needs no extra branch.
             string loadElse = counterType == "int"
-                ? "else if (result is long l) { _indexValue = Convert.ToInt32(l); }"
+                ? "else if (result is long l) { Interlocked.Exchange(ref _box.Value, Convert.ToInt32(l)); }"
                 : string.Empty;
             string selectElse = counterType == "int"
                 ? "else if (result is long l) { return Convert.ToInt32(l); }"
                 : string.Empty;
 
             return $$"""
-            internal static {{counterType}} _indexValue = 0;
-            public static {{counterType}} GetIndex() => Interlocked.Increment(ref _indexValue);
+            private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, System.Runtime.CompilerServices.StrongBox<{{counterType}}>> _indexValues = new();
+            private static System.Runtime.CompilerServices.StrongBox<{{counterType}}> _indexSlot(string tableIdent) => _indexValues.GetOrAdd(tableIdent, _ => new System.Runtime.CompilerServices.StrongBox<{{counterType}}>(0));
+
+            public static {{counterType}} GetIndex(string? dbTableName = null)
+            {
+                string _tableIdent = dbTableName is null ? "\"{{tableName}}\"" : dbTableName;
+                return Interlocked.Increment(ref _indexSlot(_tableIdent).Value);
+            }
 
             public static void LoadMaxKey(IDbConnection dbConnection, string? dbTableName = null, {{counterType}} defaultValue = 0)
             {
                 string _tableIdent = dbTableName is null ? "\"{{tableName}}\"" : dbTableName;
-                dbTableName ??= "{{tableName}}";
 
                 using IDbCommand command = dbConnection.CreateCommand();
                 command.CommandText = $"SELECT MAX({{quoteIdentLit(maxCol)}}) FROM {_tableIdent}";
 
                 object? result = command.ExecuteScalar();
+                System.Runtime.CompilerServices.StrongBox<{{counterType}}> _box = _indexSlot(_tableIdent);
                 if (result is {{counterType}} value)
                 {
-                    _indexValue = value;
+                    Interlocked.Exchange(ref _box.Value, value);
                 }
                 {{loadElse}}
                 else
@@ -2407,14 +2413,13 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     // counter resets to its default. Provider/SQL/connection errors are intentionally
                     // NOT caught here: a genuine failure must propagate so CreateTable/EnsureSchema
                     // cannot report success while the counter is silently wrong.
-                    _indexValue = defaultValue;
+                    Interlocked.Exchange(ref _box.Value, defaultValue);
                 }
             }
 
             public static {{counterType}}? SelectMaxKey(IDbConnection dbConnection, string? dbTableName = null, {{counterType}} defaultValue = 0)
             {
                 string _tableIdent = dbTableName is null ? "\"{{tableName}}\"" : dbTableName;
-                dbTableName ??= "{{tableName}}";
 
                 using IDbCommand command = dbConnection.CreateCommand();
                 command.CommandText = $"SELECT MAX({{quoteIdentLit(maxCol)}}) FROM {_tableIdent}";
