@@ -9,7 +9,7 @@ public class LightSQLiteGenerator_EnsureSchemaTests
     private static string GetDefaultsSource()
     {
         GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.DefaultsFixture);
-        return GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "DefaultsEntitySQLite.g.cs");
+        return GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "DefaultsEntity.Table.g.cs");
     }
 
     [Fact]

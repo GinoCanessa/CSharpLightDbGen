@@ -19,7 +19,32 @@ internal sealed record GeneratorRunResult(
 
 internal static class GeneratorTestHost
 {
-    public static GeneratorRunResult Run(params string[] sourceTexts)
+    public static GeneratorRunResult Run(params string[] sourceTexts) =>
+        RunInternal([], sourceTexts);
+
+    /// <summary>
+    /// Runs the generator against <paramref name="sourceTexts"/> with an additional referenced
+    /// assembly compiled from <paramref name="referencedSource"/>. The referenced assembly is
+    /// exposed only as metadata (no syntax), so a base type declared there exercises the
+    /// referenced-assembly (symbol-only) code path. The generator is run over the referenced source
+    /// first so it gains the post-initialization attribute types and can legally apply
+    /// <c>[LdgSQLiteBaseClass]</c>.
+    /// </summary>
+    public static GeneratorRunResult RunWithReference(string referencedSource, params string[] sourceTexts)
+    {
+        var referencedCompilation = CSharpCompilation.Create(
+            assemblyName: "ReferencedAssembly",
+            syntaxTrees: [CSharpSyntaxTree.ParseText(referencedSource)],
+            references: GetMetadataReferences(),
+            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+
+        CSharpGeneratorDriver.Create(new LightSQLiteGenerator())
+            .RunGeneratorsAndUpdateCompilation(referencedCompilation, out var referencedOutput, out _);
+
+        return RunInternal([((CSharpCompilation)referencedOutput).ToMetadataReference()], sourceTexts);
+    }
+
+    private static GeneratorRunResult RunInternal(IReadOnlyList<MetadataReference> additionalReferences, string[] sourceTexts)
     {
         if (sourceTexts.Length == 0)
         {
@@ -33,7 +58,7 @@ internal static class GeneratorTestHost
         var compilation = CSharpCompilation.Create(
             assemblyName: "GeneratorTestsAssembly",
             syntaxTrees: syntaxTrees,
-            references: GetMetadataReferences(),
+            references: GetMetadataReferences().Concat(additionalReferences),
             options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
 
         GeneratorDriver driver = CSharpGeneratorDriver.Create(new LightSQLiteGenerator());

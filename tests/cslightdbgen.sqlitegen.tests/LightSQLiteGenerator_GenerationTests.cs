@@ -21,7 +21,7 @@ public class LightSQLiteGenerator_GenerationTests
     public void TablePath_Generates_ExpectedTableArtifacts()
     {
         var run = GeneratorTestHost.Run(FixtureSources.BasicTableFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntitySQLite.g.cs");
+        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntity.Table.g.cs");
 
         source.ShouldContain("CREATE TABLE IF NOT EXISTS");
         source.ShouldContain("UNIQUE");
@@ -41,7 +41,7 @@ public class LightSQLiteGenerator_GenerationTests
     public void IndexAttribute_Generates_CreateIndex_WithExpectedName()
     {
         var run = GeneratorTestHost.Run(FixtureSources.TableWithIndexFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "IndexedEntitySQLite.g.cs");
+        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "IndexedEntity.Table.g.cs");
 
         source.ShouldContain("CREATE INDEX IF NOT EXISTS");
         source.ShouldContain("IDX_{dbTableName}_");
@@ -53,7 +53,7 @@ public class LightSQLiteGenerator_GenerationTests
     public void RecordPath_Generates_RecordClassPartial()
     {
         var run = GeneratorTestHost.Run(FixtureSources.RecordTableFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "RecordEntitySQLite.g.cs");
+        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "RecordEntity.Table.g.cs");
 
         source.ShouldContain("public partial record class RecordEntity");
         run.Errors.ShouldBeEmpty();
@@ -63,7 +63,7 @@ public class LightSQLiteGenerator_GenerationTests
     public void Inheritance_Collects_BaseClassMembers()
     {
         var run = GeneratorTestHost.Run(FixtureSources.InheritanceFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "DerivedEntitySQLite.g.cs");
+        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "DerivedEntity.Table.g.cs");
 
         source.ShouldContain("BaseName");
         source.ShouldContain("DerivedName");
@@ -73,7 +73,7 @@ public class LightSQLiteGenerator_GenerationTests
     public void JsonAndArrayProperties_UseJsonUtilityMethods()
     {
         var run = GeneratorTestHost.Run(FixtureSources.TableWithJsonFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "JsonEntitySQLite.g.cs");
+        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "JsonEntity.Table.g.cs");
 
         source.ShouldContain("TrySerializeForDb(Payload");
         source.ShouldContain("TrySerializeForDb(PayloadTags");
@@ -110,7 +110,7 @@ public class LightSQLiteGenerator_GenerationTests
             """;
 
         var run = GeneratorTestHost.Run(source);
-        string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "ArrayRoutingEntitySQLite.g.cs");
+        string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "ArrayRoutingEntity.Table.g.cs");
 
         // Both the array and the List<T> route to the JSON-array read directive...
         generated.ShouldContain("ParseArrayFromDb<System.Int32>");
@@ -151,12 +151,101 @@ public class LightSQLiteGenerator_GenerationTests
             """;
 
         var run = GeneratorTestHost.Run(partOne, partTwo);
-        string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "SplitEntitySQLite.g.cs");
+        string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "SplitEntity.Table.g.cs");
 
         generated.ShouldContain("\"FirstPart\"");
         generated.ShouldContain("\"SecondPart\"");
         run.Errors.ShouldBeEmpty();
         run.CompilationErrors.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void SameSimpleNameDifferentNamespaces_ProducesDistinctHints()
+    {
+        // A3: two [LdgSQLiteTable] types share the simple name "Widget" but live in different
+        // namespaces. Hint names are namespace-qualified, so both are emitted without an
+        // "hint name already added" collision.
+        const string alpha = """
+            using CsLightDbGen.SQLiteGenerator;
+
+            namespace Alpha;
+
+            [LdgSQLiteTable("alpha_widget")]
+            public partial class Widget
+            {
+                [LdgSQLiteKey]
+                public int Id { get; set; }
+
+                public string AlphaValue { get; set; } = string.Empty;
+            }
+            """;
+
+        const string beta = """
+            using CsLightDbGen.SQLiteGenerator;
+
+            namespace Beta;
+
+            [LdgSQLiteTable("beta_widget")]
+            public partial class Widget
+            {
+                [LdgSQLiteKey]
+                public int Id { get; set; }
+
+                public string BetaValue { get; set; } = string.Empty;
+            }
+            """;
+
+        var run = GeneratorTestHost.Run(alpha, beta);
+
+        List<string> widgetHints = run.GeneratedSources.Keys
+            .Where(k => k.EndsWith("Widget.Table.g.cs", StringComparison.Ordinal))
+            .ToList();
+
+        widgetHints.ShouldContain("Alpha.Widget.Table.g.cs");
+        widgetHints.ShouldContain("Beta.Widget.Table.g.cs");
+        run.Errors.ShouldBeEmpty();
+        run.CompilationErrors.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Inheritance_Collects_BaseClassMembers_FromReferencedAssembly()
+    {
+        // A3: the base class lives in a referenced assembly (a metadata symbol with no syntax). Its
+        // [LdgSQLiteBaseClass] members must still be collected as columns through the symbol walk.
+        const string referencedBase = """
+            using CsLightDbGen.SQLiteGenerator;
+
+            namespace External;
+
+            [LdgSQLiteBaseClass]
+            public abstract class ExternalBase
+            {
+                public string BaseName { get; set; } = string.Empty;
+            }
+            """;
+
+        const string derived = """
+            using CsLightDbGen.SQLiteGenerator;
+            using External;
+
+            namespace Consumer;
+
+            [LdgSQLiteTable("derived_external")]
+            public partial class DerivedExternalEntity : ExternalBase
+            {
+                [LdgSQLiteKey]
+                public int Id { get; set; }
+
+                public string DerivedName { get; set; } = string.Empty;
+            }
+            """;
+
+        var run = GeneratorTestHost.RunWithReference(referencedBase, derived);
+        string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "DerivedExternalEntity.Table.g.cs");
+
+        generated.ShouldContain("BaseName");
+        generated.ShouldContain("DerivedName");
+        run.Errors.ShouldBeEmpty();
     }
 
     public static IEnumerable<object[]> AllFixtureNames()

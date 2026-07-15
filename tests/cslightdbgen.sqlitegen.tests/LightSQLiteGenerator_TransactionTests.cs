@@ -9,7 +9,7 @@ public class LightSQLiteGenerator_TransactionTests
     private static string GetBasicEntitySource()
     {
         GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.BasicTableFixture);
-        return GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntitySQLite.g.cs");
+        return GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntity.Table.g.cs");
     }
 
     [Theory]

@@ -9,13 +9,13 @@ public class LightSQLiteGenerator_UniqueIndexTests
     private static string GetPackageSource()
     {
         GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.UniqueIndexFixture);
-        return GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "PackageRecordSQLite.g.cs");
+        return GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "PackageRecord.Table.g.cs");
     }
 
     private static string GetBasicSource()
     {
         GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.BasicTableFixture);
-        return GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntitySQLite.g.cs");
+        return GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntity.Table.g.cs");
     }
 
     [Fact]

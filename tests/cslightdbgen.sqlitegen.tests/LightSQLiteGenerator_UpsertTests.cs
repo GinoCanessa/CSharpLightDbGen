@@ -9,13 +9,13 @@ public class LightSQLiteGenerator_UpsertTests
     private static string GetBasicSource()
     {
         GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.BasicTableFixture);
-        return GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntitySQLite.g.cs");
+        return GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntity.Table.g.cs");
     }
 
     private static string GetCompositeSource()
     {
         GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.CompositePrimaryKeyFixture);
-        return GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "UserWebsiteSQLite.g.cs");
+        return GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "UserWebsite.Table.g.cs");
     }
 
     [Fact]

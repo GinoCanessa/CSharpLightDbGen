@@ -9,13 +9,13 @@ public class LightSQLiteGenerator_ForeignKeyTests
     private static string GetFkChildSource()
     {
         GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.ForeignKeyActionsFixture);
-        return GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "FkChildSQLite.g.cs");
+        return GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "FkChild.Table.g.cs");
     }
 
     private static string GetManifestEntrySource()
     {
         GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.CompositeForeignKeyFixture);
-        return GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "ManifestEntrySQLite.g.cs");
+        return GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "ManifestEntry.Table.g.cs");
     }
 
     [Fact]

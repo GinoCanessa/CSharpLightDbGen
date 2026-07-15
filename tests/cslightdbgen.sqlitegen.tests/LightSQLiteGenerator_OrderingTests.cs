@@ -12,7 +12,7 @@ public class LightSQLiteGenerator_OrderingTests
     public void OrderBy_ResolvesPerColumnDirection_NotSingleTrailingDirection()
     {
         GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.BasicTableFixture);
-        string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntitySQLite.g.cs");
+        string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntity.Table.g.cs");
 
         source.ShouldContain("ResolveOrderByProperties(string[]? orderByProperties, string[]? orderByDirections, string? orderByDirection)");
         source.ShouldContain("orderByProperty + (descending ? \" DESC\" : \" ASC\")");
@@ -25,7 +25,7 @@ public class LightSQLiteGenerator_OrderingTests
     public void OrderBy_ResolvesDirectionByInputIndex_BeforeDroppingUnknownColumns()
     {
         GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.BasicTableFixture);
-        string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntitySQLite.g.cs");
+        string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntity.Table.g.cs");
 
         source.ShouldContain("for (int orderByIndex = 0; orderByIndex < orderByProperties.Length; orderByIndex++)");
         source.ShouldContain("!SQLiteColumnNames.Contains(orderByProperty)");
@@ -36,7 +36,7 @@ public class LightSQLiteGenerator_OrderingTests
     public void OrderBy_SelectMethods_ExposeOrderByDirectionsParameter()
     {
         GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.BasicTableFixture);
-        string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntitySQLite.g.cs");
+        string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntity.Table.g.cs");
 
         source.ShouldContain("string[]? orderByDirections = null");
         CountOccurrences(source, "string[]? orderByDirections = null").ShouldBeGreaterThanOrEqualTo(4);
@@ -47,7 +47,7 @@ public class LightSQLiteGenerator_OrderingTests
     public void OrderBy_FtsSelect_ExposesOrderByDirections_AndPerColumnDirection()
     {
         GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.FtsFixture);
-        string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "FtsEntitySQLite.g.cs");
+        string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "FtsEntity.Fts.g.cs");
 
         source.ShouldContain("string[]? orderByDirections = null");
         source.ShouldContain("orderByProperty + (descending ? \" DESC\" : \" ASC\")");

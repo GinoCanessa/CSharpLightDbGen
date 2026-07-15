@@ -11,7 +11,7 @@ public class LightSQLiteGenerator_FtsTests
     public void FtsPath_Generates_Fts5_Unindexed_Match_AndSanitizeCode()
     {
         var run = GeneratorTestHost.Run(FixtureSources.FtsFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "FtsEntitySQLite.g.cs");
+        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "FtsEntity.Fts.g.cs");
 
         source.ShouldContain("CREATE VIRTUAL TABLE IF NOT EXISTS");
         source.ShouldContain("using fts5");
@@ -37,7 +37,7 @@ public class LightSQLiteGenerator_FtsTests
     public void FtsPath_WithTokenizer_IncludesTokenizeClause()
     {
         var run = GeneratorTestHost.Run(FixtureSources.FtsTokenizerFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "FtsTokenizerEntitySQLite.g.cs");
+        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "FtsTokenizerEntity.Fts.g.cs");
 
         source.ShouldContain("CREATE VIRTUAL TABLE IF NOT EXISTS");
         source.ShouldContain("using fts5");
@@ -48,7 +48,7 @@ public class LightSQLiteGenerator_FtsTests
     public void FtsPath_WithoutTokenizer_DoesNotIncludeTokenizeClause()
     {
         var run = GeneratorTestHost.Run(FixtureSources.FtsFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "FtsEntitySQLite.g.cs");
+        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "FtsEntity.Fts.g.cs");
 
         source.ShouldNotContain("tokenize=");
     }
