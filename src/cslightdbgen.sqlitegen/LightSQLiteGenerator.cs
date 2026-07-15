@@ -1262,7 +1262,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             command.ExecuteNonQuery();
                             }
 
-                            {{{string.Join(_line_2, getIndexLines())}}}
+                            {{{string.Join(_line_2, getIndexLines(false))}}}
                     
                             {{{(pkIsIdentity ? "LoadMaxKey(dbConnection, _tableIdent);" : string.Empty)}}}
 
@@ -1323,7 +1323,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                             {{{string.Join(_line_2, getEnsureAddColumnLines())}}}
 
-                            {{{string.Join(_line_2, getIndexLines())}}}
+                            {{{string.Join(_line_2, getIndexLines(true))}}}
 
                             {{{string.Join(_line_2, getEnsureUniqueConstraintIndexLines())}}}
 
@@ -2436,7 +2436,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             """;
         }
 
-        IEnumerable<string> getIndexLines()
+        IEnumerable<string> getIndexLines(bool underTransaction)
         {
             // generate any indexes
             foreach (IndexInfo idx in model.Indexes)
@@ -2469,6 +2469,10 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                 yield return "using (IDbCommand command = dbConnection.CreateCommand())";
                 yield return "{";
+                if (underTransaction)
+                {
+                    yield return "if (transaction != null) command.Transaction = transaction;";
+                }
                 yield return "command.CommandText = $\"\"\"";
                 yield return $"    CREATE {indexKind} IF NOT EXISTS \"{indexName}\" ON \"{{dbTableName}}\" (";
                 yield return $"        {string.Join(", ", columns.Select(v => $"\"{v}\""))}";
@@ -3586,7 +3590,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         }
         """;
 
-    private static Dictionary<string, string> _sqliteReadDirectives = new()
+    private static readonly Dictionary<string, string> _sqliteReadDirectives = new()
     {
         { "bool", "{0} = {1}.GetBoolean({2})" },
         { "byte", "{0} = {1}.GetByte({2})" },
@@ -3611,11 +3615,11 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         { "ulong", "{0} = (ulong){1}.GetInt64({2})" },
         { "Uri", "{0} = new Uri({1}.GetString({2}))" },
         { "JSON", "{0} = ParseFromDb<{3}>({1}.GetString({2})) ?? new {3}()" },
-        { "JSON[]", "{0} = ParseArrayFromDb<{3}>({1}.GetString({2})) ?? new List<{3}>()" },
+        { "JSON[]", "{0} = ParseArrayFromDb<{3}>({1}.GetString({2})) ?? []" },
         { "JSON[]array", "{0} = ParseArrayFromDb<{3}>({1}.GetString({2})).ToArray()" },
     };
 
-    private static Dictionary<string, string> _sqliteNullableReadDirectives = new()
+    private static readonly Dictionary<string, string> _sqliteNullableReadDirectives = new()
     {
         { "bool", "{0} = {1}.IsDBNull({2}) ? null : {1}.GetBoolean({2})" },
         { "byte", "{0} = {1}.IsDBNull({2}) ? null : {1}.GetByte({2})" },
@@ -3645,7 +3649,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
     };
 
     // Mapping pulled from https://learn.microsoft.com/en-us/dotnet/standard/data/sqlite/types
-    private static Dictionary<string, string> _sqliteTypeMap = new()
+    private static readonly Dictionary<string, string> _sqliteTypeMap = new()
     {
         { "bool", "INTEGER" },
         { "byte", "INTEGER" },
