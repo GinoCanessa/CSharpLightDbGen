@@ -47,4 +47,36 @@ public class LightSQLiteGenerator_DegenerateModelTests
 
         run.CompilationErrors.ShouldBeEmpty();
     }
+
+    [Fact]
+    public void DualTableAndFtsAnnotation_EmitsTableOnly()
+    {
+        // A type carrying BOTH [LdgSQLiteTable] and [LdgSQLiteFtsTable] is emitted table-only: the
+        // table pipeline owns it. Emitting an FTS companion for the same partial type would redeclare
+        // shared members (DefaultTableName, SQLiteColumnNames, ResolveOrderByProperties, ...) and fail
+        // to compile, so the FTS pipeline must yield nothing for it (pre-refactor "table wins").
+        const string source = """
+            using CsLightDbGen.SQLiteGenerator;
+
+            namespace Demo;
+
+            [LdgSQLiteTable("widgets")]
+            [LdgSQLiteFtsTable("widgets")]
+            public partial class Widget
+            {
+                [LdgSQLiteKey]
+                public int Id { get; set; }
+
+                public string Name { get; set; } = string.Empty;
+            }
+            """;
+
+        GeneratorRunResult run = GeneratorTestHost.Run(source);
+
+        run.GeneratedSources.Keys.ShouldContain(key => key.EndsWith("Widget.Table.g.cs", StringComparison.Ordinal));
+        run.GeneratedSources.Keys.ShouldNotContain(key => key.EndsWith("Widget.Fts.g.cs", StringComparison.Ordinal));
+
+        // The combined output still compiles (no duplicate-member CS0101/CS0111/CS0121/…).
+        run.CompilationErrors.ShouldBeEmpty();
+    }
 }

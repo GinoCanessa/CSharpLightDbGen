@@ -443,6 +443,16 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
         ILookup<string?, AttributeData> symbolAttributeLookup = typeSymbol.GetAttributes().ToLookup(a => a.AttributeClass?.Name);
 
+        // A type tagged as BOTH a table and an FTS source is emitted table-only: the table pipeline
+        // owns it, and emitting an FTS partial as well would redeclare the same members on the same
+        // partial type (uncompilable). This restores the pre-refactor "table wins" precedence that
+        // the shared `seenTargets` dedup provided before the table and FTS pipelines became
+        // independent `ForAttributeWithMetadataName` providers.
+        if (symbolAttributeLookup.Contains(GeneratorAttributes._ldgSQLiteTable))
+        {
+            return null;
+        }
+
         List<TypedConstant> ftsTableArgs = symbolAttributeLookup.Contains(GeneratorAttributes._ldgSQLiteFtsTable)
             ? symbolAttributeLookup[GeneratorAttributes._ldgSQLiteFtsTable].First().ConstructorArguments.ToList()
             : [];
