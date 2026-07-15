@@ -14,7 +14,17 @@ public class LightSQLiteGenerator_GenerationTests
         var run = GeneratorTestHost.Run("namespace T; public class Placeholder { }");
 
         run.GeneratedSources.Keys.ShouldContain("LdgSQLiteGeneratorAttributes.g.cs");
-        // run.GeneratedSources.Keys.ShouldContain("LdgSQLiteUtils.g.cs");
+
+        // The post-init source must carry real content, not just exist: the attribute definitions
+        // and the shared LdgCommandFailedException (with its ModelName/Sql surface) that the emitted
+        // DAL throws on zero-row keyed mutations.
+        var attributes = run.GeneratedSources["LdgSQLiteGeneratorAttributes.g.cs"];
+        attributes.ShouldContain("class LdgSQLiteTable");
+        attributes.ShouldContain("class LdgSQLiteKey");
+        attributes.ShouldContain("class LdgSQLiteFtsTable");
+        attributes.ShouldContain("class LdgCommandFailedException");
+        attributes.ShouldContain("public string ModelName");
+        attributes.ShouldContain("public string Sql");
     }
 
     [Fact]

@@ -187,6 +187,10 @@ public class LightSQLiteGenerator_IntegrationTests
             new List<string> { "entry" },
             orderByProperties: new[] { "MissingColumn" }).ShouldNotBeEmpty();
 
+        // Non-sanitized populate preserves the raw markup in the stored (unindexed) RawHtml column.
+        ArticleSearch rawAlpha = ArticleSearch.Select(db, new List<string> { "alpha" }).First();
+        rawAlpha.RawHtml.ShouldBe("<p>alpha <b>HTML</b></p>");
+
         ArticleSearch.CreateTable(db, "article_search_clean").ShouldBeTrue();
         ArticleSearch.Populate(
             db,
@@ -194,10 +198,13 @@ public class LightSQLiteGenerator_IntegrationTests
             sourceTableName: "article_source",
             sanitizeText: true).ShouldBe(3);
 
-        ArticleSearch.Select(
+        // sanitizeText: true runs StripHtml over every copied string column, so the stored value
+        // has its tags removed (content assertion, not just a row count).
+        ArticleSearch cleanAlpha = ArticleSearch.Select(
             db,
             new List<string> { "alpha" },
-            dbTableName: "article_search_clean").ShouldNotBeEmpty();
+            dbTableName: "article_search_clean").First();
+        cleanAlpha.RawHtml.ShouldBe("alpha HTML");
 
         ArticleSearch.DropTable(db).ShouldBeTrue();
         ArticleSearch.DropTable(db, "article_search_clean").ShouldBeTrue();
@@ -1574,6 +1581,32 @@ public class LightSQLiteGenerator_IntegrationTests
         alpha.Concat(beta).Distinct().Count().ShouldBe(perTable);
         alpha.OrderBy(x => x).ShouldBe(Enumerable.Range(1, perTable));
         beta.OrderBy(x => x).ShouldBe(Enumerable.Range(1, perTable));
+    }
+
+    [Theory]
+    [InlineData("!=", 30, 3)]               // {10, 20, 40}
+    [InlineData(">", 30, 1)]                // {40}
+    [InlineData("<", 30, 2)]                // {10, 20}
+    [InlineData("<=", 30, 3)]               // {10, 20, 30}
+    [InlineData("LessThanOrEqual", 30, 3)]  // named spelling of "<="
+    public void NumericOperator_FiltersCorrectly(string ageOperator, int age, int expectedCount)
+    {
+        // The generated numeric filter resolves an operator token/spelling to a SQL comparator via
+        // getNumericOperator. Seeding known ages and filtering with each operator proves a wrong
+        // mapping in that switch would change the returned row set.
+        using var db = OpenInMemory();
+        Customer.CreateTable(db).ShouldBeTrue();
+        new List<Customer>
+        {
+            NewCustomer("age10", 10, 1, 1),
+            NewCustomer("age20", 20, 1, 1),
+            NewCustomer("age30", 30, 1, 1),
+            NewCustomer("age40", 40, 1, 1),
+        }.Insert(db);
+
+        List<Customer> filtered = Customer.SelectList(db, Age: age, AgeOperator: ageOperator);
+
+        filtered.Count.ShouldBe(expectedCount);
     }
 
     [Fact]
