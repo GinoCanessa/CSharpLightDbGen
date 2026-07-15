@@ -133,6 +133,7 @@ internal record struct ColumnInput(
     bool IsEnum,
     string? EnumTypeName,
     bool IsNonScalar,
+    bool IsArray,
     string? JsonTypeName,
     string DefaultClause,
     bool DefaultIsRaw,

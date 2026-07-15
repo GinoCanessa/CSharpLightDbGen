@@ -130,7 +130,8 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         bool IsEnum,
         string? EnumTypeName,
         bool IsNonScalar,
-        string? JsonTypeName);
+        string? JsonTypeName,
+        bool IsArray);
 
     /// <summary>
     /// Collects the properties that become table columns: the properties of any
@@ -214,7 +215,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
     {
         if (typeSymbol is IArrayTypeSymbol arrayType)
         {
-            return new ColumnClassification(false, null, true, QualifiedTypeName(arrayType.ElementType));
+            return new ColumnClassification(false, null, true, QualifiedTypeName(arrayType.ElementType), true);
         }
 
         INamedTypeSymbol? namedTypeSymbol = typeSymbol as INamedTypeSymbol;
@@ -224,27 +225,25 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         bool isNonScalar = false;
         string? jsonTypeName = null;
 
+        // Only a bare enum (MyEnum) or a nullable enum (MyEnum?, i.e. Nullable<Enum>) is an enum
+        // scalar. A generic whose first type-arg merely happens to be an enum (List<MyEnum>,
+        // IEnumerable<MyEnum>) is NOT a scalar and must route to the JSON collection path; and an
+        // arbitrary non-System generic struct (ImmutableArray<T>, value tuples) is neither — it
+        // falls through to the JSON/CSLDG001 path rather than being misclassified as an enum.
+        bool isNullableEnum =
+            (namedTypeSymbol != null) &&
+            (namedTypeSymbol.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T) &&
+            (namedTypeSymbol.TypeArguments.Length != 0) &&
+            (namedTypeSymbol.TypeArguments[0].TypeKind == TypeKind.Enum);
+
         if ((namedTypeSymbol != null) &&
-            (
-                (namedTypeSymbol.TypeKind == TypeKind.Enum) ||
-                ((namedTypeSymbol.TypeArguments.Length != 0) && (namedTypeSymbol.TypeArguments[0].TypeKind == TypeKind.Enum)) ||
-                ((namedTypeSymbol.TypeKind == TypeKind.Struct) && (namedTypeSymbol.TypeArguments.Length != 0) && !namedTypeSymbol.TypeArguments[0].ContainingNamespace.Name.StartsWith("System"))
-            ))
+            ((namedTypeSymbol.TypeKind == TypeKind.Enum) || isNullableEnum))
         {
             isEnum = true;
 
-            if (namedTypeSymbol.TypeKind == TypeKind.Enum)
-            {
-                enumTypeName = QualifiedTypeName(namedTypeSymbol);
-            }
-            else if (namedTypeSymbol.TypeArguments.Length != 0)
-            {
-                enumTypeName = QualifiedTypeName(namedTypeSymbol.TypeArguments[0]);
-            }
-            else
-            {
-                enumTypeName = namedTypeSymbol.Name;
-            }
+            enumTypeName = (namedTypeSymbol.TypeKind == TypeKind.Enum)
+                ? QualifiedTypeName(namedTypeSymbol)
+                : QualifiedTypeName(namedTypeSymbol.TypeArguments[0]);
         }
         else if (namedTypeSymbol != null)
         {
@@ -263,7 +262,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             }
         }
 
-        return new ColumnClassification(isEnum, enumTypeName, isNonScalar, jsonTypeName);
+        return new ColumnClassification(isEnum, enumTypeName, isNonScalar, jsonTypeName, false);
     }
 
     /// <summary>
@@ -695,6 +694,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             classification.IsEnum,
             classification.EnumTypeName,
             classification.IsNonScalar,
+            classification.IsArray,
             classification.JsonTypeName,
             defaultClause,
             defaultIsRaw,
@@ -958,15 +958,19 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             {
                 anyColIsJson = true;
 
+                // A real T[] array column reads back as List<T>.ToArray(); List<T>/IEnumerable<T>
+                // stay as List<T>. Both share the JSON[] serialization; only the read differs.
+                string jsonArrKey = col.IsArray ? "JSON[]array" : "JSON[]";
+
                 tableColInfo.Add(new(
                     propName,
                     propTypeName,
                     nullable
-                        ? string.Format(_sqliteNullableReadDirectives["JSON[]"].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName)
-                        : string.Format(_sqliteReadDirectives["JSON[]"].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName),
+                        ? string.Format(_sqliteNullableReadDirectives[jsonArrKey].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName)
+                        : string.Format(_sqliteReadDirectives[jsonArrKey].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName),
                     nullable
-                        ? string.Format(_sqliteNullableReadDirectives["JSON[]"], propName, "reader", tableColInfo.Count, jsonTypeName)
-                        : string.Format(_sqliteReadDirectives["JSON[]"], propName, "reader", tableColInfo.Count, jsonTypeName),
+                        ? string.Format(_sqliteNullableReadDirectives[jsonArrKey], propName, "reader", tableColInfo.Count, jsonTypeName)
+                        : string.Format(_sqliteReadDirectives[jsonArrKey], propName, "reader", tableColInfo.Count, jsonTypeName),
                     isPrimaryKey,
                     colIsIdentity,
                     nullable,
@@ -2930,15 +2934,17 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             }
             else if (memberIsNonScalar)
             {
+                string jsonArrKey = col.IsArray ? "JSON[]array" : "JSON[]";
+
                 tableColInfo.Add(new(
                     propName,
                     propTypeName,
                     nullable
-                        ? string.Format(_sqliteNullableReadDirectives["JSON[]"].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName)
-                        : string.Format(_sqliteReadDirectives["JSON[]"].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName),
+                        ? string.Format(_sqliteNullableReadDirectives[jsonArrKey].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName)
+                        : string.Format(_sqliteReadDirectives[jsonArrKey].Remove(0, 6), propName, "reader", tableColInfo.Count, jsonTypeName),
                     nullable
-                        ? string.Format(_sqliteNullableReadDirectives["JSON[]"], propName, "reader", tableColInfo.Count, jsonTypeName)
-                        : string.Format(_sqliteReadDirectives["JSON[]"], propName, "reader", tableColInfo.Count, jsonTypeName),
+                        ? string.Format(_sqliteNullableReadDirectives[jsonArrKey], propName, "reader", tableColInfo.Count, jsonTypeName)
+                        : string.Format(_sqliteReadDirectives[jsonArrKey], propName, "reader", tableColInfo.Count, jsonTypeName),
                     false,
                     false,
                     nullable,
@@ -3497,7 +3503,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             return true;
         }
 
-        private static bool TrySerializeForDb<T>(List<T>? instances, [NotNullWhen(true)] out string? json) where T : class
+        private static bool TrySerializeForDb<T>(List<T>? instances, [NotNullWhen(true)] out string? json)
         {
             if ((instances == null) || (instances.Count == 0))
             {
@@ -3519,11 +3525,11 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             return JsonSerializer.Deserialize<T>(json, _options);
         }
 
-        private static List<T> ParseArrayFromDb<T>(string json) where T : class
+        private static List<T> ParseArrayFromDb<T>(string json)
         {
             if (string.IsNullOrWhiteSpace(json))
             {
-                return new List<T>();
+                return [];
             }
 
             return JsonSerializer.Deserialize<List<T>>(json, _options) ?? [];
@@ -3556,6 +3562,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         { "Uri", "{0} = new Uri({1}.GetString({2}))" },
         { "JSON", "{0} = ParseFromDb<{3}>({1}.GetString({2})) ?? new {3}()" },
         { "JSON[]", "{0} = ParseArrayFromDb<{3}>({1}.GetString({2})) ?? new List<{3}>()" },
+        { "JSON[]array", "{0} = ParseArrayFromDb<{3}>({1}.GetString({2})).ToArray()" },
     };
 
     private static Dictionary<string, string> _sqliteNullableReadDirectives = new()
@@ -3584,6 +3591,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         { "Uri", "{0} = {1}.IsDBNull({2}) ? null : new Uri({1}.GetString({2}))" },
         { "JSON", "{0} = {1}.IsDBNull({2}) ? null : ParseFromDb<{3}>({1}.GetString({2}))" },
         { "JSON[]", "{0} = {1}.IsDBNull({2}) ? null : ParseArrayFromDb<{3}>({1}.GetString({2}))" },
+        { "JSON[]array", "{0} = {1}.IsDBNull({2}) ? null : ParseArrayFromDb<{3}>({1}.GetString({2})).ToArray()" },
     };
 
     // Mapping pulled from https://learn.microsoft.com/en-us/dotnet/standard/data/sqlite/types

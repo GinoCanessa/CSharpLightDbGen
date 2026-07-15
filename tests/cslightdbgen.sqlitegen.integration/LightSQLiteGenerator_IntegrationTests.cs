@@ -1318,6 +1318,48 @@ public class LightSQLiteGenerator_IntegrationTests
     }
 
     [Fact]
+    public void EnumColumn_RoundTrip()
+    {
+        using SqliteConnection db = OpenInMemory();
+
+        EnumRoundTripEntity.CreateTable(db).ShouldBeTrue();
+
+        EnumRoundTripEntity entity = new()
+        {
+            Level = Priority.High,
+            MaybeLevel = Priority.Medium,
+            Tags = [Priority.Low, Priority.High],
+            Buckets = [Priority.Medium, Priority.Medium, Priority.Low]
+        };
+        int id = EnumRoundTripEntity.Insert(db, entity);
+
+        EnumRoundTripEntity? loaded = EnumRoundTripEntity.SelectSingle(db, Id: id);
+        loaded.ShouldNotBeNull();
+        loaded!.Level.ShouldBe(Priority.High);
+        loaded.MaybeLevel.ShouldBe(Priority.Medium);
+        loaded.Tags.ShouldBe(new List<Priority> { Priority.Low, Priority.High });
+        loaded.Buckets.ShouldBe(new[] { Priority.Medium, Priority.Medium, Priority.Low });
+
+        EnumRoundTripEntity nullEntity = new()
+        {
+            Level = Priority.Low,
+            MaybeLevel = null,
+            Tags = [],
+            Buckets = []
+        };
+        int nullId = EnumRoundTripEntity.Insert(db, nullEntity);
+
+        EnumRoundTripEntity? loadedNull = EnumRoundTripEntity.SelectSingle(db, Id: nullId);
+        loadedNull.ShouldNotBeNull();
+        loadedNull!.Level.ShouldBe(Priority.Low);
+        loadedNull.MaybeLevel.ShouldBeNull();
+        loadedNull.Tags.ShouldBeEmpty();
+        loadedNull.Buckets.ShouldBeEmpty();
+
+        EnumRoundTripEntity.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
     public void ForeignKey_OnDeleteSetNull_NullsChildReference()
     {
         using SqliteConnection db = OpenInMemory();

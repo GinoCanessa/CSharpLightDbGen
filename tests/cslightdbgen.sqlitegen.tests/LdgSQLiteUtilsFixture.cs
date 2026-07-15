@@ -45,7 +45,7 @@ public static class LdgSQLiteUtilsFixture
         return true;
     }
 
-    public static bool TrySerializeForDb<T>(List<T>? instances, [NotNullWhen(true)] out string? json) where T : class
+    public static bool TrySerializeForDb<T>(List<T>? instances, [NotNullWhen(true)] out string? json)
     {
         if ((instances == null) || (instances.Count == 0))
         {
@@ -67,7 +67,7 @@ public static class LdgSQLiteUtilsFixture
         return JsonSerializer.Deserialize<T>(json, Options);
     }
 
-    public static List<T> ParseArrayFromDb<T>(string json) where T : class
+    public static List<T> ParseArrayFromDb<T>(string json)
     {
         if (string.IsNullOrWhiteSpace(json))
         {

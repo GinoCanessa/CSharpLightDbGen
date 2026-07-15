@@ -308,6 +308,25 @@ public partial class TemporalSample
     public DateTime? MaybeAt { get; set; }
 }
 
+// H1: enum scalar, nullable enum scalar, enum collection, and enum array columns must all
+// round-trip through insert/select. The collection/array variants persist as JSON.
+public enum Priority { Low, Medium, High }
+
+[LdgSQLiteTable("enum_round_trip")]
+public partial class EnumRoundTripEntity
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+
+    public Priority Level { get; set; }
+
+    public Priority? MaybeLevel { get; set; }
+
+    public List<Priority> Tags { get; set; } = new();
+
+    public Priority[] Buckets { get; set; } = [];
+}
+
 // H2: DateTimeOffset scalar columns (TEXT-backed) must round-trip with the stored offset intact,
 // including the nullable variant.
 [LdgSQLiteTable("dto_samples")]
