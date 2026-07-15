@@ -104,3 +104,13 @@ This keeps the generator package lean and lets consuming applications choose the
 - Attribute detection is name-string based; naming/qualification conventions matter.
 - `orderByProperties` and table names are interpolated SQL fragments; they should be treated as trusted internal inputs.
 - Base-member discovery is type-name based in generator logic, which can be ambiguous in duplicate-name namespace scenarios.
+- **Auto-increment identity keys use a process-wide `static` counter (`_indexValue`) per generated
+  model.** `GetIndex()` (`Interlocked.Increment`) hands out the next integer key, and
+  `LoadMaxKey` — invoked by `EnsureSchema`/`CreateTable` for identity models — seeds it from
+  `SELECT MAX(key)` on a single connection. Because the counter is shared across every
+  `IDbConnection` used with that model in the process, the generated identity assignment assumes
+  **one logical database per model type per process**. Using the same model against multiple
+  databases concurrently (or mutating the table out-of-band) can desynchronize the counter; re-seed
+  it with `LoadMaxKey` against the target connection, or supply keys explicitly. Natural-key
+  (`string`/`Guid`), composite-key, and keyless models are inserted explicitly, never auto-assigned,
+  and so are unaffected.
