@@ -1518,6 +1518,36 @@ public class LightSQLiteGenerator_IntegrationTests
     }
 
     [Fact]
+    public void ReservedWordTableName_RoundTrips()
+    {
+        using SqliteConnection db = OpenInMemory();
+
+        // "Order" is a SQL reserved word; the generated DDL/DML must quote the compile-time default
+        // table name at every bare-identifier site for create/insert/select/update/delete to work.
+        ReservedTableEntity.CreateTable(db).ShouldBeTrue();
+        ReservedTableEntity.EnsureSchema(db).ShouldBeTrue();
+
+        int id = ReservedTableEntity.Insert(db, new ReservedTableEntity { ReservedLabel = "first" });
+        id.ShouldBeGreaterThan(0);
+        ReservedTableEntity.Insert(db, new ReservedTableEntity { ReservedLabel = "second" });
+
+        ReservedTableEntity.SelectCount(db).ShouldBe(2);
+
+        ReservedTableEntity? loaded = ReservedTableEntity.SelectSingle(db, ReservedId: id);
+        loaded.ShouldNotBeNull();
+        loaded!.ReservedLabel.ShouldBe("first");
+
+        loaded.ReservedLabel = "first-updated";
+        ReservedTableEntity.Update(db, loaded);
+        ReservedTableEntity.SelectSingle(db, ReservedId: id)!.ReservedLabel.ShouldBe("first-updated");
+
+        ReservedTableEntity.Delete(db, loaded);
+        ReservedTableEntity.SelectCount(db).ShouldBe(1);
+
+        ReservedTableEntity.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
     public void Insert_WithInsertPrimaryKey_PersistsSuppliedIdentityKey()
     {
         using SqliteConnection db = OpenInMemory();

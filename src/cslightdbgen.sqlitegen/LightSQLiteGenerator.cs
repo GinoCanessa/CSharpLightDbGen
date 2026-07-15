@@ -1170,13 +1170,14 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             bool compareStringsWithLike = false,
                             {{{string.Join(", ", getFnFilterParams(true, true))}}}, IDbTransaction? transaction = null)
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
                     
                             Dictionary<{{{((pkColName == null) || compositePk ? "int" : pkPropType)}}}, {{{className}}}> results = new();
                     
                             using IDbCommand command = dbConnection.CreateCommand();
                             if (transaction != null) command.Transaction = transaction;
-                            command.CommandText = $"SELECT {{{string.Join(", ", tableColInfo.Select(p => quoteIdentLit(p.name)))}}} FROM {dbTableName}";
+                            command.CommandText = $"SELECT {{{string.Join(", ", tableColInfo.Select(p => quoteIdentLit(p.name)))}}} FROM {_tableIdent}";
                     
                             string joiner = orJoinConditions ? " OR " : " AND ";
                             string stringComparator = compareStringsWithLike ? " LIKE " : " = ";
@@ -1247,12 +1248,13 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
  
                          public static bool CreateTable(IDbConnection dbConnection, string? dbTableName = null)
                          {
+                             string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                              dbTableName ??= "{{{tableName}}}";
 
                             using (IDbCommand command = dbConnection.CreateCommand())
                             {
                             command.CommandText = $"""
-                                CREATE TABLE IF NOT EXISTS {dbTableName} (
+                                CREATE TABLE IF NOT EXISTS {_tableIdent} (
                                     {{{string.Join(_comma_line_4, createTableLines)}}}
                                 )
                                 """;
@@ -1262,17 +1264,18 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                             {{{string.Join(_line_2, getIndexLines())}}}
                     
-                            {{{(pkIsIdentity ? "LoadMaxKey(dbConnection, dbTableName);" : string.Empty)}}}
+                            {{{(pkIsIdentity ? "LoadMaxKey(dbConnection, _tableIdent);" : string.Empty)}}}
 
                             return true;
                         }
 
                         public static bool DropTable(IDbConnection dbConnection, string? dbTableName = null)
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
                     
                             using IDbCommand command = dbConnection.CreateCommand();
-                            command.CommandText = $"DROP TABLE IF EXISTS {dbTableName}";
+                            command.CommandText = $"DROP TABLE IF EXISTS {_tableIdent}";
                     
                             command.ExecuteNonQuery();
                     
@@ -1290,13 +1293,14 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                         /// </summary>
                         public static bool EnsureSchema(IDbConnection dbConnection, string? dbTableName = null, IDbTransaction? transaction = null)
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
 
                             using (IDbCommand command = dbConnection.CreateCommand())
                             {
                             if (transaction != null) command.Transaction = transaction;
                             command.CommandText = $"""
-                                CREATE TABLE IF NOT EXISTS {dbTableName} (
+                                CREATE TABLE IF NOT EXISTS {_tableIdent} (
                                     {{{string.Join(_comma_line_4, createTableLines)}}}
                                 )
                                 """;
@@ -1307,7 +1311,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             using (IDbCommand command = dbConnection.CreateCommand())
                             {
                             if (transaction != null) command.Transaction = transaction;
-                            command.CommandText = $"PRAGMA table_info({dbTableName})";
+                            command.CommandText = $"PRAGMA table_info({_tableIdent})";
                             using (IDataReader reader = command.ExecuteReader())
                             {
                                 while (reader.Read())
@@ -1323,7 +1327,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                             {{{string.Join(_line_2, getEnsureUniqueConstraintIndexLines())}}}
 
-                            {{{(pkIsIdentity ? "LoadMaxKey(dbConnection, dbTableName);" : string.Empty)}}}
+                            {{{(pkIsIdentity ? "LoadMaxKey(dbConnection, _tableIdent);" : string.Empty)}}}
 
                             return true;
                         }
@@ -1335,11 +1339,12 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             bool compareStringsWithLike = false,
                             {{{string.Join(", ", getFnFilterParams(true, true))}}}, IDbTransaction? transaction = null)
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
 
                             using IDbCommand command = dbConnection.CreateCommand();
                             if (transaction != null) command.Transaction = transaction;
-                            command.CommandText = $"SELECT {{{string.Join(", ", tableColInfo.Select(p => quoteIdentLit(p.name)))}}} FROM {dbTableName}";
+                            command.CommandText = $"SELECT {{{string.Join(", ", tableColInfo.Select(p => quoteIdentLit(p.name)))}}} FROM {_tableIdent}";
 
                             string joiner = orJoinConditions ? " OR " : " AND ";
                             string stringComparator = compareStringsWithLike ? " LIKE " : " = ";
@@ -1372,13 +1377,14 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             int? resultOffset = null,
                             {{{string.Join(", ", getFnFilterParams(true, true))}}}, IDbTransaction? transaction = null, string[]? orderByDirections = null)
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
 
                             List<{{{className}}}> results = new();
 
                             using IDbCommand command = dbConnection.CreateCommand();
                             if (transaction != null) command.Transaction = transaction;
-                            command.CommandText = $"SELECT {{{string.Join(", ", tableColInfo.Select(p => quoteIdentLit(p.name)))}}} FROM {dbTableName}";
+                            command.CommandText = $"SELECT {{{string.Join(", ", tableColInfo.Select(p => quoteIdentLit(p.name)))}}} FROM {_tableIdent}";
                     
                              string joiner = orJoinConditions ? " OR " : " AND ";
                              string stringComparator = compareStringsWithLike ? " LIKE " : " = ";
@@ -1426,11 +1432,12 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             int? resultOffset = null,
                             {{{string.Join(", ", getFnFilterParams(true, true))}}}, IDbTransaction? transaction = null, string[]? orderByDirections = null)
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
 
                             using IDbCommand command = dbConnection.CreateCommand();
                             if (transaction != null) command.Transaction = transaction;
-                            command.CommandText = $"SELECT {{{string.Join(", ", tableColInfo.Select(p => quoteIdentLit(p.name)))}}} FROM {dbTableName}";
+                            command.CommandText = $"SELECT {{{string.Join(", ", tableColInfo.Select(p => quoteIdentLit(p.name)))}}} FROM {_tableIdent}";
 
                              string joiner = orJoinConditions ? " OR " : " AND ";
                              string stringComparator = compareStringsWithLike ? " LIKE " : " = ";
@@ -1477,11 +1484,12 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             bool compareStringsWithLike = false,
                             {{{string.Join(", ", getFnFilterParams(true, true))}}}, IDbTransaction? transaction = null)
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
                     
                             using IDbCommand command = dbConnection.CreateCommand();
                             if (transaction != null) command.Transaction = transaction;
-                            command.CommandText = $"SELECT COUNT({{{((pkColName == null) || compositePk ? "*" : quoteIdentLit(pkColName))}}}) FROM {dbTableName}";
+                            command.CommandText = $"SELECT COUNT({{{((pkColName == null) || compositePk ? "*" : quoteIdentLit(pkColName))}}}) FROM {_tableIdent}";
                     
                             string joiner = orJoinConditions ? " OR " : " AND ";
                             string stringComparator = compareStringsWithLike ? " LIKE " : " = ";
@@ -1510,6 +1518,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             bool ignoreDuplicates = false,
                             bool insertPrimaryKey = false, IDbTransaction? transaction = null)
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
                             {{{getNonIdentityPkInit(pkColName, pkPropType)}}}
                             {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
@@ -1524,7 +1533,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     using IDbCommand command = dbConnection.CreateCommand();
                                     command.Transaction = _txn;
                                     command.CommandText = $"""
-                                        {insertLiteral} INTO {dbTableName} (
+                                        {insertLiteral} INTO {_tableIdent} (
                                             {{{string.Join(_comma_line_6, tableColInfo.Select(p => quoteIdent(p.name)))}}}
                                         ) VALUES (
                                             {{{string.Join(_comma_line_6, tableColInfo.Select(p => "$" + p.name))}}}
@@ -1549,7 +1558,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     using IDbCommand command = dbConnection.CreateCommand();
                                     command.Transaction = _txn;
                                     command.CommandText = $"""
-                                        {insertLiteral} INTO {dbTableName} {{{buildInsertColumnsAndValues(tableColInfo.Where(p => p.isIdentity == false))}}} {{{(pkIsIdentity ? " RETURNING " + quoteIdent(pkColName!) : string.Empty)}}};
+                                        {insertLiteral} INTO {_tableIdent} {{{buildInsertColumnsAndValues(tableColInfo.Where(p => p.isIdentity == false))}}} {{{(pkIsIdentity ? " RETURNING " + quoteIdent(pkColName!) : string.Empty)}}};
                                         """;
                     
                                     {{{string.Join(_line_4, getInsertCommandParamLines(true, pkIsIdentity ? pkColName : null, pkPropType, ignoreDupeProperty: "ignoreDuplicates"))}}}
@@ -1572,6 +1581,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             bool ignoreDuplicates = false,
                             bool insertPrimaryKey = false, IDbTransaction? transaction = null)
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
                             {{{getNonIdentityPkInit(pkColName, pkPropType)}}}
                             {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
@@ -1586,7 +1596,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                 if (insertPrimaryKey)
                                 {
                                     command.CommandText = $"""
-                                        {insertLiteral} INTO {dbTableName} (
+                                        {insertLiteral} INTO {_tableIdent} (
                                             {{{string.Join(_comma_line_6, tableColInfo.Where(p => !rawDefaultColumnNames.Contains(p.name)).Select(p => quoteIdent(p.name)))}}}
                                         ) VALUES (
                                             {{{string.Join(_comma_line_6, tableColInfo.Where(p => !rawDefaultColumnNames.Contains(p.name)).Select(p => "$" + p.name))}}}
@@ -1598,7 +1608,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                 else
                                 {
                                     command.CommandText = $"""
-                                        {insertLiteral} INTO {dbTableName} {{{buildInsertColumnsAndValues(tableColInfo.Where(p => (p.isIdentity == false) && !rawDefaultColumnNames.Contains(p.name)))}}} RETURNING {{{string.Join(", ", tableColInfo.Select(p => quoteIdent(p.name)))}}};
+                                        {insertLiteral} INTO {_tableIdent} {{{buildInsertColumnsAndValues(tableColInfo.Where(p => (p.isIdentity == false) && !rawDefaultColumnNames.Contains(p.name)))}}} RETURNING {{{string.Join(", ", tableColInfo.Select(p => quoteIdent(p.name)))}}};
                                         """;
 
                                     {{{string.Join(_line_5, getInsertCommandParamLines(true, null, pkPropType, createParameters: true, instantiateParameters: true, skipRawDefaults: true))}}}
@@ -1631,6 +1641,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             bool ignoreDuplicates = false,
                             bool insertPrimaryKey = false, IDbTransaction? transaction = null)
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
                             {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
                             string insertLiteral = ignoreDuplicates ? "INSERT OR IGNORE" : "INSERT";
@@ -1644,7 +1655,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     using IDbCommand command = dbConnection.CreateCommand();
                                     command.Transaction = _txn;
                                     command.CommandText = $"""
-                                        {insertLiteral} INTO {dbTableName} (
+                                        {insertLiteral} INTO {_tableIdent} (
                                             {{{string.Join(_comma_line_6, tableColInfo.Select(p => quoteIdent(p.name)))}}}
                                         ) VALUES (
                                             {{{string.Join(_comma_line_6, tableColInfo.Select(p => "$" + p.name))}}}
@@ -1676,7 +1687,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     using IDbCommand command = dbConnection.CreateCommand();
                                     command.Transaction = _txn;
                                     command.CommandText = $"""
-                                        {insertLiteral} INTO {dbTableName} {{{buildInsertColumnsAndValues(tableColInfo.Where(p => p.isIdentity == false))}}} {{{(pkIsIdentity ? " RETURNING " + quoteIdent(pkColName!) : string.Empty)}}};
+                                        {insertLiteral} INTO {_tableIdent} {{{buildInsertColumnsAndValues(tableColInfo.Where(p => p.isIdentity == false))}}} {{{(pkIsIdentity ? " RETURNING " + quoteIdent(pkColName!) : string.Empty)}}};
                                         """;
 
                                     {{{string.Join(_line_4, getInsertCommandParamLines(false, pkIsIdentity ? pkColName : null, pkPropType, createParameters: true, ignoreDupeProperty: "ignoreDuplicates"))}}}
@@ -1705,6 +1716,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             bool ignoreDuplicates = false,
                             bool insertPrimaryKey = false, IDbTransaction? transaction = null)
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
                             {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
                             string insertLiteral = ignoreDuplicates ? "INSERT OR IGNORE" : "INSERT";
@@ -1718,7 +1730,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     using IDbCommand command = dbConnection.CreateCommand();
                                     command.Transaction = _txn;
                                     command.CommandText = $"""
-                                        {insertLiteral} INTO {dbTableName} (
+                                        {insertLiteral} INTO {_tableIdent} (
                                             {{{string.Join(_comma_line_6, tableColInfo.Select(p => quoteIdent(p.name)))}}}
                                         ) VALUES (
                                             {{{string.Join(_comma_line_6, tableColInfo.Select(p => "$" + p.name))}}}
@@ -1750,7 +1762,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     using IDbCommand command = dbConnection.CreateCommand();
                                     command.Transaction = _txn;
                                     command.CommandText = $"""
-                                        {insertLiteral} INTO {dbTableName} {{{buildInsertColumnsAndValues(tableColInfo.Where(p => p.isIdentity == false))}}} {{{(pkIsIdentity ? " RETURNING " + quoteIdent(pkColName!) : string.Empty)}}};
+                                        {insertLiteral} INTO {_tableIdent} {{{buildInsertColumnsAndValues(tableColInfo.Where(p => p.isIdentity == false))}}} {{{(pkIsIdentity ? " RETURNING " + quoteIdent(pkColName!) : string.Empty)}}};
                                         """;
                     
                                     {{{string.Join(_line_4, getInsertCommandParamLines(false, pkIsIdentity ? pkColName : null, pkPropType, createParameters: true, ignoreDupeProperty: "ignoreDuplicates"))}}}
@@ -1781,6 +1793,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             string? dbTableName = null,
                             IDbTransaction? transaction = null)
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
                             {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
 
@@ -1854,7 +1867,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                 using IDbCommand command = dbConnection.CreateCommand();
                                 command.Transaction = _txn;
                                 command.CommandText = $"""
-                                    INSERT INTO {dbTableName} {{{buildInsertColumnsAndValues(tableColInfo.Where(p => !p.isIdentity))}}}
+                                    INSERT INTO {_tableIdent} {{{buildInsertColumnsAndValues(tableColInfo.Where(p => !p.isIdentity))}}}
                                     {_onConflict};
                                     """;
 
@@ -1872,6 +1885,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                         public static {{{className}}} Update(IDbConnection dbConnection, {{{className}}} value, string? dbTableName = null, IDbTransaction? transaction = null{{{throwOnZeroParam}}})
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
                             {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
                                         
@@ -1882,7 +1896,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                 using IDbCommand command = dbConnection.CreateCommand();
                                 command.Transaction = _txn;
                                 command.CommandText = $"""
-                                    UPDATE {dbTableName} SET
+                                    UPDATE {_tableIdent} SET
                                         {{{updateSetClause}}}
                                     WHERE
                                         {{{pkWhereClause}}}
@@ -1902,6 +1916,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                         public static {{{className}}}? UpdateReturning(IDbConnection dbConnection, {{{className}}} value, string? dbTableName = null, IDbTransaction? transaction = null)
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
                             {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
 
@@ -1912,7 +1927,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                 using IDbCommand command = dbConnection.CreateCommand();
                                 command.Transaction = _txn;
                                 command.CommandText = $"""
-                                    UPDATE {dbTableName} SET
+                                    UPDATE {_tableIdent} SET
                                         {{{updateSetClause}}}
                                     WHERE
                                         {{{pkWhereClause}}}
@@ -1943,6 +1958,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                         public static void Update(IDbConnection dbConnection, IEnumerable<{{{className}}}> values, string? dbTableName = null, IDbTransaction? transaction = null{{{throwOnZeroParam}}})
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
                             {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
                                                 
@@ -1953,7 +1969,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                 using IDbCommand command = dbConnection.CreateCommand();
                                 command.Transaction = _txn;
                                 command.CommandText = $"""
-                                    UPDATE {dbTableName} SET
+                                    UPDATE {_tableIdent} SET
                                         {{{updateSetClause}}}
                                     WHERE
                                         {{{pkWhereClause}}}
@@ -1996,6 +2012,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                         public static void Delete(IDbConnection dbConnection, {{{className}}} value, string? dbTableName = null, IDbTransaction? transaction = null{{{throwOnZeroParam}}})
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
                                         
                             bool _ownTxn = transaction is null;
@@ -2004,7 +2021,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             {
                                 using IDbCommand command = dbConnection.CreateCommand();
                                 command.Transaction = _txn;
-                                command.CommandText = $"""DELETE FROM {dbTableName} WHERE {{{pkWhereClause}}}""";
+                                command.CommandText = $"""DELETE FROM {_tableIdent} WHERE {{{pkWhereClause}}}""";
                     
                                 {{{string.Join(
                                 _line_3,
@@ -2029,6 +2046,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     
                         public static void Delete(IDbConnection dbConnection, IEnumerable<{{{className}}}> values, string? dbTableName = null, IDbTransaction? transaction = null{{{throwOnZeroParam}}})
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
                                                 
                             bool _ownTxn = transaction is null;
@@ -2037,7 +2055,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             {
                                 using IDbCommand command = dbConnection.CreateCommand();
                                 command.Transaction = _txn;
-                                command.CommandText = $"""DELETE FROM {dbTableName} WHERE {{{pkWhereClause}}}""";
+                                command.CommandText = $"""DELETE FROM {_tableIdent} WHERE {{{pkWhereClause}}}""";
                                         
                                 {{{string.Join(
                                 _line_3,
@@ -2079,6 +2097,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             bool compareStringsWithLike = false,
                             {{{string.Join(", ", getFnFilterParams(true, true))}}}, IDbTransaction? transaction = null)
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
                             string joiner = orJoinConditions ? " OR " : " AND ";
                             string stringComparator = compareStringsWithLike ? " LIKE " : " = ";
@@ -2090,7 +2109,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             {
                                 using IDbCommand command = dbConnection.CreateCommand();
                                 command.Transaction = _txn;
-                                command.CommandText = $"DELETE FROM {dbTableName}";
+                                command.CommandText = $"DELETE FROM {_tableIdent}";
                                         
                                 bool addedCondition = false;
                     
@@ -2370,10 +2389,11 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
             public static void LoadMaxKey(IDbConnection dbConnection, string? dbTableName = null, {{counterType}} defaultValue = 0)
             {
+                string _tableIdent = dbTableName is null ? "\"{{tableName}}\"" : dbTableName;
                 dbTableName ??= "{{tableName}}";
 
                 using IDbCommand command = dbConnection.CreateCommand();
-                command.CommandText = $"SELECT MAX({{quoteIdentLit(maxCol)}}) FROM {dbTableName}";
+                command.CommandText = $"SELECT MAX({{quoteIdentLit(maxCol)}}) FROM {_tableIdent}";
 
                 object? result = command.ExecuteScalar();
                 if (result is {{counterType}} value)
@@ -2393,10 +2413,11 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
             public static {{counterType}}? SelectMaxKey(IDbConnection dbConnection, string? dbTableName = null, {{counterType}} defaultValue = 0)
             {
+                string _tableIdent = dbTableName is null ? "\"{{tableName}}\"" : dbTableName;
                 dbTableName ??= "{{tableName}}";
 
                 using IDbCommand command = dbConnection.CreateCommand();
-                command.CommandText = $"SELECT MAX({{quoteIdentLit(maxCol)}}) FROM {dbTableName}";
+                command.CommandText = $"SELECT MAX({{quoteIdentLit(maxCol)}}) FROM {_tableIdent}";
 
                 object? result = command.ExecuteScalar();
                 if (result is {{counterType}} value)
@@ -2521,7 +2542,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     yield return "    using (IDbCommand command = dbConnection.CreateCommand())";
                     yield return "    {";
                     yield return "    if (transaction != null) command.Transaction = transaction;";
-                    yield return "    command.CommandText = $\"SELECT EXISTS(SELECT 1 FROM {dbTableName})\";";
+                    yield return "    command.CommandText = $\"SELECT EXISTS(SELECT 1 FROM {_tableIdent})\";";
                     yield return "    if (global::System.Convert.ToInt64(command.ExecuteScalar()) != 0L)";
                     yield return "    {";
                     yield return $"        throw new global::System.InvalidOperationException($\"EnsureSchema cannot add column '{name}' to populated table '{{dbTableName}}' because {migrationBlockReason}. Migrate this table manually (for example, recreate it and copy the rows) before calling EnsureSchema.\");";
@@ -2532,7 +2553,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 yield return "    {";
                 yield return "    if (transaction != null) command.Transaction = transaction;";
                 yield return "    command.CommandText = $\"\"\"";
-                yield return $"        ALTER TABLE {{dbTableName}} ADD COLUMN {addColumnDdl}";
+                yield return $"        ALTER TABLE {{_tableIdent}} ADD COLUMN {addColumnDdl}";
                 yield return "        \"\"\";";
                 yield return "    command.ExecuteNonQuery();";
                 yield return "    }";
@@ -3055,11 +3076,12 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                      
                          public static bool CreateTable(IDbConnection dbConnection, string? dbTableName = null)
                          {
+                             string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                              dbTableName ??= "{{{tableName}}}";
 
                             using IDbCommand command = dbConnection.CreateCommand();
                             command.CommandText = $"""
-                                CREATE VIRTUAL TABLE IF NOT EXISTS {dbTableName} using fts5 (
+                                CREATE VIRTUAL TABLE IF NOT EXISTS {_tableIdent} using fts5 (
                                     {{{string.Join(_comma_line_4, createColLines)}}}{{{(tokenizer != null ? $",\n                tokenize='{tokenizer}'" : "")}}}
                                 )
                                 """;
@@ -3071,10 +3093,11 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                         public static bool DropTable(IDbConnection dbConnection, string? dbTableName = null)
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
                     
                             using IDbCommand command = dbConnection.CreateCommand();
-                            command.CommandText = $"DROP TABLE IF EXISTS {dbTableName}";
+                            command.CommandText = $"DROP TABLE IF EXISTS {_tableIdent}";
                     
                             command.ExecuteNonQuery();
                     
@@ -3088,7 +3111,9 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             bool sanitizeText = false,
                             IDbTransaction? transaction = null)
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
+                            string _sourceIdent = sourceTableName is null ? "\"{{{sourceTableName}}}\"" : sourceTableName;
                             sourceTableName ??= "{{{sourceTableName}}}";
                             int rowsAffected = 0;
 
@@ -3097,8 +3122,8 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                 using IDbCommand popCommand = dbConnection.CreateCommand();
                                 if (transaction != null) popCommand.Transaction = transaction;
                                 popCommand.CommandText = $"""
-                                    INSERT INTO {dbTableName} ({{{string.Join(", ", tableColInfo.Select(c => quoteIdent(c.name)))}}})
-                                    SELECT {{{string.Join(", ", tableColInfo.Select(c => quoteIdent(c.name)))}}} FROM {sourceTableName}
+                                    INSERT INTO {_tableIdent} ({{{string.Join(", ", tableColInfo.Select(c => quoteIdent(c.name)))}}})
+                                    SELECT {{{string.Join(", ", tableColInfo.Select(c => quoteIdent(c.name)))}}} FROM {_sourceIdent}
                                     """;
                                 rowsAffected = popCommand.ExecuteNonQuery();
 
@@ -3112,7 +3137,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                 using IDbCommand readCommand = dbConnection.CreateCommand();
                                 readCommand.Transaction = _txn;
                                 readCommand.CommandText = $"""
-                                    SELECT {{{string.Join(", ", tableColInfo.Select(c => quoteIdent(c.name)))}}} FROM {sourceTableName}
+                                    SELECT {{{string.Join(", ", tableColInfo.Select(c => quoteIdent(c.name)))}}} FROM {_sourceIdent}
                                     """;
 
                                 using (IDataReader reader = readCommand.ExecuteReader())
@@ -3120,7 +3145,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                 using IDbCommand command = dbConnection.CreateCommand();
                                 command.Transaction = _txn;
                                 command.CommandText = $"""
-                                    INSERT INTO {dbTableName} ({{{string.Join(", ", tableColInfo.Select(c => quoteIdent(c.name)))}}})
+                                    INSERT INTO {_tableIdent} ({{{string.Join(", ", tableColInfo.Select(c => quoteIdent(c.name)))}}})
                                     VALUES ({{{string.Join(", ", tableColInfo.Select(c => $"${c.name}"))}}})
                                     """;
 
@@ -3155,6 +3180,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             string[]? orderByProperties = null,
                             string? orderByDirection = null, IDbTransaction? transaction = null, string[]? orderByDirections = null)
                         {
+                             string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                              dbTableName ??= "{{{tableName}}}";
  
                              List<{{{className}}}> results = new();
@@ -3162,7 +3188,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
  
                              using IDbCommand command = dbConnection.CreateCommand();
                              if (transaction != null) command.Transaction = transaction;
-                             command.CommandText = $"SELECT {{{string.Join(", ", tableColInfo.Select(p => quoteIdentLit(p.name)))}}} FROM {dbTableName}";
+                             command.CommandText = $"SELECT {{{string.Join(", ", tableColInfo.Select(p => quoteIdentLit(p.name)))}}} FROM {_tableIdent}";
                     
                             bool addedCondition = false;
                             int index = 0;
@@ -3170,7 +3196,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             {
                                 if (!string.IsNullOrWhiteSpace(mt))
                                 {
-                                    command.CommandText += (addedCondition ? " AND " : " WHERE ") + $" {dbTableName} MATCH $matchTerm{index}";
+                                    command.CommandText += (addedCondition ? " AND " : " WHERE ") + $" {_tableIdent} MATCH $matchTerm{index}";
                                     addedCondition = true;
                                     IDbDataParameter matchParam = command.CreateParameter();
                                     matchParam.ParameterName = $"$matchTerm{index}";
@@ -3205,11 +3231,12 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             string? dbTableName = null,
                             IDbTransaction? transaction = null)
                         {
+                            string _tableIdent = dbTableName is null ? "\"{{{tableName}}}\"" : dbTableName;
                             dbTableName ??= "{{{tableName}}}";
                     
                             using IDbCommand command = dbConnection.CreateCommand();
                             if (transaction != null) command.Transaction = transaction;
-                            command.CommandText = $"SELECT COUNT(*) FROM {dbTableName}";
+                            command.CommandText = $"SELECT COUNT(*) FROM {_tableIdent}";
                     
                             bool addedCondition = false;
                             int index = 0;
@@ -3217,7 +3244,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             {
                                 if (!string.IsNullOrWhiteSpace(mt))
                                 {
-                                    command.CommandText += (addedCondition ? " AND " : " WHERE ") + $" {dbTableName} MATCH $matchTerm{index}";
+                                    command.CommandText += (addedCondition ? " AND " : " WHERE ") + $" {_tableIdent} MATCH $matchTerm{index}";
                                     addedCondition = true;
                                     IDbDataParameter matchParam = command.CreateParameter();
                                     matchParam.ParameterName = $"$matchTerm{index}";

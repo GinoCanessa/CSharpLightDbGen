@@ -415,3 +415,15 @@ public partial class KeylessLog
 
     public int Severity { get; set; }
 }
+
+// L4: reserved-word TABLE name. "Order" is a SQL keyword, so the compile-time default table name
+// must be quoted at every bare-identifier SQL site (CREATE/SELECT/INSERT/UPDATE/DELETE) for the
+// generated DDL/DML to be valid.
+[LdgSQLiteTable("Order")]
+public partial class ReservedTableEntity
+{
+    [LdgSQLiteKey]
+    public int ReservedId { get; set; }
+
+    public string ReservedLabel { get; set; } = string.Empty;
+}

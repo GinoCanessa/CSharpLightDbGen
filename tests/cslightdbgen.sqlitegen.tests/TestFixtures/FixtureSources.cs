@@ -483,6 +483,23 @@ public partial class ReservedWordEntity
 }
 """;
 
+    // L4: reserved-word TABLE name. "Order" is a SQL keyword; the compile-time default table name
+    // must be quoted at every bare-identifier SQL site so the emitted DDL/DML is valid.
+    public const string ReservedWordTableFixture = """
+using CsLightDbGen.SQLiteGenerator;
+
+namespace CsLightDbGen.SQLiteGenerator;
+
+[LdgSQLiteTable("Order")]
+public partial class ReservedTableEntity
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+
+    public string Name { get; set; } = string.Empty;
+}
+""";
+
     // B1: identity-only model (single auto-increment key, no other columns). The default INSERT has
     // no columns to supply, so it must emit "DEFAULT VALUES" rather than an invalid "() VALUES ()".
     public const string IdentityOnlyFixture = """

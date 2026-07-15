@@ -455,7 +455,7 @@ public class LightSQLiteGenerator_GenerationTests
         var run = GeneratorTestHost.Run(source);
 
         string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MigRequiredEntity.Table.g.cs");
-        generated.ShouldContain("SELECT EXISTS(SELECT 1 FROM {dbTableName})");
+        generated.ShouldContain("SELECT EXISTS(SELECT 1 FROM {_tableIdent})");
         generated.ShouldContain("EnsureSchema cannot add column 'MigRequiredLabel'");
         run.Errors.ShouldBeEmpty();
         run.CompilationErrors.ShouldBeEmpty();
@@ -519,7 +519,7 @@ public class LightSQLiteGenerator_GenerationTests
 
         string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MigSafeEntity.Table.g.cs");
         generated.ShouldNotContain("EnsureSchema cannot add column");
-        generated.ShouldNotContain("SELECT EXISTS(SELECT 1 FROM {dbTableName})");
+        generated.ShouldNotContain("SELECT EXISTS(SELECT 1 FROM {_tableIdent})");
         run.Errors.ShouldBeEmpty();
         run.CompilationErrors.ShouldBeEmpty();
     }

@@ -46,10 +46,10 @@ public class LightSQLiteGenerator_EnsureSchemaTests
     }
 
     [Theory]
-    [InlineData("ALTER TABLE {dbTableName} ADD COLUMN \"RetryCount\" INTEGER DEFAULT 0 NOT NULL")]
-    [InlineData("ALTER TABLE {dbTableName} ADD COLUMN \"Status\" TEXT DEFAULT 'queued' NOT NULL")]
-    [InlineData("ALTER TABLE {dbTableName} ADD COLUMN \"IsActive\" INTEGER DEFAULT 1 NOT NULL")]
-    [InlineData("ALTER TABLE {dbTableName} ADD COLUMN \"EscapedName\" TEXT DEFAULT 'O''Brien' NOT NULL")]
+    [InlineData("ALTER TABLE {_tableIdent} ADD COLUMN \"RetryCount\" INTEGER DEFAULT 0 NOT NULL")]
+    [InlineData("ALTER TABLE {_tableIdent} ADD COLUMN \"Status\" TEXT DEFAULT 'queued' NOT NULL")]
+    [InlineData("ALTER TABLE {_tableIdent} ADD COLUMN \"IsActive\" INTEGER DEFAULT 1 NOT NULL")]
+    [InlineData("ALTER TABLE {_tableIdent} ADD COLUMN \"EscapedName\" TEXT DEFAULT 'O''Brien' NOT NULL")]
     public void EnsureSchema_AddsConstantDefaultColumnsWithNotNull(string fragment)
     {
         string source = GetDefaultsSource();

@@ -41,4 +41,40 @@ public class LightSQLiteGenerator_ReservedWordTests
 
         run.CompilationErrors.ShouldBeEmpty();
     }
+
+    private static string GetReservedWordTableSource()
+    {
+        GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.ReservedWordTableFixture);
+        return GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "ReservedTableEntity.Table.g.cs");
+    }
+
+    [Fact]
+    public void ReservedWordTableName_QuotesCompileTimeDefault()
+    {
+        string source = GetReservedWordTableSource();
+
+        // Each generated method derives a quoted identifier from the ORIGINAL parameter nullness:
+        // a null (compile-time default) becomes the quoted "Order"; a caller override is used raw.
+        source.ShouldContain("dbTableName is null ? \"\\\"Order\\\"\" : dbTableName");
+    }
+
+    [Fact]
+    public void ReservedWordTableName_UsesQuotedIdentAtBareSites()
+    {
+        string source = GetReservedWordTableSource();
+
+        // Bare-identifier SQL sites reference the resolved _tableIdent instead of the raw name.
+        source.ShouldContain("CREATE TABLE IF NOT EXISTS {_tableIdent} (");
+        source.ShouldContain("DROP TABLE IF EXISTS {_tableIdent}");
+        source.ShouldContain("FROM {_tableIdent}");
+        source.ShouldContain("INTO {_tableIdent}");
+    }
+
+    [Fact]
+    public void ReservedWordTableName_ProducesNoCompilationErrors()
+    {
+        GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.ReservedWordTableFixture);
+
+        run.CompilationErrors.ShouldBeEmpty();
+    }
 }
