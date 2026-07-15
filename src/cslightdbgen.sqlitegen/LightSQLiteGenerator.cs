@@ -762,17 +762,6 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
             if (isPrimaryKey)
             {
-                if (pkColName == null || pkColName != propName)
-                {
-                    GeneratorDiagnostics.Report(
-                        context,
-                        GeneratorDiagnostics.UnsupportedModelShape,
-                        model.Location?.ToLocation(),
-                        className,
-                        $"has a primary key property '{propName}' whose resolved key column name could not be established");
-                    return;
-                }
-
                 pkColIndex = tableColInfo.Count;
             }
 
