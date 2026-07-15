@@ -113,7 +113,33 @@ public partial class ManifestEntry
 }
 """;
 
-    public const string CompositePrimaryKeyFixture = """
+        public const string ForeignKeyConstantResolutionFixture = """
+    using CsLightDbGen.SQLiteGenerator;
+
+    namespace CsLightDbGen.SQLiteGenerator;
+
+    public class Users { }
+
+    [LdgSQLiteTable("fk_resolve")]
+    public partial class FkResolve
+    {
+        private const string AccountsTable = "accounts";
+
+        [LdgSQLiteKey]
+        public int Id { get; set; }
+
+        [LdgSQLiteForeignKey(nameof(Users), "Id")]
+        public int UserId { get; set; }
+
+        [LdgSQLiteForeignKey(AccountsTable, "Id")]
+        public int AccountId { get; set; }
+
+        [LdgSQLiteForeignKey(@"Orders", "Id")]
+        public int OrderId { get; set; }
+    }
+    """;
+
+        public const string CompositePrimaryKeyFixture = """
 using CsLightDbGen.SQLiteGenerator;
 
 namespace CsLightDbGen.SQLiteGenerator;

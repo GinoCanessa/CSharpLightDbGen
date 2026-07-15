@@ -18,6 +18,12 @@ public class LightSQLiteGenerator_ForeignKeyTests
         return GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "ManifestEntry.Table.g.cs");
     }
 
+    private static string GetFkResolveSource()
+    {
+        GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.ForeignKeyConstantResolutionFixture);
+        return GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "FkResolve.Table.g.cs");
+    }
+
     [Fact]
     public void ForeignKey_EmitsOnDeleteAndOnUpdateActions()
     {
@@ -47,6 +53,38 @@ public class LightSQLiteGenerator_ForeignKeyTests
     public void CompositeForeignKey_ProducesNoGeneratorErrors()
     {
         GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.CompositeForeignKeyFixture);
+
+        run.Errors.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ForeignKey_NameofReferenceTable_ResolvesToConstantValue()
+    {
+        string source = GetFkResolveSource();
+
+        source.ShouldContain("FOREIGN KEY (\"UserId\") REFERENCES \"Users\"(\"Id\")");
+    }
+
+    [Fact]
+    public void ForeignKey_ConstStringReferenceTable_ResolvesToConstantValue()
+    {
+        string source = GetFkResolveSource();
+
+        source.ShouldContain("FOREIGN KEY (\"AccountId\") REFERENCES \"accounts\"(\"Id\")");
+    }
+
+    [Fact]
+    public void ForeignKey_VerbatimStringReferenceTable_ResolvesToConstantValue()
+    {
+        string source = GetFkResolveSource();
+
+        source.ShouldContain("FOREIGN KEY (\"OrderId\") REFERENCES \"Orders\"(\"Id\")");
+    }
+
+    [Fact]
+    public void ForeignKey_ConstantResolutionFixture_ProducesNoGeneratorErrors()
+    {
+        GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.ForeignKeyConstantResolutionFixture);
 
         run.Errors.ShouldBeEmpty();
     }

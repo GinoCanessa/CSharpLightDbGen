@@ -601,82 +601,75 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             }
         }
 
-        // check for foreign key property information
+        // Foreign-key metadata is read from the property's resolved attribute data (constant
+        // VALUES), not attribute syntax text: a reference table/column given as nameof(...), a
+        // const string, or a verbatim @"..." string must resolve to the same identifier the
+        // composite-FK path produces, not to its source spelling.
         string? foreignTable = null;
         string? foreignColumn = null;
         string? foreignModelType = null;
         string fkActions = string.Empty;
-        foreach (AttributeListSyntax als in pds?.AttributeLists ?? default)
+        foreach (AttributeData fkAttr in propSymbol.GetAttributes()
+            .Where(a => a.AttributeClass?.Name == GeneratorAttributes._ldgSQLiteForeignKey))
         {
-            foreach (AttributeSyntax a in als.Attributes.Where(a => a.Name.ToString() == GeneratorAttributes._ldgSQLiteForeignKey))
+            string? fkOnDelete = null;
+            string? fkOnUpdate = null;
+
+            // Positional constructor arguments, in LdgSQLiteForeignKey ctor order:
+            // (referenceTable, referenceColumn, modelTypeName, onDelete, onUpdate).
+            ImmutableArray<TypedConstant> ctorArgs = fkAttr.ConstructorArguments;
+            if ((ctorArgs.Length > 0) && (ctorArgs[0].Value is string ctorTable))
             {
-                string? fkOnDelete = null;
-                string? fkOnUpdate = null;
-                int fkPositional = 0;
+                foreignTable = ctorTable;
+            }
+            if ((ctorArgs.Length > 1) && (ctorArgs[1].Value is string ctorColumn))
+            {
+                foreignColumn = ctorColumn;
+            }
+            if ((ctorArgs.Length > 2) && (ctorArgs[2].Value is string ctorModel))
+            {
+                foreignModelType = ctorModel;
+            }
+            if (ctorArgs.Length > 3)
+            {
+                fkOnDelete = fkActionFromValue(ctorArgs[3].Value);
+            }
+            if (ctorArgs.Length > 4)
+            {
+                fkOnUpdate = fkActionFromValue(ctorArgs[4].Value);
+            }
 
-                foreach (AttributeArgumentSyntax arg in a.ArgumentList?.Arguments ?? [])
+            // Named-property initializers (ReferenceTable = ..., OnDelete = ..., etc.).
+            foreach (KeyValuePair<string, TypedConstant> named in fkAttr.NamedArguments)
+            {
+                switch (named.Key)
                 {
-                    string? argName = arg.NameEquals?.Name.ToString() ?? arg.NameColon?.Name.ToString();
-
-                    // Positional constructor arguments carry no name; map them to the
-                    // LdgSQLiteForeignKey constructor order:
-                    // (referenceTable, referenceColumn, modelTypeName, onDelete, onUpdate).
-                    if (argName == null)
-                    {
-                        switch (fkPositional)
-                        {
-                            case 0:
-                                foreignTable = arg.Expression.ToString();
-                                break;
-                            case 1:
-                                foreignColumn = arg.Expression.ToString();
-                                break;
-                            case 2:
-                                foreignModelType = arg.Expression.ToString();
-                                break;
-                            case 3:
-                                fkOnDelete = fkActionFromExpr(arg.Expression.ToString());
-                                break;
-                            case 4:
-                                fkOnUpdate = fkActionFromExpr(arg.Expression.ToString());
-                                break;
-                        }
-
-                        fkPositional++;
-                        continue;
-                    }
-
-                    if (argName == "ReferenceTable")
-                    {
-                        foreignTable = arg.Expression.ToString();
-                    }
-                    else if (argName == "ReferenceColumn")
-                    {
-                        foreignColumn = arg.Expression.ToString();
-                    }
-                    else if (argName == "ModelTypeName")
-                    {
-                        foreignModelType = arg.Expression.ToString();
-                    }
-                    else if ((argName == "OnDelete") || (argName == "onDelete"))
-                    {
-                        fkOnDelete = fkActionFromExpr(arg.Expression.ToString());
-                    }
-                    else if ((argName == "OnUpdate") || (argName == "onUpdate"))
-                    {
-                        fkOnUpdate = fkActionFromExpr(arg.Expression.ToString());
-                    }
+                    case "ReferenceTable":
+                        foreignTable = named.Value.Value as string ?? foreignTable;
+                        break;
+                    case "ReferenceColumn":
+                        foreignColumn = named.Value.Value as string ?? foreignColumn;
+                        break;
+                    case "ModelTypeName":
+                        foreignModelType = named.Value.Value as string ?? foreignModelType;
+                        break;
+                    case "OnDelete":
+                        fkOnDelete = fkActionFromValue(named.Value.Value);
+                        break;
+                    case "OnUpdate":
+                        fkOnUpdate = fkActionFromValue(named.Value.Value);
+                        break;
                 }
+            }
 
-                if ((fkOnDelete != null) && (fkOnDelete != "NO ACTION"))
-                {
-                    fkActions += $" ON DELETE {fkOnDelete}";
-                }
+            if ((fkOnDelete != null) && (fkOnDelete != "NO ACTION"))
+            {
+                fkActions += $" ON DELETE {fkOnDelete}";
+            }
 
-                if ((fkOnUpdate != null) && (fkOnUpdate != "NO ACTION"))
-                {
-                    fkActions += $" ON UPDATE {fkOnUpdate}";
-                }
+            if ((fkOnUpdate != null) && (fkOnUpdate != "NO ACTION"))
+            {
+                fkActions += $" ON UPDATE {fkOnUpdate}";
             }
         }
 
@@ -874,7 +867,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
             if ((foreignTable != null) && (foreignColumn != null))
             {
-                createFKLines.Add($"FOREIGN KEY ({quoteIdent(propName)}) REFERENCES {foreignTable}({foreignColumn}){fkActions}");
+                createFKLines.Add($"FOREIGN KEY ({quoteIdent(propName)}) REFERENCES {quoteIdent(foreignTable)}({quoteIdent(foreignColumn)}){fkActions}");
             }
             else if ((foreignTable != null) || (foreignColumn != null))
             {
@@ -3327,29 +3320,6 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                 }
             }
         }
-    }
-
-    /// <summary>
-    /// Maps an <c>LdgSQLiteFkAction</c> enum member name to its SQLite referential-action SQL.
-    /// </summary>
-    private static string fkActionSql(string memberName) => memberName switch
-    {
-        "Restrict" => "RESTRICT",
-        "SetNull" => "SET NULL",
-        "SetDefault" => "SET DEFAULT",
-        "Cascade" => "CASCADE",
-        _ => "NO ACTION",
-    };
-
-    /// <summary>
-    /// Resolves an <c>LdgSQLiteFkAction</c> referential action from attribute-argument syntax
-    /// text such as <c>Cascade</c>, <c>LdgSQLiteFkAction.Cascade</c>, or a fully-qualified name.
-    /// </summary>
-    private static string fkActionFromExpr(string exprText)
-    {
-        int dot = exprText.LastIndexOf('.');
-        string member = (dot >= 0 ? exprText.Substring(dot + 1) : exprText).Trim();
-        return fkActionSql(member);
     }
 
     /// <summary>
