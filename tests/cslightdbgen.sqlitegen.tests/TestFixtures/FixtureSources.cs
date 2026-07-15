@@ -289,4 +289,131 @@ public partial class FtsTokenizerEntity
     public string? RawHtml { get; set; }
 }
 """;
+
+    // A2: single non-int integer identity key (long). Exercises the long key counter
+    // (_indexValue/GetIndex/LoadMaxKey/SelectMaxKey typed as long), which previously emitted
+    // `_indexValue = null` (CS0037) in LoadMaxKey.
+    public const string LongKeyFixture = """
+using CsLightDbGen.SQLiteGenerator;
+
+namespace CsLightDbGen.SQLiteGenerator;
+
+[LdgSQLiteTable("long_key_table")]
+public partial class LongKeyEntity
+{
+    [LdgSQLiteKey]
+    public long Id { get; set; }
+
+    public string Name { get; set; } = string.Empty;
+}
+""";
+
+    // A2: single Guid natural key. The counter machinery must be omitted (a Guid cannot back an
+    // int counter) and Guid auto-generation must fire via getNonIdentityPkInit.
+    public const string GuidKeyFixture = """
+using System;
+using CsLightDbGen.SQLiteGenerator;
+
+namespace CsLightDbGen.SQLiteGenerator;
+
+[LdgSQLiteTable("guid_key_table")]
+public partial class GuidKeyEntity
+{
+    [LdgSQLiteKey]
+    public Guid Id { get; set; }
+
+    public string Name { get; set; } = string.Empty;
+}
+""";
+
+    // A2: single string natural key. The counter machinery must be omitted; the caller supplies
+    // the key value.
+    public const string StringKeyFixture = """
+using CsLightDbGen.SQLiteGenerator;
+
+namespace CsLightDbGen.SQLiteGenerator;
+
+[LdgSQLiteTable("string_key_table")]
+public partial class StringKeyEntity
+{
+    [LdgSQLiteKey]
+    public string Id { get; set; } = string.Empty;
+
+    public string Name { get; set; } = string.Empty;
+}
+""";
+
+    // A2: every supported non-nullable scalar column type. Exercises the corrected read directives
+    // (byte[]/char[]/TimeSpan/decimal and the sbyte/ushort/uint/ulong RHS casts).
+    public const string ScalarTypesFixture = """
+using System;
+using CsLightDbGen.SQLiteGenerator;
+
+namespace CsLightDbGen.SQLiteGenerator;
+
+[LdgSQLiteTable("scalar_types")]
+public partial class ScalarTypesEntity
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+
+    public bool Flag { get; set; }
+    public byte Byte { get; set; }
+    public sbyte SByte { get; set; }
+    public short Short { get; set; }
+    public ushort UShort { get; set; }
+    public uint UInt { get; set; }
+    public long Long { get; set; }
+    public ulong ULong { get; set; }
+    public float Float { get; set; }
+    public double Double { get; set; }
+    public decimal Decimal { get; set; }
+    public char Char { get; set; }
+    public char[] Chars { get; set; } = [];
+    public byte[] Bytes { get; set; } = [];
+    public string Text { get; set; } = string.Empty;
+    public DateTime Timestamp { get; set; }
+    public DateTimeOffset TimestampOffset { get; set; }
+    public TimeSpan Duration { get; set; }
+    public Guid Identifier { get; set; }
+    public Uri Link { get; set; } = new Uri("https://example.com");
+}
+""";
+
+    // A2: every supported nullable scalar column type. Exercises the corrected nullable read
+    // directives.
+    public const string NullableScalarTypesFixture = """
+using System;
+using CsLightDbGen.SQLiteGenerator;
+
+namespace CsLightDbGen.SQLiteGenerator;
+
+[LdgSQLiteTable("nullable_scalar_types")]
+public partial class NullableScalarTypesEntity
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+
+    public bool? Flag { get; set; }
+    public byte? Byte { get; set; }
+    public sbyte? SByte { get; set; }
+    public short? Short { get; set; }
+    public ushort? UShort { get; set; }
+    public uint? UInt { get; set; }
+    public long? Long { get; set; }
+    public ulong? ULong { get; set; }
+    public float? Float { get; set; }
+    public double? Double { get; set; }
+    public decimal? Decimal { get; set; }
+    public char? Char { get; set; }
+    public char[]? Chars { get; set; }
+    public byte[]? Bytes { get; set; }
+    public string? Text { get; set; }
+    public DateTime? Timestamp { get; set; }
+    public DateTimeOffset? TimestampOffset { get; set; }
+    public TimeSpan? Duration { get; set; }
+    public Guid? Identifier { get; set; }
+    public Uri? Link { get; set; }
+}
+""";
 }

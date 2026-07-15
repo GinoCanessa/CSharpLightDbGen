@@ -248,6 +248,43 @@ public class LightSQLiteGenerator_GenerationTests
         run.Errors.ShouldBeEmpty();
     }
 
+    [Fact]
+    public void UnmappedValueType_EmitsCSLDG001()
+    {
+        // A2 / Decision 7: a value-type property with no scalar mapping (a custom struct) must be
+        // reported as CSLDG001 and skipped, NOT routed into the reference-type-only JSON helpers
+        // (which would emit non-compiling `ParseFromDb<Money>` where T : class).
+        const string source = """
+            using CsLightDbGen.SQLiteGenerator;
+
+            namespace CsLightDbGen.SQLiteGenerator;
+
+            public struct Money
+            {
+                public long Cents { get; set; }
+            }
+
+            [LdgSQLiteTable("unmapped_value")]
+            public partial class UnmappedValueEntity
+            {
+                [LdgSQLiteKey]
+                public int Id { get; set; }
+
+                public Money Price { get; set; }
+            }
+            """;
+
+        var run = GeneratorTestHost.Run(source);
+
+        run.Errors.ShouldContain(static d => d.Id == "CSLDG001");
+
+        // The offending column is skipped, not misrouted to the reference-type-only JSON helpers,
+        // and the remaining table source still compiles cleanly.
+        string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "UnmappedValueEntity.Table.g.cs");
+        generated.ShouldNotContain("Price");
+        run.CompilationErrors.ShouldBeEmpty();
+    }
+
     public static IEnumerable<object[]> AllFixtureNames()
     {
         return typeof(FixtureSources)

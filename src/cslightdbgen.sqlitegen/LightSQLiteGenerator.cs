@@ -522,6 +522,15 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
             bool useJson = !memberIsEnum && !_sqliteTypeMap.ContainsKey(propTypeName);
 
+            // A value type with no scalar mapping cannot be persisted: the JSON helpers are
+            // reference-type-only (where T : class), so routing it there would emit code that does
+            // not compile. Report CSLDG001 and skip the column instead of emitting broken output.
+            if (useJson && propSymbol.Type.IsValueType)
+            {
+                GeneratorDiagnostics.Report(context, GeneratorDiagnostics.UnmappedValueTypeColumn, propSymbol, propName, className, propTypeName);
+                continue;
+            }
+
             // isMultiSelect enables the "{Name}Values" IEnumerable<T> IN-clause parameter on
             // filter/delete methods. Triggers: explicit [LdgSQLiteMultiSelect] attribute, a
             // primary key ([LdgSQLiteKey]), or the legacy name-ends-with-"Key" heuristic.
@@ -961,10 +970,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                          {
                              {{{string.Join(_comma_line_5, tableColInfo.Select(c => $"\"{c.name}\""))}}}
                          };
-                         {{{(pkPropType != "long" ? "internal static int _indexValue = 0;" : string.Empty)}}}
-                         {{{(pkPropType != "long" ? "public static int GetIndex() => Interlocked.Increment(ref _indexValue);" : string.Empty)}}}
-                         {{{(pkPropType == "long" ? "internal static long _indexValue = 0;" : string.Empty)}}}
-                         {{{(pkPropType == "long" ? "public static long GetIndex() => Interlocked.Increment(ref _indexValue);" : string.Empty)}}}
+                         {{{getKeyIndexMembers()}}}
 
                          private static string[]? ResolveOrderByProperties(string[]? orderByProperties, string[]? orderByDirections, string? orderByDirection)
                          {
@@ -1013,7 +1019,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                             {{{string.Join(_line_2, getIndexLines())}}}
                     
-                            LoadMaxKey(dbConnection, dbTableName);
+                            {{{(pkIsIdentity ? "LoadMaxKey(dbConnection, dbTableName);" : string.Empty)}}}
 
                             return true;
                         }
@@ -1070,54 +1076,9 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                             {{{string.Join(_line_2, getEnsureUniqueConstraintIndexLines())}}}
 
-                            LoadMaxKey(dbConnection, dbTableName);
+                            {{{(pkIsIdentity ? "LoadMaxKey(dbConnection, dbTableName);" : string.Empty)}}}
 
                             return true;
-                        }
-
-                        public static void LoadMaxKey(IDbConnection dbConnection, string? dbTableName = null, int defaultValue = 0)
-                        {
-                            dbTableName ??= "{{{tableName}}}";
-                    
-                            IDbCommand command = dbConnection.CreateCommand();
-                            command.CommandText = $"SELECT MAX({{{((pkColName == null) || compositePk ? "ROWID" : pkColName)}}}) FROM {dbTableName}";
-
-                            try
-                            {
-                                object? result = command.ExecuteScalar();
-                                if (result is {{{((pkColName == null) || compositePk ? "int" : pkPropType)}}} value)
-                                {
-                                    _indexValue = value;
-                                }
-                                else if (result is long l)
-                                {
-                                    _indexValue = {{{((pkColName == null) || compositePk || (pkPropType == "int") ? "Convert.ToInt32(l)" : "null")}}};
-                                }
-                            }
-                            catch (Exception)
-                            {
-                                _indexValue = defaultValue;
-                            }
-                        }
-
-                        public static {{{((pkColName == null) || compositePk ? "int" : pkPropType)}}}? SelectMaxKey(IDbConnection dbConnection, string? dbTableName = null, int defaultValue = 0)
-                        {
-                            dbTableName ??= "{{{tableName}}}";
-                    
-                            IDbCommand command = dbConnection.CreateCommand();
-                            command.CommandText = $"SELECT MAX({{{((pkColName == null) || compositePk ? "ROWID" : pkColName)}}}) FROM {dbTableName}";
-
-                            object? result = command.ExecuteScalar();
-                            if (result is {{{((pkColName == null) || compositePk ? "int" : pkPropType)}}} value)
-                            {
-                                return value;
-                            }
-                            else if (result is long l)
-                            {
-                                return {{{((pkColName == null) || compositePk || (pkPropType == "int") ? "Convert.ToInt32(l)" : "null")}}};
-                            }
-
-                            return null;
                         }
                     
                         public static {{{className}}}? SelectSingle(
@@ -1289,7 +1250,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             }
                             else if (result is long l)
                             {
-                                return {{{((pkColName == null) || compositePk || (pkPropType == "int") ? "Convert.ToInt32(l)" : "null")}}};
+                                return Convert.ToInt32(l);
                             }
 
                             return -1;
@@ -2178,11 +2139,78 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             _ => " UNIQUE PRIMARY KEY NOT NULL",
         };
 
-        string getNonIdentityPkInit(string? pkColName, string? pkTypeName) => pkTypeName switch
+        string getNonIdentityPkInit(string? pkColName, string? pkTypeName) =>
+            pkTypeName?.Equals("Guid", StringComparison.OrdinalIgnoreCase) == true
+                ? $"value.{pkColName} = Guid.NewGuid();"
+                : string.Empty;
+
+        // Emits the auto-increment key counter (_indexValue/GetIndex) plus LoadMaxKey/SelectMaxKey,
+        // but only for a single integer identity key. Natural keys (Guid/string), composite keys,
+        // and keyless models are inserted explicitly and never auto-assigned, so the counter
+        // machinery is omitted entirely (avoids CS0037/CS0029 on non-integer key types).
+        string getKeyIndexMembers()
         {
-            "guid" => $"value.{pkColName} = Guid.NewGuid();",
-            _ => string.Empty,
-        };
+            if (!pkIsIdentity)
+            {
+                return string.Empty;
+            }
+
+            string counterType = pkPropType!;
+            string maxCol = pkColName!;
+
+            // SQLite returns Int64 for INTEGER columns, so an int counter must also narrow the
+            // long result; a long counter takes the value directly and needs no extra branch.
+            string loadElse = counterType == "int"
+                ? "else if (result is long l) { _indexValue = Convert.ToInt32(l); }"
+                : string.Empty;
+            string selectElse = counterType == "int"
+                ? "else if (result is long l) { return Convert.ToInt32(l); }"
+                : string.Empty;
+
+            return $$"""
+            internal static {{counterType}} _indexValue = 0;
+            public static {{counterType}} GetIndex() => Interlocked.Increment(ref _indexValue);
+
+            public static void LoadMaxKey(IDbConnection dbConnection, string? dbTableName = null, {{counterType}} defaultValue = 0)
+            {
+                dbTableName ??= "{{tableName}}";
+
+                IDbCommand command = dbConnection.CreateCommand();
+                command.CommandText = $"SELECT MAX({{maxCol}}) FROM {dbTableName}";
+
+                try
+                {
+                    object? result = command.ExecuteScalar();
+                    if (result is {{counterType}} value)
+                    {
+                        _indexValue = value;
+                    }
+                    {{loadElse}}
+                }
+                catch (Exception)
+                {
+                    _indexValue = defaultValue;
+                }
+            }
+
+            public static {{counterType}}? SelectMaxKey(IDbConnection dbConnection, string? dbTableName = null, {{counterType}} defaultValue = 0)
+            {
+                dbTableName ??= "{{tableName}}";
+
+                IDbCommand command = dbConnection.CreateCommand();
+                command.CommandText = $"SELECT MAX({{maxCol}}) FROM {dbTableName}";
+
+                object? result = command.ExecuteScalar();
+                if (result is {{counterType}} value)
+                {
+                    return value;
+                }
+                {{selectElse}}
+
+                return null;
+            }
+            """;
+        }
 
         IEnumerable<string> getIndexLines()
         {
@@ -2773,6 +2801,14 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
             bool useJson = !memberIsEnum && !_sqliteTypeMap.ContainsKey(propTypeName);
 
+            // A value type with no scalar mapping cannot be persisted (JSON helpers are
+            // reference-type-only). Report CSLDG001 and skip the column.
+            if (useJson && propSymbol.Type.IsValueType)
+            {
+                GeneratorDiagnostics.Report(context, GeneratorDiagnostics.UnmappedValueTypeColumn, propSymbol, propName, className, propTypeName);
+                continue;
+            }
+
             // add our column line
             if (isUnindexed)
             {
@@ -3338,12 +3374,12 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
     {
         { "bool", "{0} = {1}.GetBoolean({2})" },
         { "byte", "{0} = {1}.GetByte({2})" },
-        { "byte[]", "{0} = {1}.GetBytes({2})" },
+        { "byte[]", "{0} = (byte[]){1}.GetValue({2})" },
         { "char", "{0} = {1}.GetChar({2})" },
-        { "char[]", "{0} = {1}.GetChars({2})" },
+        { "char[]", "{0} = {1}.GetString({2}).ToCharArray()" },
         { "DateTime", "{0} = {1}.GetDateTime({2})" },
         { "DateTimeOffset", "{0} = new DateTimeOffset({1}.GetDateTime({2}))" },
-        { "Decimal", "{0} = {1}.GetDecimal({2})" },
+        { "decimal", "{0} = {1}.GetDecimal({2})" },
         { "double", "{0} = {1}.GetDouble({2})" },
         { "enum", "{0} = Enum.Parse<{3}>({1}.GetString({2}))" },
         { "float", "{0} = {1}.GetFloat({2})" },
@@ -3351,12 +3387,12 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         { "short", "{0} = {1}.GetInt16({2})" },
         { "int", "{0} = {1}.GetInt32({2})" },
         { "long", "{0} = {1}.GetInt64({2})" },
-        { "sbyte", "(sbyte){0} = {1}.GetByte({2})" },
+        { "sbyte", "{0} = (sbyte){1}.GetByte({2})" },
         { "string", "{0} = {1}.GetString({2})" },
-        { "TimeSpan", "{0} = {1}.GetTimeSpan({2})" },
-        { "ushort", "(ushort){0} = {1}.GetInt16({2})" },
-        { "uint", "(uint){0} = {1}.GetInt32({2})" },
-        { "ulong", "(ulong){0} = {1}.GetInt64({2})" },
+        { "TimeSpan", "{0} = TimeSpan.Parse({1}.GetString({2}))" },
+        { "ushort", "{0} = (ushort){1}.GetInt16({2})" },
+        { "uint", "{0} = (uint){1}.GetInt32({2})" },
+        { "ulong", "{0} = (ulong){1}.GetInt64({2})" },
         { "Uri", "{0} = new Uri({1}.GetString({2}))" },
         { "JSON", "{0} = ParseFromDb<{3}>({1}.GetString({2})) ?? new {3}()" },
         //{ "JSON", "{0} = ParseFromDb({1}.GetString({2}), typeof({3})) ?? new {3}()" },
@@ -3368,12 +3404,12 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
     {
         { "bool", "{0} = {1}.IsDBNull({2}) ? null : {1}.GetBoolean({2})" },
         { "byte", "{0} = {1}.IsDBNull({2}) ? null : {1}.GetByte({2})" },
-        { "byte[]", "{0} = {1}.IsDBNull({2}) ? null : {1}.GetBytes({2})" },
+        { "byte[]", "{0} = {1}.IsDBNull({2}) ? null : (byte[]){1}.GetValue({2})" },
         { "char", "{0} = {1}.IsDBNull({2}) ? null : {1}.GetChar({2})" },
-        { "char[]", "{0} = {1}.IsDBNull({2}) ? null : {1}.GetChars({2})" },
+        { "char[]", "{0} = {1}.IsDBNull({2}) ? null : {1}.GetString({2}).ToCharArray()" },
         { "DateTime", "{0} = {1}.IsDBNull({2}) ? null : {1}.GetDateTime({2})" },
         { "DateTimeOffset", "{0} = {1}.IsDBNull({2}) ? null : new DateTimeOffset({1}.GetDateTime({2}))" },
-        { "Decimal", "{0} = {1}.IsDBNull({2}) ? null : {1}.GetDecimal({2})" },
+        { "decimal", "{0} = {1}.IsDBNull({2}) ? null : {1}.GetDecimal({2})" },
         { "double", "{0} = {1}.IsDBNull({2}) ? null : {1}.GetDouble({2})" },
         { "enum", "{0} = {1}.IsDBNull({2}) ? null : Enum.Parse<{3}>({1}.GetString({2}))" },
         { "float", "{0} = {1}.IsDBNull({2}) ? null : {1}.GetFloat({2})" },
@@ -3381,12 +3417,12 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         { "short", "{0} = {1}.IsDBNull({2}) ? null : {1}.GetInt16({2})" },
         { "int", "{0} = {1}.IsDBNull({2}) ? null : {1}.GetInt32({2})" },
         { "long", "{0} = {1}.IsDBNull({2}) ? null : {1}.GetInt64({2})" },
-        { "sbyte", "(sbyte){0} = {1}.IsDBNull({2}) ? null : {1}.GetByte({2})" },
+        { "sbyte", "{0} = {1}.IsDBNull({2}) ? null : (sbyte){1}.GetByte({2})" },
         { "string", "{0} = {1}.IsDBNull({2}) ? null : {1}.GetString({2})" },
-        { "TimeSpan", "{0} = {1}.IsDBNull({2}) ? null : {1}.GetTimeSpan({2})" },
-        { "ushort", "(ushort){0} = {1}.IsDBNull({2}) ? null : {1}.GetInt16({2})" },
-        { "uint", "(uint){0} = {1}.IsDBNull({2}) ? null : {1}.GetInt32({2})" },
-        { "ulong", "(ulong){0} = {1}.IsDBNull({2}) ? null : {1}.GetInt64({2})" },
+        { "TimeSpan", "{0} = {1}.IsDBNull({2}) ? null : TimeSpan.Parse({1}.GetString({2}))" },
+        { "ushort", "{0} = {1}.IsDBNull({2}) ? null : (ushort){1}.GetInt16({2})" },
+        { "uint", "{0} = {1}.IsDBNull({2}) ? null : (uint){1}.GetInt32({2})" },
+        { "ulong", "{0} = {1}.IsDBNull({2}) ? null : (ulong){1}.GetInt64({2})" },
         { "Uri", "{0} = {1}.IsDBNull({2}) ? null : new Uri({1}.GetString({2}))" },
         { "JSON", "{0} = {1}.IsDBNull({2}) ? null : ParseFromDb<{3}>({1}.GetString({2}))" },
         //{ "JSON", "{0} = {1}.IsDBNull({2}) ? null : ParseFromDb({1}.GetString({2}), typeof({3}))" },
@@ -3404,7 +3440,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         { "char[]", "TEXT" },
         { "DateTime", "TEXT" },
         { "DateTimeOffset", "TEXT" },
-        { "Decimal", "TEXT" },
+        { "decimal", "TEXT" },
         { "double", "REAL" },
         { "enum", "TEXT" },
         { "float", "REAL" },

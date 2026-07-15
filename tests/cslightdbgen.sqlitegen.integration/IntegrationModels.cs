@@ -1,3 +1,4 @@
+using System;
 using CsLightDbGen.SQLiteGenerator;
 
 namespace cslightdbgen.sqlitegen.integration.Models;
@@ -148,4 +149,52 @@ public partial class ArticleSearchPorter
 
     [LdgSQLiteFtsUnindexed]
     public string? RawHtml { get; set; }
+}
+
+// A2: single non-int integer identity key (long). Verifies the long key counter round-trips.
+[LdgSQLiteTable("long_keys")]
+public partial class LongKeyEntity
+{
+    [LdgSQLiteKey]
+    public long Id { get; set; }
+
+    public string LongName { get; set; } = string.Empty;
+}
+
+// A2: single Guid natural key. Verifies Guid auto-generation on insert and round-trip.
+[LdgSQLiteTable("guid_keys")]
+public partial class GuidKeyEntity
+{
+    [LdgSQLiteKey]
+    public Guid Id { get; set; }
+
+    public string GuidName { get; set; } = string.Empty;
+}
+
+// A2: single string natural key. Verifies caller-supplied string key round-trip.
+[LdgSQLiteTable("string_keys")]
+public partial class StringKeyEntity
+{
+    [LdgSQLiteKey]
+    public string Id { get; set; } = string.Empty;
+
+    public string StringName { get; set; } = string.Empty;
+}
+
+// A2: value-type / binary scalar columns whose read directives were corrected for IDataReader.
+[LdgSQLiteTable("scalar_samples")]
+public partial class ScalarSample
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+
+    public string Label { get; set; } = string.Empty;
+
+    public decimal Price { get; set; }
+
+    public decimal? OptionalPrice { get; set; }
+
+    public byte[] Payload { get; set; } = [];
+
+    public TimeSpan Duration { get; set; }
 }

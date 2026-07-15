@@ -716,6 +716,146 @@ public class LightSQLiteGenerator_IntegrationTests
         Customer.DropTable(db).ShouldBeTrue();
     }
 
+    [Fact]
+    public void PrimaryKey_Long_RoundTrip()
+    {
+        using var db = OpenInMemory();
+        LongKeyEntity.CreateTable(db).ShouldBeTrue();
+
+        LongKeyEntity.SelectMaxKey(db).ShouldBeNull();
+
+        var entity = new LongKeyEntity { LongName = "long-key" };
+        long id = LongKeyEntity.Insert(db, entity);
+
+        id.ShouldBeGreaterThan(0L);
+        entity.Id.ShouldBe(id);
+
+        var loaded = LongKeyEntity.SelectSingle(db, LongName: "long-key");
+        loaded.ShouldNotBeNull();
+        loaded!.Id.ShouldBe(id);
+        loaded.LongName.ShouldBe("long-key");
+
+        LongKeyEntity.SelectMaxKey(db).ShouldBe(id);
+    }
+
+    [Fact]
+    public void PrimaryKey_Guid_RoundTrip()
+    {
+        using var db = OpenInMemory();
+        GuidKeyEntity.CreateTable(db).ShouldBeTrue();
+
+        var entity = new GuidKeyEntity { GuidName = "guid-key" };
+        Guid id = GuidKeyEntity.Insert(db, entity);
+
+        id.ShouldNotBe(Guid.Empty);
+        entity.Id.ShouldBe(id);
+
+        var loaded = GuidKeyEntity.SelectSingle(db, GuidName: "guid-key");
+        loaded.ShouldNotBeNull();
+        loaded!.Id.ShouldBe(id);
+    }
+
+    [Fact]
+    public void PrimaryKey_String_RoundTrip()
+    {
+        using var db = OpenInMemory();
+        StringKeyEntity.CreateTable(db).ShouldBeTrue();
+
+        var entity = new StringKeyEntity { Id = "sk-1", StringName = "string-key" };
+        string id = StringKeyEntity.Insert(db, entity);
+
+        id.ShouldBe("sk-1");
+
+        var loaded = StringKeyEntity.SelectSingle(db, StringName: "string-key");
+        loaded.ShouldNotBeNull();
+        loaded!.Id.ShouldBe("sk-1");
+    }
+
+    [Fact]
+    public void Column_Decimal_RoundTrip()
+    {
+        using var db = OpenInMemory();
+        ScalarSample.CreateTable(db).ShouldBeTrue();
+
+        var sample = new ScalarSample
+        {
+            Label = "decimal-row",
+            Price = 1234.56m,
+            OptionalPrice = 78.90m,
+            Payload = [],
+            Duration = TimeSpan.Zero
+        };
+        ScalarSample.Insert(db, sample);
+
+        var loaded = ScalarSample.SelectSingle(db, Label: "decimal-row");
+        loaded.ShouldNotBeNull();
+        loaded!.Price.ShouldBe(1234.56m);
+        loaded.OptionalPrice.ShouldBe(78.90m);
+    }
+
+    [Fact]
+    public void Column_Decimal_NullRoundTrip()
+    {
+        using var db = OpenInMemory();
+        ScalarSample.CreateTable(db).ShouldBeTrue();
+
+        var sample = new ScalarSample
+        {
+            Label = "null-decimal",
+            Price = 0m,
+            OptionalPrice = null,
+            Payload = [],
+            Duration = TimeSpan.Zero
+        };
+        ScalarSample.Insert(db, sample);
+
+        var loaded = ScalarSample.SelectSingle(db, Label: "null-decimal");
+        loaded.ShouldNotBeNull();
+        loaded!.OptionalPrice.ShouldBeNull();
+    }
+
+    [Fact]
+    public void Column_ByteArray_RoundTrip()
+    {
+        using var db = OpenInMemory();
+        ScalarSample.CreateTable(db).ShouldBeTrue();
+
+        byte[] payload = [0x01, 0x02, 0x03, 0xFF, 0x00, 0x7F];
+        var sample = new ScalarSample
+        {
+            Label = "blob-row",
+            Price = 0m,
+            Payload = payload,
+            Duration = TimeSpan.Zero
+        };
+        ScalarSample.Insert(db, sample);
+
+        var loaded = ScalarSample.SelectSingle(db, Label: "blob-row");
+        loaded.ShouldNotBeNull();
+        loaded!.Payload.ShouldBe(payload);
+    }
+
+    [Fact]
+    public void Column_TimeSpan_RoundTrip()
+    {
+        using var db = OpenInMemory();
+        ScalarSample.CreateTable(db).ShouldBeTrue();
+
+        var duration = new TimeSpan(1, 2, 3, 4);
+        var sample = new ScalarSample
+        {
+            Label = "timespan-row",
+            Price = 0m,
+            Payload = [],
+            Duration = duration
+        };
+        ScalarSample.Insert(db, sample);
+
+        var loaded = ScalarSample.SelectSingle(db, Label: "timespan-row");
+        loaded.ShouldNotBeNull();
+        loaded!.Duration.ShouldBe(duration);
+    }
+
     private static SqliteConnection OpenInMemory()
     {
         var connection = new SqliteConnection("Data Source=:memory:");
