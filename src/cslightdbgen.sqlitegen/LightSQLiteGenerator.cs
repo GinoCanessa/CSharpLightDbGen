@@ -831,7 +831,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             // add our column line
             createColLines.Add(
                 $"{quoteIdent(propName)} {getSqlType(propTypeName, memberIsEnum, useJson, memberIsNonScalar)}" +
-                $"{((isPrimaryKey && !compositePk) ? getPkDirective(pkPropType) : string.Empty)}" +
+                $"{((isPrimaryKey && !compositePk) ? " UNIQUE PRIMARY KEY NOT NULL" : string.Empty)}" +
                 $"{(isUnique ? " UNIQUE" : string.Empty)}" +
                 $"{((nullable || (isPrimaryKey && !compositePk)) ? string.Empty : " NOT NULL")}" +
                 $"{defaultClause}");
@@ -2282,14 +2282,6 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             _ => "class",
         };
 
-        string getPkDirective(string? pkTypeName) => pkTypeName switch
-        {
-            // note that in SQLite, an INTEGER PRIMARY KEY uses the internal ROWID automatically, so no IDENTITY declaration is necessary
-            "int" => " UNIQUE PRIMARY KEY NOT NULL",            // " IDENTITY(1,1) PRIMARY KEY",
-            "long" => " UNIQUE PRIMARY KEY NOT NULL",           // " IDENTITY(1,1) PRIMARY KEY",
-            _ => " UNIQUE PRIMARY KEY NOT NULL",
-        };
-
         string getNonIdentityPkInit(string? pkColName, string? pkTypeName) =>
             pkTypeName?.Equals("Guid", StringComparison.OrdinalIgnoreCase) == true
                 ? $"value.{pkColName} = Guid.NewGuid();"
@@ -2663,10 +2655,10 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     yield return $"        for (int vIndex = 0; vIndex < {rec.name}ValuesList.Count; vIndex++)";
                     yield return "        {";
                     yield return $$$"""            string vParamName = "{{{rec.name}}}Param" + vIndex.ToString();""";
-                    yield return "            vParamNames.Add(\"@\" + vParamName);";
+                    yield return "            vParamNames.Add(\"$\" + vParamName);";
                     yield return string.Empty;
                     yield return "            IDbDataParameter vp = command.CreateParameter();";
-                    yield return "            vp.ParameterName = vParamName;";
+                    yield return "            vp.ParameterName = \"$\" + vParamName;";
                     yield return $"            vp.Value = {rec.name}ValuesList[vIndex];";
                     yield return "            command.Parameters.Add(vp);";
                     yield return "        }";
@@ -2700,10 +2692,10 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     yield return $"        for (int vIndex = 0; vIndex < {rec.name}NotInValuesList.Count; vIndex++)";
                     yield return "        {";
                     yield return $$$"""            string vParamName = "{{{rec.name}}}NotInParam" + vIndex.ToString();""";
-                    yield return "            vParamNames.Add(\"@\" + vParamName);";
+                    yield return "            vParamNames.Add(\"$\" + vParamName);";
                     yield return string.Empty;
                     yield return "            IDbDataParameter vp = command.CreateParameter();";
-                    yield return "            vp.ParameterName = vParamName;";
+                    yield return "            vp.ParameterName = \"$\" + vParamName;";
                     yield return $"            vp.Value = {rec.name}NotInValuesList[vIndex];";
                     yield return "            command.Parameters.Add(vp);";
                     yield return "        }";
@@ -3546,9 +3538,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         { "ulong", "{0} = (ulong){1}.GetInt64({2})" },
         { "Uri", "{0} = new Uri({1}.GetString({2}))" },
         { "JSON", "{0} = ParseFromDb<{3}>({1}.GetString({2})) ?? new {3}()" },
-        //{ "JSON", "{0} = ParseFromDb({1}.GetString({2}), typeof({3})) ?? new {3}()" },
         { "JSON[]", "{0} = ParseArrayFromDb<{3}>({1}.GetString({2})) ?? new List<{3}>()" },
-        //{ "JSON[]", "{0} = ParseArrayFromDb({1}.GetString({2}), typeof({3})) ?? new List<{3}>()" },
     };
 
     private static Dictionary<string, string> _sqliteNullableReadDirectives = new()
@@ -3576,9 +3566,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         { "ulong", "{0} = {1}.IsDBNull({2}) ? null : (ulong){1}.GetInt64({2})" },
         { "Uri", "{0} = {1}.IsDBNull({2}) ? null : new Uri({1}.GetString({2}))" },
         { "JSON", "{0} = {1}.IsDBNull({2}) ? null : ParseFromDb<{3}>({1}.GetString({2}))" },
-        //{ "JSON", "{0} = {1}.IsDBNull({2}) ? null : ParseFromDb({1}.GetString({2}), typeof({3}))" },
         { "JSON[]", "{0} = {1}.IsDBNull({2}) ? null : ParseArrayFromDb<{3}>({1}.GetString({2}))" },
-        //{ "JSON[]", "{0} = {1}.IsDBNull({2}) ? null : ParseArrayFromDb({1}.GetString({2}), typeof({3}))" },
     };
 
     // Mapping pulled from https://learn.microsoft.com/en-us/dotnet/standard/data/sqlite/types
