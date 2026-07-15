@@ -15,7 +15,7 @@ public class LightSQLiteGenerator_OrderingTests
         string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntity.Table.g.cs");
 
         source.ShouldContain("ResolveOrderByProperties(string[]? orderByProperties, string[]? orderByDirections, string? orderByDirection)");
-        source.ShouldContain("orderByProperty + (descending ? \" DESC\" : \" ASC\")");
+        source.ShouldContain("quoteRuntimeIdent(orderByProperty) + (descending ? \" DESC\" : \" ASC\")");
 
         source.ShouldNotContain("command.CommandText += $\" DESC\"");
         source.ShouldNotContain("command.CommandText += $\" ASC\"");
@@ -28,7 +28,7 @@ public class LightSQLiteGenerator_OrderingTests
         string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntity.Table.g.cs");
 
         source.ShouldContain("for (int orderByIndex = 0; orderByIndex < orderByProperties.Length; orderByIndex++)");
-        source.ShouldContain("!SQLiteColumnNames.Contains(orderByProperty)");
+        source.ShouldContain("!_sqliteColumnNames.Contains(orderByProperty)");
         source.ShouldContain("orderByDirections[orderByIndex]");
     }
 
@@ -50,7 +50,7 @@ public class LightSQLiteGenerator_OrderingTests
         string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "FtsEntity.Fts.g.cs");
 
         source.ShouldContain("string[]? orderByDirections = null");
-        source.ShouldContain("orderByProperty + (descending ? \" DESC\" : \" ASC\")");
+        source.ShouldContain("quoteRuntimeIdent(orderByProperty) + (descending ? \" DESC\" : \" ASC\")");
         source.ShouldNotContain("command.CommandText += $\" DESC\"");
     }
 

@@ -23,7 +23,7 @@ public class LightSQLiteGenerator_CompositeKeyTests
     {
         string source = GetCompositeSource();
 
-        source.ShouldContain("PRIMARY KEY (UserId, WebsiteId)");
+        source.ShouldContain("PRIMARY KEY (\"UserId\", \"WebsiteId\")");
     }
 
     [Fact]
@@ -31,10 +31,10 @@ public class LightSQLiteGenerator_CompositeKeyTests
     {
         string source = GetCompositeSource();
 
-        source.ShouldContain("UserId INTEGER NOT NULL");
-        source.ShouldContain("WebsiteId INTEGER NOT NULL");
-        source.ShouldNotContain("UserId INTEGER UNIQUE PRIMARY KEY");
-        source.ShouldNotContain("WebsiteId INTEGER UNIQUE PRIMARY KEY");
+        source.ShouldContain("\"UserId\" INTEGER NOT NULL");
+        source.ShouldContain("\"WebsiteId\" INTEGER NOT NULL");
+        source.ShouldNotContain("\"UserId\" INTEGER UNIQUE PRIMARY KEY");
+        source.ShouldNotContain("\"WebsiteId\" INTEGER UNIQUE PRIMARY KEY");
     }
 
     [Fact]
@@ -72,7 +72,7 @@ public class LightSQLiteGenerator_CompositeKeyTests
     {
         string source = GetCompositeSource();
 
-        source.ShouldContain("UserId = $UserId AND WebsiteId = $WebsiteId");
+        source.ShouldContain("\"UserId\" = $UserId AND \"WebsiteId\" = $WebsiteId");
     }
 
     [Fact]
@@ -80,9 +80,9 @@ public class LightSQLiteGenerator_CompositeKeyTests
     {
         string source = GetBasicSource();
 
-        source.ShouldContain("Id INTEGER UNIQUE PRIMARY KEY NOT NULL");
+        source.ShouldContain("\"Id\" INTEGER UNIQUE PRIMARY KEY NOT NULL");
         source.ShouldContain("SelectDict");
-        source.ShouldContain("RETURNING Id");
-        source.ShouldNotContain("PRIMARY KEY (Id)");
+        source.ShouldContain("RETURNING \"Id\"");
+        source.ShouldNotContain("PRIMARY KEY (\"Id\")");
     }
 }

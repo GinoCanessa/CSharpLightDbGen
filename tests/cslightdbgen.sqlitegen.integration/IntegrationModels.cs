@@ -244,3 +244,15 @@ public partial class MigRawEntity
     [LdgSQLiteDefault("CURRENT_TIMESTAMP", raw: true)]
     public string MigRawStamp { get; set; } = string.Empty;
 }
+
+[LdgSQLiteTable("reserved_words")]
+public partial class ReservedWordEntity
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+
+    [LdgSQLiteMultiSelect]
+    public string Group { get; set; } = string.Empty;
+
+    public int Table { get; set; }
+}

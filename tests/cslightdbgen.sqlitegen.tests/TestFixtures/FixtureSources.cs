@@ -416,4 +416,22 @@ public partial class NullableScalarTypesEntity
     public Uri? Link { get; set; }
 }
 """;
+
+    public const string ReservedWordFixture = """
+using CsLightDbGen.SQLiteGenerator;
+
+namespace CsLightDbGen.SQLiteGenerator;
+
+[LdgSQLiteTable("reserved_words")]
+public partial class ReservedWordEntity
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+
+    [LdgSQLiteMultiSelect]
+    public string Group { get; set; } = string.Empty;
+
+    public int Table { get; set; }
+}
+""";
 }

@@ -15,10 +15,10 @@ public class LightSQLiteGenerator_FtsTests
 
         source.ShouldContain("CREATE VIRTUAL TABLE IF NOT EXISTS");
         source.ShouldContain("using fts5");
-        source.ShouldContain("RawHtml UNINDEXED");
+        source.ShouldContain("\"RawHtml\" UNINDEXED");
         source.ShouldContain("MATCH $matchTerm{index}");
         source.ShouldContain("matchParam.ParameterName = $\"$matchTerm{index}\"");
-        source.ShouldContain("public static HashSet<string> SQLiteColumnNames");
+        source.ShouldContain("public static IReadOnlyCollection<string> SQLiteColumnNames");
         source.ShouldContain("\"Title\"");
         source.ShouldContain("\"RawHtml\"");
         source.ShouldContain("ResolveOrderByProperties");

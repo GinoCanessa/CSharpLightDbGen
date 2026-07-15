@@ -30,7 +30,7 @@ public class LightSQLiteGenerator_FilterParityTests
         source.ShouldContain("IEnumerable<int>? ParentKeyValues = null");
         source.ShouldContain("string ParentKeyOperator");
         source.ShouldContain("getNumericOperator(ParentKeyOperator)");
-        source.ShouldContain("ParentKey IN ");
+        source.ShouldContain("\\\"ParentKey\\\" IN ");
         source.ShouldContain("vParamNames");
     }
 

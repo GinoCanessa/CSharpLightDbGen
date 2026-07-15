@@ -23,7 +23,7 @@ public class LightSQLiteGenerator_UniqueIndexTests
     {
         string source = GetPackageSource();
 
-        source.ShouldContain("UNIQUE (Provider, Subject)");
+        source.ShouldContain("UNIQUE (\"Provider\", \"Subject\")");
     }
 
     [Fact]
@@ -66,7 +66,7 @@ public class LightSQLiteGenerator_UniqueIndexTests
     {
         string source = GetBasicSource();
 
-        source.ShouldContain("UniqueCode TEXT UNIQUE");
+        source.ShouldContain("\"UniqueCode\" TEXT UNIQUE");
     }
 
     [Fact]

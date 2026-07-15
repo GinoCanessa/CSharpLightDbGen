@@ -13,10 +13,10 @@ public class LightSQLiteGenerator_DefaultsTests
     }
 
     [Theory]
-    [InlineData("RetryCount INTEGER NOT NULL DEFAULT 0")]
-    [InlineData("Status TEXT NOT NULL DEFAULT 'queued'")]
-    [InlineData("CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")]
-    [InlineData("IsActive INTEGER NOT NULL DEFAULT 1")]
+    [InlineData("\"RetryCount\" INTEGER NOT NULL DEFAULT 0")]
+    [InlineData("\"Status\" TEXT NOT NULL DEFAULT 'queued'")]
+    [InlineData("\"CreatedAt\" TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")]
+    [InlineData("\"IsActive\" INTEGER NOT NULL DEFAULT 1")]
     public void CreateTable_EmitsDefaultClause(string columnDefinition)
     {
         string source = GetDefaultsEntitySource();
@@ -29,7 +29,7 @@ public class LightSQLiteGenerator_DefaultsTests
     {
         string source = GetDefaultsEntitySource();
 
-        source.ShouldContain("EscapedName TEXT NOT NULL DEFAULT 'O''Brien'");
+        source.ShouldContain("\"EscapedName\" TEXT NOT NULL DEFAULT 'O''Brien'");
     }
 
     [Fact]
@@ -37,8 +37,8 @@ public class LightSQLiteGenerator_DefaultsTests
     {
         string source = GetDefaultsEntitySource();
 
-        source.ShouldContain("NoDefault TEXT NOT NULL");
-        source.ShouldNotContain("NoDefault TEXT NOT NULL DEFAULT");
+        source.ShouldContain("\"NoDefault\" TEXT NOT NULL");
+        source.ShouldNotContain("\"NoDefault\" TEXT NOT NULL DEFAULT");
     }
 
     [Fact]

@@ -23,7 +23,7 @@ public class LightSQLiteGenerator_ForeignKeyTests
     {
         string source = GetFkChildSource();
 
-        source.ShouldContain("FOREIGN KEY (ParentId) REFERENCES \"fk_parents\"(\"Id\") ON DELETE CASCADE ON UPDATE SET NULL");
+        source.ShouldContain("FOREIGN KEY (\"ParentId\") REFERENCES \"fk_parents\"(\"Id\") ON DELETE CASCADE ON UPDATE SET NULL");
     }
 
     [Fact]
@@ -31,8 +31,8 @@ public class LightSQLiteGenerator_ForeignKeyTests
     {
         string source = GetFkChildSource();
 
-        source.ShouldContain("FOREIGN KEY (OwnerId) REFERENCES \"fk_owners\"(\"Id\")");
-        source.ShouldNotContain("FOREIGN KEY (OwnerId) REFERENCES \"fk_owners\"(\"Id\") ON");
+        source.ShouldContain("FOREIGN KEY (\"OwnerId\") REFERENCES \"fk_owners\"(\"Id\")");
+        source.ShouldNotContain("FOREIGN KEY (\"OwnerId\") REFERENCES \"fk_owners\"(\"Id\") ON");
     }
 
     [Fact]
@@ -40,7 +40,7 @@ public class LightSQLiteGenerator_ForeignKeyTests
     {
         string source = GetManifestEntrySource();
 
-        source.ShouldContain("FOREIGN KEY (TaskId, ManifestGeneration) REFERENCES task_manifests (TaskId, Generation) ON DELETE CASCADE");
+        source.ShouldContain("FOREIGN KEY (\"TaskId\", \"ManifestGeneration\") REFERENCES \"task_manifests\" (\"TaskId\", \"Generation\") ON DELETE CASCADE");
     }
 
     [Fact]

@@ -13,7 +13,7 @@ public class LightSQLiteGenerator_MultiSelectTests
         var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MultiSelectTarget.Table.g.cs");
 
         source.ShouldContain("IEnumerable<string>? SlugValues = null");
-        source.ShouldContain("Slug IN ");
+        source.ShouldContain("\\\"Slug\\\" IN ");
     }
 
     [Fact]
@@ -23,7 +23,7 @@ public class LightSQLiteGenerator_MultiSelectTests
         string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MultiSelectTarget.Table.g.cs");
 
         source.ShouldContain("IEnumerable<string>? SlugNotInValues = null");
-        source.ShouldContain("Slug NOT IN ");
+        source.ShouldContain("\\\"Slug\\\" NOT IN ");
     }
 
     [Fact]
@@ -54,7 +54,7 @@ public class LightSQLiteGenerator_MultiSelectTests
         var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MultiSelectTarget.Table.g.cs");
 
         source.ShouldContain("IEnumerable<int>? IdValues = null");
-        source.ShouldContain("Id IN ");
+        source.ShouldContain("\\\"Id\\\" IN ");
     }
 
     [Fact]
@@ -64,7 +64,7 @@ public class LightSQLiteGenerator_MultiSelectTests
         var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntity.Table.g.cs");
 
         source.ShouldContain("IEnumerable<int>? ParentKeyValues = null");
-        source.ShouldContain("ParentKey IN ");
+        source.ShouldContain("\\\"ParentKey\\\" IN ");
     }
 
     [Fact]

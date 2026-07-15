@@ -44,7 +44,7 @@ public class LightSQLiteGenerator_ReturningTests
         string source = GetBasicSource();
 
         // RETURNING lists every column so the model can be fully hydrated.
-        source.ShouldContain("RETURNING Id, Name, ParentKey");
+        source.ShouldContain("RETURNING \"Id\", \"Name\", \"ParentKey\"");
         // Hydration assigns straight back onto the passed instance.
         source.ShouldContain("value.Id = reader.GetInt32(0);");
         source.ShouldContain("value.Name = reader.GetString(1);");

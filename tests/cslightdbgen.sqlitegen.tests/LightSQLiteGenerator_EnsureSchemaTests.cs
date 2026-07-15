@@ -46,10 +46,10 @@ public class LightSQLiteGenerator_EnsureSchemaTests
     }
 
     [Theory]
-    [InlineData("ALTER TABLE {dbTableName} ADD COLUMN RetryCount INTEGER DEFAULT 0 NOT NULL")]
-    [InlineData("ALTER TABLE {dbTableName} ADD COLUMN Status TEXT DEFAULT 'queued' NOT NULL")]
-    [InlineData("ALTER TABLE {dbTableName} ADD COLUMN IsActive INTEGER DEFAULT 1 NOT NULL")]
-    [InlineData("ALTER TABLE {dbTableName} ADD COLUMN EscapedName TEXT DEFAULT 'O''Brien' NOT NULL")]
+    [InlineData("ALTER TABLE {dbTableName} ADD COLUMN \"RetryCount\" INTEGER DEFAULT 0 NOT NULL")]
+    [InlineData("ALTER TABLE {dbTableName} ADD COLUMN \"Status\" TEXT DEFAULT 'queued' NOT NULL")]
+    [InlineData("ALTER TABLE {dbTableName} ADD COLUMN \"IsActive\" INTEGER DEFAULT 1 NOT NULL")]
+    [InlineData("ALTER TABLE {dbTableName} ADD COLUMN \"EscapedName\" TEXT DEFAULT 'O''Brien' NOT NULL")]
     public void EnsureSchema_AddsConstantDefaultColumnsWithNotNull(string fragment)
     {
         string source = GetDefaultsSource();
@@ -64,9 +64,9 @@ public class LightSQLiteGenerator_EnsureSchemaTests
 
         // A raw (expression) default is not a permitted ADD COLUMN default in SQLite,
         // so the column is added with neither the default nor NOT NULL.
-        source.ShouldContain("ADD COLUMN CreatedAt TEXT");
-        source.ShouldNotContain("ADD COLUMN CreatedAt TEXT DEFAULT");
-        source.ShouldNotContain("ADD COLUMN CreatedAt TEXT NOT NULL");
+        source.ShouldContain("ADD COLUMN \"CreatedAt\" TEXT");
+        source.ShouldNotContain("ADD COLUMN \"CreatedAt\" TEXT DEFAULT");
+        source.ShouldNotContain("ADD COLUMN \"CreatedAt\" TEXT NOT NULL");
     }
 
     [Fact]
@@ -74,8 +74,8 @@ public class LightSQLiteGenerator_EnsureSchemaTests
     {
         string source = GetDefaultsSource();
 
-        source.ShouldContain("ADD COLUMN NoDefault TEXT");
-        source.ShouldNotContain("ADD COLUMN NoDefault TEXT NOT NULL");
+        source.ShouldContain("ADD COLUMN \"NoDefault\" TEXT");
+        source.ShouldNotContain("ADD COLUMN \"NoDefault\" TEXT NOT NULL");
     }
 
     [Fact]
@@ -83,7 +83,7 @@ public class LightSQLiteGenerator_EnsureSchemaTests
     {
         string source = GetDefaultsSource();
 
-        source.ShouldNotContain("ADD COLUMN Id INTEGER");
+        source.ShouldNotContain("ADD COLUMN \"Id\" INTEGER");
     }
 
     [Fact]

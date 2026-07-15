@@ -1085,6 +1085,64 @@ public class LightSQLiteGenerator_IntegrationTests
         MigRawEntity.DropTable(db).ShouldBeTrue();
     }
 
+    [Fact]
+    public void ReservedWordColumn_QuotesAndRoundTrips()
+    {
+        using var db = OpenInMemory();
+        ReservedWordEntity.CreateTable(db).ShouldBeTrue();
+
+        var alpha = new ReservedWordEntity { Group = "alpha", Table = 10 };
+        ReservedWordEntity.Insert(db, alpha);
+        alpha.Id.ShouldBeGreaterThan(0);
+
+        ReservedWordEntity.Insert(db, new ReservedWordEntity { Group = "beta", Table = 20 });
+        ReservedWordEntity.Insert(db, new ReservedWordEntity { Group = "gamma", Table = 30 });
+
+        ReservedWordEntity.SelectCount(db).ShouldBe(3);
+
+        // Equality WHERE on a reserved-word column ("Table" = $Table).
+        ReservedWordEntity? single = ReservedWordEntity.SelectSingle(db, Table: 20);
+        single.ShouldNotBeNull();
+        single!.Group.ShouldBe("beta");
+
+        // IN filter ("Group" IN (...)) and ORDER BY on a reserved-word column ("Table" DESC).
+        List<ReservedWordEntity> filtered = ReservedWordEntity.SelectList(
+            db,
+            orderByProperties: new[] { "Table" },
+            orderByDirection: "desc",
+            GroupValues: new[] { "alpha", "gamma" });
+        filtered.Count.ShouldBe(2);
+        filtered[0].Group.ShouldBe("gamma"); // Table = 30 sorts first descending.
+        filtered[1].Group.ShouldBe("alpha");
+
+        // Update round-trips (UPDATE ... SET "Group" = ..., "Table" = ... WHERE "Id" = ...).
+        single.Table = 99;
+        ReservedWordEntity.Update(db, single);
+        ReservedWordEntity.SelectSingle(db, Group: "beta")!.Table.ShouldBe(99);
+
+        // Delete round-trips using a reserved-word equality filter.
+        ReservedWordEntity.Delete(db, Table: 99);
+        ReservedWordEntity.SelectCount(db).ShouldBe(2);
+
+        ReservedWordEntity.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Upsert_UnknownUpdateColumn_FailsPredictably()
+    {
+        using var db = OpenInMemory();
+        Counter.CreateTable(db).ShouldBeTrue();
+
+        Should.Throw<ArgumentException>(() =>
+            Counter.Upsert(
+                db,
+                new Counter { Bucket = "a", Label = "first", Hits = 1 },
+                conflictColumns: new[] { "Bucket" },
+                updateColumns: new[] { "NotAColumn" }));
+
+        Counter.DropTable(db).ShouldBeTrue();
+    }
+
     private static SqliteConnection OpenInMemory()
     {
         var connection = new SqliteConnection("Data Source=:memory:");

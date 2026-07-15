@@ -2,6 +2,20 @@
 
 This document summarizes the generated API surface developers should expect for attributed models.
 
+## SQL Identifier Handling
+
+- **Column identifiers are always quoted.** Every column name the generator emits into DDL and
+  DML (`CREATE TABLE`, `INSERT`/`UPDATE`/`DELETE`, `SELECT` lists, `WHERE`/`IN` predicates,
+  `ORDER BY`, `RETURNING`, `ON CONFLICT`, and FTS column declarations) is wrapped in SQLite
+  double-quotes. This means columns whose names are SQL reserved words (e.g. `Order`, `Group`,
+  `Table`) round-trip correctly, and runtime-supplied identifiers (`orderByProperties`, `Upsert`
+  `conflictColumns`/`updateColumns`/`incrementColumns`) are validated against the model's known
+  column set and rejected with `ArgumentException` if unknown, so they cannot inject SQL.
+- **Table names are trusted identifiers.** The table name — whether the compile-time
+  `LdgSQLiteTable` name or a runtime `dbTableName` override (including `dynamicTableNames`) — is
+  inlined into SQL **unquoted and unvalidated**. Callers must supply only trusted table names;
+  the generator does not defend against a hostile `dbTableName`.
+
 ## Attribute Contract
 
 ### Class/Record Level
