@@ -23,9 +23,9 @@ public class LightSQLiteGenerator_ReturningTests
     {
         string source = GetBasicSource();
 
-        source.ShouldContain("public static BasicEntity InsertReturning(");
-        source.ShouldContain("public static BasicEntity InsertReturning(this IDbConnection dbCon,");
-        source.ShouldContain("public static BasicEntity InsertReturning(this BasicEntity value,");
+        source.ShouldContain("public static BasicEntity? InsertReturning(");
+        source.ShouldContain("public static BasicEntity? InsertReturning(this IDbConnection dbCon,");
+        source.ShouldContain("public static BasicEntity? InsertReturning(this BasicEntity value,");
     }
 
     [Fact]
@@ -33,9 +33,9 @@ public class LightSQLiteGenerator_ReturningTests
     {
         string source = GetBasicSource();
 
-        source.ShouldContain("public static BasicEntity UpdateReturning(");
-        source.ShouldContain("public static BasicEntity UpdateReturning(this IDbConnection dbCon,");
-        source.ShouldContain("public static BasicEntity UpdateReturning(this BasicEntity value,");
+        source.ShouldContain("public static BasicEntity? UpdateReturning(");
+        source.ShouldContain("public static BasicEntity? UpdateReturning(this IDbConnection dbCon,");
+        source.ShouldContain("public static BasicEntity? UpdateReturning(this BasicEntity value,");
     }
 
     [Fact]
@@ -55,7 +55,7 @@ public class LightSQLiteGenerator_ReturningTests
     {
         string source = GetDefaultsSource();
 
-        int start = source.IndexOf("public static DefaultsEntity InsertReturning(");
+        int start = source.IndexOf("public static DefaultsEntity? InsertReturning(");
         start.ShouldBeGreaterThan(-1);
         int end = source.IndexOf("public static void Insert(", start);
         end.ShouldBeGreaterThan(start);
@@ -74,7 +74,7 @@ public class LightSQLiteGenerator_ReturningTests
     {
         string source = GetDefaultsSource();
 
-        int start = source.IndexOf("public static DefaultsEntity InsertReturning(");
+        int start = source.IndexOf("public static DefaultsEntity? InsertReturning(");
         int end = source.IndexOf("public static void Insert(", start);
         string method = source.Substring(start, end - start);
 

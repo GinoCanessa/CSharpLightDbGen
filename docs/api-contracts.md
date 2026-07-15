@@ -106,9 +106,9 @@ This document summarizes the generated API surface developers should expect for 
 - `Insert(IDbConnection dbConnection, T value, ..., bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)`
 - `Insert(IDbConnection dbConnection, List<T> values, ..., bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)`
 - `Insert(IDbConnection dbConnection, IEnumerable<T> values, ..., bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)`
-- `InsertReturning(IDbConnection dbConnection, T value, string? dbTableName = null, bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)` → returns the same `T` instance, hydrated from `RETURNING`
+- `InsertReturning(IDbConnection dbConnection, T value, string? dbTableName = null, bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)` → returns the hydrated `T?`, or `null` when no row is produced
 - `Update(IDbConnection dbConnection, T value, string? dbTableName = null, IDbTransaction? transaction = null)`
-- `UpdateReturning(IDbConnection dbConnection, T value, string? dbTableName = null, IDbTransaction? transaction = null)` → returns the same `T` instance, hydrated from `RETURNING`
+- `UpdateReturning(IDbConnection dbConnection, T value, string? dbTableName = null, IDbTransaction? transaction = null)` → returns the hydrated `T?`, or `null` when no row matched
 - `Update(IDbConnection dbConnection, IEnumerable<T> values, string? dbTableName = null, IDbTransaction? transaction = null)`
 - `Delete(IDbConnection dbConnection, T value, string? dbTableName = null, IDbTransaction? transaction = null)`
 - `Delete(IDbConnection dbConnection, IEnumerable<T> values, string? dbTableName = null, IDbTransaction? transaction = null)`
@@ -123,11 +123,13 @@ This document summarizes the generated API surface developers should expect for 
 
 ### RETURNING / Hydration Options
 
-`InsertReturning` and `UpdateReturning` append a trailing `RETURNING <all columns>` clause
-(requires SQLite ≥ 3.35), read the single returned row, hydrate the passed `value` **in place**,
-and return that same instance. Use them to observe server-computed values in one round-trip:
+`InsertReturning` and `UpdateReturning` return a nullable `T?`. They append a trailing
+`RETURNING <all columns>` clause (requires SQLite ≥ 3.35); when a row is produced they hydrate the
+passed `value` **in place** and return that same instance, and when **no row** is produced they
+return `null`. Use them to observe server-computed values in one round-trip:
 
 - The generated identity key and any raw/expression column default (e.g. `CreatedAt = CURRENT_TIMESTAMP`) become visible on the returned instance.
+- A `null` return is the explicit "no row affected" signal — `UpdateReturning` whose `WHERE` matched nothing, or `InsertReturning(ignoreDuplicates: true)` whose row was ignored on conflict — and is distinguishable from a successful non-null result.
 - `InsertReturning` **omits** raw/expression-default columns from the `INSERT` so SQLite computes them, then reads them back via `RETURNING`. Constant defaults are still bound from the model (identical to `Insert`). This is the one behavioral divergence from `Insert`, which binds every non-identity column.
 - `UpdateReturning` sets every non-PK column (identical `SET` list to `Update`) and hydrates all columns from the updated row.
 

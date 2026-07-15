@@ -567,8 +567,9 @@ public class LightSQLiteGenerator_IntegrationTests
         // InsertReturning surfaces the generated identity key and the server-computed
         // CURRENT_TIMESTAMP default in a single round-trip, hydrating the passed instance.
         Job inserted = new() { JobName = "hydrate-me", Status = "running", RetryCount = 2 };
-        Job returned = Job.InsertReturning(db, inserted);
+        Job? returned = Job.InsertReturning(db, inserted);
 
+        returned.ShouldNotBeNull();
         ReferenceEquals(returned, inserted).ShouldBeTrue();
         inserted.JobId.ShouldBeGreaterThan(0);
         inserted.CreatedAt.ShouldNotBeNullOrWhiteSpace();
@@ -583,8 +584,9 @@ public class LightSQLiteGenerator_IntegrationTests
         // UpdateReturning reflects the post-update state (RETURNING *).
         inserted.Status = "done";
         inserted.RetryCount = 5;
-        Job updated = Job.UpdateReturning(db, inserted);
-        updated.Status.ShouldBe("done");
+        Job? updated = Job.UpdateReturning(db, inserted);
+        updated.ShouldNotBeNull();
+        updated!.Status.ShouldBe("done");
         updated.RetryCount.ShouldBe(5);
 
         Job? persistedAfter = Job.SelectSingle(db, JobId: inserted.JobId);
@@ -621,6 +623,38 @@ public class LightSQLiteGenerator_IntegrationTests
         enumRows[1].CustomerId.ShouldNotBe(enumRows[2].CustomerId);
 
         Customer.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ReturningWrites_NoRow_HasExplicitContract()
+    {
+        using var db = OpenInMemory();
+        Job.CreateTable(db).ShouldBeTrue();
+
+        // UpdateReturning whose WHERE matches no row returns null (not the unchanged input).
+        Job ghost = new() { JobId = 999, JobName = "ghost", Status = "queued", RetryCount = 0 };
+        Job? updatedGhost = Job.UpdateReturning(db, ghost);
+        updatedGhost.ShouldBeNull();
+        Job.SelectCount(db).ShouldBe(0);
+
+        // Seed a row, then attempt an INSERT OR IGNORE that conflicts on the primary key.
+        Job seed = new() { JobName = "dup", Status = "running", RetryCount = 1 };
+        Job? seeded = Job.InsertReturning(db, seed);
+        seeded.ShouldNotBeNull();
+        int seededId = seed.JobId;
+
+        // The ignored insert produces no RETURNING row, so the contract is an explicit null.
+        Job conflict = new() { JobId = seededId, JobName = "dup-conflict", Status = "failed", RetryCount = 9 };
+        Job? ignored = Job.InsertReturning(db, conflict, ignoreDuplicates: true, insertPrimaryKey: true);
+        ignored.ShouldBeNull();
+
+        // The original row is untouched by the ignored insert.
+        Job? persisted = Job.SelectSingle(db, JobId: seededId);
+        persisted.ShouldNotBeNull();
+        persisted!.JobName.ShouldBe("dup");
+        persisted.RetryCount.ShouldBe(1);
+
+        Job.DropTable(db).ShouldBeTrue();
     }
 
     [Fact]

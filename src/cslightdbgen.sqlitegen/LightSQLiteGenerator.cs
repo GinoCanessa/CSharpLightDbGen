@@ -1443,7 +1443,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             {{{((pkColName == null) || compositePk ? "return" : $"return value.{pkColName}")}}};
                         }
 
-                        public static {{{className}}} InsertReturning(
+                        public static {{{className}}}? InsertReturning(
                             IDbConnection dbConnection,
                             {{{className}}} value,
                             string? dbTableName = null,
@@ -1482,22 +1482,24 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     {{{string.Join(_line_5, getInsertCommandParamLines(true, null, pkPropType, createParameters: true, instantiateParameters: true, skipRawDefaults: true))}}}
                                 }
 
+                                {{{className}}}? _returned = null;
                                 using (IDataReader reader = command.ExecuteReader())
                                 {
                                     if (reader.Read())
                                     {
                                         {{{string.Join(_line_5, tableColInfo.Select(p => "value." + p.readerDirective + ";"))}}}
+                                        _returned = value;
                                     }
                                 }
 
                                 if (_ownTxn) _txn.Commit();
+
+                                return _returned;
                             }
                             finally
                             {
                                 if (_ownTxn) _txn.Dispose();
                             }
-
-                            return value;
                         }
 
                         public static void Insert(
@@ -1776,7 +1778,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             return value;
                         }
 
-                        public static {{{className}}} UpdateReturning(IDbConnection dbConnection, {{{className}}} value, string? dbTableName = null, IDbTransaction? transaction = null)
+                        public static {{{className}}}? UpdateReturning(IDbConnection dbConnection, {{{className}}} value, string? dbTableName = null, IDbTransaction? transaction = null)
                         {
                             dbTableName ??= "{{{tableName}}}";
                             {{{(anyColIsJson ? "string? dbJson;" : string.Empty)}}}
@@ -1797,22 +1799,24 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
 
                                 {{{string.Join(_line_4, getInsertCommandParamLines(true, null, pkPropType, createParameters: true, instantiateParameters: true, includeIdentity: true))}}}
 
+                                {{{className}}}? _returned = null;
                                 using (IDataReader reader = command.ExecuteReader())
                                 {
                                     if (reader.Read())
                                     {
                                         {{{string.Join(_line_5, tableColInfo.Select(p => "value." + p.readerDirective + ";"))}}}
+                                        _returned = value;
                                     }
                                 }
 
                                 if (_ownTxn) _txn.Commit();
+
+                                return _returned;
                             }
                             finally
                             {
                                 if (_ownTxn) _txn.Dispose();
                             }
-
-                            return value;
                         }
 
                         public static void Update(IDbConnection dbConnection, IEnumerable<{{{className}}}> values, string? dbTableName = null, IDbTransaction? transaction = null)
@@ -2160,12 +2164,12 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             {{{className}}}.Upsert(dbCon, value, conflictColumns, updateColumns, incrementColumns, dbTableName, transaction);
                         }
 
-                        public static {{{className}}} InsertReturning(this IDbConnection dbCon, {{{className}}} value, string? dbTableName = null, bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)
+                        public static {{{className}}}? InsertReturning(this IDbConnection dbCon, {{{className}}} value, string? dbTableName = null, bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)
                         {
                             return {{{className}}}.InsertReturning(dbCon, value, dbTableName, ignoreDuplicates, insertPrimaryKey, transaction);
                         }
 
-                        public static {{{className}}} UpdateReturning(this IDbConnection dbCon, {{{className}}} value, string? dbTableName = null, IDbTransaction? transaction = null)
+                        public static {{{className}}}? UpdateReturning(this IDbConnection dbCon, {{{className}}} value, string? dbTableName = null, IDbTransaction? transaction = null)
                         {
                             return {{{className}}}.UpdateReturning(dbCon, value, dbTableName, transaction);
                         }
@@ -2220,12 +2224,12 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                             {{{className}}}.Upsert(dbCon, value, conflictColumns, updateColumns, incrementColumns, dbTableName, transaction);
                         }
 
-                        public static {{{className}}} InsertReturning(this {{{className}}} value, IDbConnection dbCon, string? dbTableName = null, bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)
+                        public static {{{className}}}? InsertReturning(this {{{className}}} value, IDbConnection dbCon, string? dbTableName = null, bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)
                         {
                             return {{{className}}}.InsertReturning(dbCon, value, dbTableName, ignoreDuplicates, insertPrimaryKey, transaction);
                         }
 
-                        public static {{{className}}} UpdateReturning(this {{{className}}} value, IDbConnection dbCon, string? dbTableName = null, IDbTransaction? transaction = null)
+                        public static {{{className}}}? UpdateReturning(this {{{className}}} value, IDbConnection dbCon, string? dbTableName = null, IDbTransaction? transaction = null)
                         {
                             return {{{className}}}.UpdateReturning(dbCon, value, dbTableName, transaction);
                         }
