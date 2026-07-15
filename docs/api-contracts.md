@@ -139,6 +139,14 @@ and return that same instance. Use them to observe server-computed values in one
 - `updateColumns`: columns assigned on conflict. Defaults to every non-identity column except the conflict target. Passing an empty array (`[]`) turns the statement into `DO NOTHING` (existing row untouched; may affect zero rows).
 - `incrementColumns`: a subset of `updateColumns` that accumulates rather than overwrites — `col = col + excluded.col`.
 
+### Degenerate Model Shapes
+
+Models with no insertable or no updatable columns still generate valid, compilable SQL:
+
+- **Identity-only** (a single auto-increment key, no other columns): the default `Insert` has no columns to supply, so it emits `INSERT INTO <table> DEFAULT VALUES` (not the invalid `() VALUES ()`). Each insert persists a row and auto-assigns the key.
+- **Primary-key-only** (a single natural key, no data columns): `Update`/`UpdateReturning` have no assignable columns, so the `SET` clause falls back to a harmless self-assignment of the key column (`"Key" = "Key"`) instead of an empty (invalid) `SET`.
+- **Keyless** (no primary key): the by-key `Update`/`Delete(value)` overloads have no row identity, so their `WHERE` predicate is the valid no-op `1 = 0` — they affect zero rows rather than emitting a broken ` = ` predicate. Use the filter-based `Delete(..., [filter params])` overload to remove keyless rows.
+
 ### Transaction Enrollment
 
 Every read and write method — standard and FTS, static and extension-wrapper — accepts an

@@ -434,4 +434,50 @@ public partial class ReservedWordEntity
     public int Table { get; set; }
 }
 """;
+
+    // B1: identity-only model (single auto-increment key, no other columns). The default INSERT has
+    // no columns to supply, so it must emit "DEFAULT VALUES" rather than an invalid "() VALUES ()".
+    public const string IdentityOnlyFixture = """
+using CsLightDbGen.SQLiteGenerator;
+
+namespace CsLightDbGen.SQLiteGenerator;
+
+[LdgSQLiteTable("identity_only")]
+public partial class IdentityOnlyEntity
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+}
+""";
+
+    // B1: keyless model (no primary key). By-key Update/Delete have no row identity, so their WHERE
+    // predicate must be a valid no-op ("1 = 0") rather than the invalid " = $".
+    public const string KeylessFixture = """
+using CsLightDbGen.SQLiteGenerator;
+
+namespace CsLightDbGen.SQLiteGenerator;
+
+[LdgSQLiteTable("keyless_table")]
+public partial class KeylessEntity
+{
+    public string Name { get; set; } = string.Empty;
+
+    public int Value { get; set; }
+}
+""";
+
+    // B1: primary-key-only model (a single natural key, no data columns). UPDATE has no assignable
+    // columns, so the SET clause must fall back to a harmless self-assignment instead of being empty.
+    public const string PrimaryKeyOnlyFixture = """
+using CsLightDbGen.SQLiteGenerator;
+
+namespace CsLightDbGen.SQLiteGenerator;
+
+[LdgSQLiteTable("primary_key_only")]
+public partial class PrimaryKeyOnlyEntity
+{
+    [LdgSQLiteKey]
+    public string Code { get; set; } = string.Empty;
+}
+""";
 }

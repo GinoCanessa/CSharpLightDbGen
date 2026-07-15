@@ -1143,6 +1143,28 @@ public class LightSQLiteGenerator_IntegrationTests
         Counter.DropTable(db).ShouldBeTrue();
     }
 
+    [Fact]
+    public void IdentityOnlyInsert_UsesDefaultValues_Persists()
+    {
+        using var db = OpenInMemory();
+        IdentityOnlyEntity.CreateTable(db).ShouldBeTrue();
+
+        // An identity-only model has no insertable columns, so the generated INSERT uses
+        // "DEFAULT VALUES". Each insert must persist a row and auto-assign an increasing key.
+        var first = new IdentityOnlyEntity();
+        int firstId = IdentityOnlyEntity.Insert(db, first);
+        firstId.ShouldBeGreaterThan(0);
+        first.Id.ShouldBe(firstId);
+
+        var second = new IdentityOnlyEntity();
+        int secondId = IdentityOnlyEntity.Insert(db, second);
+        secondId.ShouldBeGreaterThan(firstId);
+
+        IdentityOnlyEntity.SelectCount(db).ShouldBe(2);
+
+        IdentityOnlyEntity.DropTable(db).ShouldBeTrue();
+    }
+
     private static SqliteConnection OpenInMemory()
     {
         var connection = new SqliteConnection("Data Source=:memory:");

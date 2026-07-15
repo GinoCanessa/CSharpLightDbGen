@@ -256,3 +256,12 @@ public partial class ReservedWordEntity
 
     public int Table { get; set; }
 }
+
+// B1: identity-only model (auto-increment key, no other columns). The default INSERT must use
+// "DEFAULT VALUES" so a row can be inserted and the key auto-assigned at runtime.
+[LdgSQLiteTable("identity_only")]
+public partial class IdentityOnlyEntity
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+}

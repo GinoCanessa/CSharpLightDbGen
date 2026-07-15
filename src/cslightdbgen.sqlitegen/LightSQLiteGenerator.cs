@@ -955,10 +955,23 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         }
 
         // WHERE predicate used by the by-key Update/Delete overloads. Composite keys AND-join
-        // every primary-key column; single keys retain the original "col = $col" form.
+        // every primary-key column; a single key uses "col = $col". A keyless model has no row
+        // identity, so its by-key Update/Delete match nothing ("1 = 0") instead of emitting the
+        // invalid " = $" predicate.
         string pkWhereClause = compositePk
             ? string.Join(" AND ", pkCols.Select(c => $"{quoteIdent(c.name)} = ${c.name}"))
-            : $"{(pkColName == null ? string.Empty : quoteIdent(pkColName))} = ${pkColName}";
+            : (pkColName == null
+                ? "1 = 0"
+                : $"{quoteIdent(pkColName)} = ${pkColName}");
+
+        // UPDATE ... SET assignments cover every non-primary-key column. A primary-key-only model
+        // has none, so fall back to a harmless self-assignment of a key column to keep valid SQL
+        // (an empty SET clause is a syntax error).
+        string updateSetClause = tableColInfo.Any(p => !p.isPrimaryKey)
+            ? string.Join(_comma_line_5, tableColInfo.Where(p => p.isPrimaryKey == false).Select(p => quoteIdent(p.name) + " = $" + p.name))
+            : (tableColInfo.Count > 0
+                ? quoteIdent(tableColInfo[0].name) + " = " + quoteIdent(tableColInfo[0].name)
+                : "1 = 1");
 
         // Table constraint lines: composite keys are declared as a trailing PRIMARY KEY (...) constraint
         // rather than an inline column directive.
@@ -1414,11 +1427,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     IDbCommand command = dbConnection.CreateCommand();
                                     command.Transaction = _txn;
                                     command.CommandText = $"""
-                                        {insertLiteral} INTO {dbTableName} (
-                                            {{{string.Join(_comma_line_6, tableColInfo.Where(p => p.isIdentity == false).Select(p => quoteIdent(p.name)))}}}
-                                        ) VALUES (
-                                            {{{string.Join(_comma_line_6, tableColInfo.Where(p => p.isIdentity == false).Select(p => "$" + p.name))}}}
-                                        ) {{{(pkIsIdentity ? " RETURNING " + quoteIdent(pkColName!) : string.Empty)}}};
+                                        {insertLiteral} INTO {dbTableName} {{{buildInsertColumnsAndValues(tableColInfo.Where(p => p.isIdentity == false))}}} {{{(pkIsIdentity ? " RETURNING " + quoteIdent(pkColName!) : string.Empty)}}};
                                         """;
                     
                                     {{{string.Join(_line_4, getInsertCommandParamLines(true, pkIsIdentity ? pkColName : null, pkPropType, ignoreDupeProperty: "ignoreDuplicates"))}}}
@@ -1467,11 +1476,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                 else
                                 {
                                     command.CommandText = $"""
-                                        {insertLiteral} INTO {dbTableName} (
-                                            {{{string.Join(_comma_line_6, tableColInfo.Where(p => (p.isIdentity == false) && !rawDefaultColumnNames.Contains(p.name)).Select(p => quoteIdent(p.name)))}}}
-                                        ) VALUES (
-                                            {{{string.Join(_comma_line_6, tableColInfo.Where(p => (p.isIdentity == false) && !rawDefaultColumnNames.Contains(p.name)).Select(p => "$" + p.name))}}}
-                                        ) RETURNING {{{string.Join(", ", tableColInfo.Select(p => quoteIdent(p.name)))}}};
+                                        {insertLiteral} INTO {dbTableName} {{{buildInsertColumnsAndValues(tableColInfo.Where(p => (p.isIdentity == false) && !rawDefaultColumnNames.Contains(p.name)))}}} RETURNING {{{string.Join(", ", tableColInfo.Select(p => quoteIdent(p.name)))}}};
                                         """;
 
                                     {{{string.Join(_line_5, getInsertCommandParamLines(true, null, pkPropType, createParameters: true, instantiateParameters: true, skipRawDefaults: true))}}}
@@ -1547,11 +1552,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     IDbCommand command = dbConnection.CreateCommand();
                                     command.Transaction = _txn;
                                     command.CommandText = $"""
-                                        {insertLiteral} INTO {dbTableName} (
-                                            {{{string.Join(_comma_line_6, tableColInfo.Where(p => p.isIdentity == false).Select(p => quoteIdent(p.name)))}}}
-                                        ) VALUES (
-                                            {{{string.Join(_comma_line_6, tableColInfo.Where(p => p.isIdentity == false).Select(p => "$" + p.name))}}}
-                                        ) {{{(pkIsIdentity ? " RETURNING " + quoteIdent(pkColName!) : string.Empty)}}};
+                                        {insertLiteral} INTO {dbTableName} {{{buildInsertColumnsAndValues(tableColInfo.Where(p => p.isIdentity == false))}}} {{{(pkIsIdentity ? " RETURNING " + quoteIdent(pkColName!) : string.Empty)}}};
                                         """;
 
                                     {{{string.Join(_line_4, getInsertCommandParamLines(false, pkIsIdentity ? pkColName : null, pkPropType, createParameters: true, ignoreDupeProperty: "ignoreDuplicates"))}}}
@@ -1625,11 +1626,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     IDbCommand command = dbConnection.CreateCommand();
                                     command.Transaction = _txn;
                                     command.CommandText = $"""
-                                        {insertLiteral} INTO {dbTableName} (
-                                            {{{string.Join(_comma_line_6, tableColInfo.Where(p => p.isIdentity == false).Select(p => quoteIdent(p.name)))}}}
-                                        ) VALUES (
-                                            {{{string.Join(_comma_line_6, tableColInfo.Where(p => p.isIdentity == false).Select(p => "$" + p.name))}}}
-                                        ) {{{(pkIsIdentity ? " RETURNING " + quoteIdent(pkColName!) : string.Empty)}}};
+                                        {insertLiteral} INTO {dbTableName} {{{buildInsertColumnsAndValues(tableColInfo.Where(p => p.isIdentity == false))}}} {{{(pkIsIdentity ? " RETURNING " + quoteIdent(pkColName!) : string.Empty)}}};
                                         """;
                     
                                     {{{string.Join(_line_4, getInsertCommandParamLines(false, pkIsIdentity ? pkColName : null, pkPropType, createParameters: true, ignoreDupeProperty: "ignoreDuplicates"))}}}
@@ -1733,11 +1730,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                 IDbCommand command = dbConnection.CreateCommand();
                                 command.Transaction = _txn;
                                 command.CommandText = $"""
-                                    INSERT INTO {dbTableName} (
-                                        {{{string.Join(_comma_line_6, tableColInfo.Where(p => !p.isIdentity).Select(p => quoteIdent(p.name)))}}}
-                                    ) VALUES (
-                                        {{{string.Join(_comma_line_6, tableColInfo.Where(p => !p.isIdentity).Select(p => "$" + p.name))}}}
-                                    )
+                                    INSERT INTO {dbTableName} {{{buildInsertColumnsAndValues(tableColInfo.Where(p => !p.isIdentity))}}}
                                     {_onConflict};
                                     """;
 
@@ -1766,7 +1759,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                 command.Transaction = _txn;
                                 command.CommandText = $"""
                                     UPDATE {dbTableName} SET
-                                        {{{string.Join(_comma_line_5, tableColInfo.Where(p => p.isPrimaryKey == false).Select(p => quoteIdent(p.name) + " = $" + p.name))}}}
+                                        {{{updateSetClause}}}
                                     WHERE
                                         {{{pkWhereClause}}}
                                     """;
@@ -1796,7 +1789,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                 command.Transaction = _txn;
                                 command.CommandText = $"""
                                     UPDATE {dbTableName} SET
-                                        {{{string.Join(_comma_line_5, tableColInfo.Where(p => p.isPrimaryKey == false).Select(p => quoteIdent(p.name) + " = $" + p.name))}}}
+                                        {{{updateSetClause}}}
                                     WHERE
                                         {{{pkWhereClause}}}
                                     RETURNING {{{string.Join(", ", tableColInfo.Select(p => quoteIdent(p.name)))}}}
@@ -1835,7 +1828,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                 command.Transaction = _txn;
                                 command.CommandText = $"""
                                     UPDATE {dbTableName} SET
-                                        {{{string.Join(_comma_line_5, tableColInfo.Where(p => p.isPrimaryKey == false).Select(p => quoteIdent(p.name) + " = $" + p.name))}}}
+                                        {{{updateSetClause}}}
                                     WHERE
                                         {{{pkWhereClause}}}
                                     """;
@@ -3532,6 +3525,21 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
     // Double-quotes a SQL identifier (column name) so reserved words (e.g. Order, Group) and other
     // otherwise-unparseable identifiers are emitted safely. Table names are trusted identifiers and
     // are not routed through this helper (see docs/api-contracts.md).
+    // Builds the "(col, ...) VALUES ($col, ...)" fragment of an INSERT, or "DEFAULT VALUES" when
+    // there are no columns to insert (e.g. an identity-only model). SQLite rejects an empty
+    // "() VALUES ()" list, so DEFAULT VALUES is the valid spelling for inserting an all-defaults row.
+    private static string buildInsertColumnsAndValues(IEnumerable<TableColInfoRec> columns)
+    {
+        List<TableColInfoRec> cols = columns.ToList();
+        if (cols.Count == 0)
+        {
+            return "DEFAULT VALUES";
+        }
+
+        return "(" + string.Join(", ", cols.Select(c => quoteIdent(c.name)))
+            + ") VALUES (" + string.Join(", ", cols.Select(c => "$" + c.name)) + ")";
+    }
+
     private static string quoteIdent(string ident) => "\"" + ident + "\"";
 
     // Column-identifier quoting for emission INTO a normal (non-raw) C# interpolated
