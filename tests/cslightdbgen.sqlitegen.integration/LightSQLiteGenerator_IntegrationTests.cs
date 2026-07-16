@@ -1,5 +1,6 @@
 using System.Data;
 using cslightdbgen.sqlitegen.integration.Models;
+using CsLightDbGen.SQLiteGenerator;
 
 namespace cslightdbgen.sqlitegen.integration;
 
@@ -103,7 +104,8 @@ public class LightSQLiteGenerator_IntegrationTests
 
         var deleteOne = Customer.SelectSingle(db, Name: "Mu");
         deleteOne.ShouldNotBeNull();
-        Should.Throw<InvalidOperationException>(() => Customer.Delete(db, deleteOne!));
+        Customer.Delete(db, deleteOne!);
+        Customer.SelectSingle(db, Name: "Mu").ShouldBeNull();
 
         var deleteMany = Customer.SelectList(db, resultLimit: 2);
         Customer.Delete(db, deleteMany);
@@ -114,14 +116,14 @@ public class LightSQLiteGenerator_IntegrationTests
         var xi = NewCustomer("Xi", 35, 110, 73);
         Customer.Insert(db, new List<Customer> { nu, xi });
 
-        Should.Throw<InvalidOperationException>(() => db.Delete(nu));
+        db.Delete(nu);
         db.Delete((IEnumerable<Customer>)new[] { xi });
 
         var omicron = NewCustomer("Omicron", 37, 120, 68);
         var pi = NewCustomer("Pi", 38, 130, 72);
         Customer.Insert(db, new List<Customer> { omicron, pi });
 
-        Should.Throw<InvalidOperationException>(() => omicron.Delete(db));
+        omicron.Delete(db);
         ((IEnumerable<Customer>)new[] { pi }).Delete(db);
 
         db.Delete(compareStringsWithLike: true, Name: "T%");
@@ -147,9 +149,7 @@ public class LightSQLiteGenerator_IntegrationTests
         Order.Update(db, loaded);
 
         Order.SelectCount(db, Description: "updated").ShouldBe(1);
-        Should.Throw<InvalidOperationException>(() => Order.Delete(db, loaded));
-
-        Order.Delete(db, Description: "updated");
+        Order.Delete(db, loaded!);
         Order.SelectCount(db).ShouldBe(0);
 
         Order.DropTable(db).ShouldBeTrue();
@@ -187,6 +187,10 @@ public class LightSQLiteGenerator_IntegrationTests
             new List<string> { "entry" },
             orderByProperties: new[] { "MissingColumn" }).ShouldNotBeEmpty();
 
+        // Non-sanitized populate preserves the raw markup in the stored (unindexed) RawHtml column.
+        ArticleSearch rawAlpha = ArticleSearch.Select(db, new List<string> { "alpha" }).First();
+        rawAlpha.RawHtml.ShouldBe("<p>alpha <b>HTML</b></p>");
+
         ArticleSearch.CreateTable(db, "article_search_clean").ShouldBeTrue();
         ArticleSearch.Populate(
             db,
@@ -194,10 +198,13 @@ public class LightSQLiteGenerator_IntegrationTests
             sourceTableName: "article_source",
             sanitizeText: true).ShouldBe(3);
 
-        ArticleSearch.Select(
+        // sanitizeText: true runs StripHtml over every copied string column, so the stored value
+        // has its tags removed (content assertion, not just a row count).
+        ArticleSearch cleanAlpha = ArticleSearch.Select(
             db,
             new List<string> { "alpha" },
-            dbTableName: "article_search_clean").ShouldNotBeEmpty();
+            dbTableName: "article_search_clean").First();
+        cleanAlpha.RawHtml.ShouldBe("alpha HTML");
 
         ArticleSearch.DropTable(db).ShouldBeTrue();
         ArticleSearch.DropTable(db, "article_search_clean").ShouldBeTrue();
@@ -220,6 +227,1449 @@ public class LightSQLiteGenerator_IntegrationTests
         ArticleSearchPorter.Select(db, new List<string> { "entries" }).ShouldNotBeEmpty();
 
         ArticleSearchPorter.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Transaction_Composition_RollbackDiscards_CommitPersists()
+    {
+        using var db = OpenInMemory();
+        Customer.CreateTable(db).ShouldBeTrue();
+
+        // Rollback path: a write enrolled in the caller's transaction is discarded,
+        // yet a read enrolled in the same transaction observes it (read-your-writes).
+        using (IDbTransaction rollbackTxn = db.BeginTransaction())
+        {
+            Customer discarded = NewCustomer("Discarded", 40, 1, 10);
+            Customer.Insert(db, discarded, transaction: rollbackTxn);
+            discarded.CustomerId.ShouldBeGreaterThan(0);
+
+            Customer.SelectCount(db, transaction: rollbackTxn).ShouldBe(1);
+
+            // A read that omits the transaction still auto-enrolls in the connection's
+            // ambient transaction, so it also observes the pending write.
+            Customer.SelectCount(db).ShouldBe(1);
+
+            rollbackTxn.Rollback();
+        }
+
+        Customer.SelectCount(db).ShouldBe(0);
+
+        // Commit path: an enrolled Insert and Update commit atomically together.
+        using (IDbTransaction commitTxn = db.BeginTransaction())
+        {
+            Customer kept = NewCustomer("Kept", 41, 2, 20);
+            Customer.Insert(db, kept, transaction: commitTxn);
+
+            kept.Score = 200;
+            Customer.Update(db, kept, transaction: commitTxn);
+
+            commitTxn.Commit();
+        }
+
+        Customer.SelectCount(db).ShouldBe(1);
+        Customer? keptRow = Customer.SelectSingle(db, Name: "Kept");
+        keptRow.ShouldNotBeNull();
+        keptRow!.Score.ShouldBe(200);
+
+        // No-transaction path: each generated write opens and commits its own transaction.
+        Customer.Insert(db, NewCustomer("Auto", 42, 3, 30));
+        Customer.SelectCount(db).ShouldBe(2);
+
+        Customer.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ColumnDefaults_ApplyWhenColumnsOmitted()
+    {
+        using var db = OpenInMemory();
+        Job.CreateTable(db).ShouldBeTrue();
+
+        // Insert a row that omits every defaulted column; SQLite must fill them
+        // from the DDL DEFAULT clauses emitted by the generator.
+        using (IDbCommand insert = db.CreateCommand())
+        {
+            insert.CommandText = "INSERT INTO jobs (JobName) VALUES ('build');";
+            insert.ExecuteNonQuery();
+        }
+
+        Job? row = Job.SelectSingle(db, JobName: "build");
+        row.ShouldNotBeNull();
+        row!.RetryCount.ShouldBe(0);
+        row.Status.ShouldBe("queued");
+        row.IsActive.ShouldBeTrue();
+        row.CreatedAt.ShouldNotBeNullOrWhiteSpace();
+
+        // An explicit value still overrides the default.
+        using (IDbCommand insertExplicit = db.CreateCommand())
+        {
+            insertExplicit.CommandText = "INSERT INTO jobs (JobName, Status, RetryCount) VALUES ('deploy', 'running', 3);";
+            insertExplicit.ExecuteNonQuery();
+        }
+
+        Job? explicitRow = Job.SelectSingle(db, JobName: "deploy");
+        explicitRow.ShouldNotBeNull();
+        explicitRow!.Status.ShouldBe("running");
+        explicitRow.RetryCount.ShouldBe(3);
+
+        Job.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ForeignKey_OnDeleteCascade_RemovesChildRows()
+    {
+        using var db = OpenInMemory();
+
+        using (IDbCommand pragma = db.CreateCommand())
+        {
+            pragma.CommandText = "PRAGMA foreign_keys = ON;";
+            pragma.ExecuteNonQuery();
+        }
+
+        FkParent.CreateTable(db).ShouldBeTrue();
+        FkChild.CreateTable(db).ShouldBeTrue();
+
+        FkParent parent = new() { Label = "root" };
+        FkParent.Insert(db, parent);
+        parent.ParentId.ShouldBeGreaterThan(0);
+
+        FkChild.Insert(db, new FkChild { ParentRef = parent.ParentId, Note = "leaf-a" });
+        FkChild.Insert(db, new FkChild { ParentRef = parent.ParentId, Note = "leaf-b" });
+        FkChild.SelectCount(db).ShouldBe(2);
+
+        // Deleting the parent must cascade to the children (ON DELETE CASCADE),
+        // which only fires when PRAGMA foreign_keys is enabled on the connection.
+        using (IDbCommand delete = db.CreateCommand())
+        {
+            delete.CommandText = "DELETE FROM fk_parents WHERE ParentId = " + parent.ParentId + ";";
+            delete.ExecuteNonQuery();
+        }
+
+        FkChild.SelectCount(db).ShouldBe(0);
+
+        FkChild.DropTable(db).ShouldBeTrue();
+        FkParent.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void CompositeKey_InsertUpdateDelete_RoundTripsAndEnforcesUniqueness()
+    {
+        using var db = OpenInMemory();
+
+        UserWebsite.DefaultTableName.ShouldBe("user_websites");
+        UserWebsite.CreateTable(db).ShouldBeTrue();
+
+        // Composite key columns carry no identity, so both must be supplied explicitly.
+        UserWebsite first = new() { UserId = 1, WebsiteId = 100, Role = "owner" };
+        UserWebsite.Insert(db, first);
+
+        db.Insert(new UserWebsite { UserId = 1, WebsiteId = 200, Role = "editor" });
+        db.Insert(new UserWebsite { UserId = 2, WebsiteId = 100, Role = "viewer" });
+
+        UserWebsite.SelectCount(db).ShouldBe(3);
+
+        // Round-trip: the key columns persisted their supplied values (not NULL/0).
+        UserWebsite? loaded = UserWebsite.SelectSingle(db, UserId: 1, WebsiteId: 100);
+        loaded.ShouldNotBeNull();
+        loaded!.UserId.ShouldBe(1);
+        loaded.WebsiteId.ShouldBe(100);
+        loaded.Role.ShouldBe("owner");
+
+        // The full composite key is unique; re-inserting it violates the PRIMARY KEY constraint.
+        Should.Throw<SqliteException>(() => UserWebsite.Insert(db, new UserWebsite { UserId = 1, WebsiteId = 100, Role = "dup" }));
+
+        // Sharing only one key column is allowed (proves a composite, not single, key).
+        UserWebsite.SelectCount(db, UserId: 1).ShouldBe(2);
+        UserWebsite.SelectCount(db, WebsiteId: 100).ShouldBe(2);
+
+        // Update matches on the full key and rewrites the non-key column.
+        loaded.Role = "admin";
+        UserWebsite.Update(db, loaded);
+        UserWebsite.SelectSingle(db, UserId: 1, WebsiteId: 100)!.Role.ShouldBe("admin");
+
+        // Delete-by-key uses the batch overload (binds every key column).
+        UserWebsite.Delete(db, new List<UserWebsite> { new() { UserId = 1, WebsiteId = 200 } });
+        UserWebsite.SelectCount(db).ShouldBe(2);
+        UserWebsite.SelectSingle(db, UserId: 1, WebsiteId: 200).ShouldBeNull();
+
+        UserWebsite.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void UniqueConstraintAndPartialIndex_EnforceExpectedUniqueness()
+    {
+        using var db = OpenInMemory();
+        Project.CreateTable(db).ShouldBeTrue();
+
+        // Composite UNIQUE (OrgId, Slug): the same (OrgId, Slug) pair is rejected.
+        Project.Insert(db, new Project { OrgId = 1, Slug = "alpha", ProjectName = "Alpha", IsArchived = 0 });
+        Should.Throw<SqliteException>(() =>
+            Project.Insert(db, new Project { OrgId = 1, Slug = "alpha", ProjectName = "Different", IsArchived = 1 }));
+
+        // A different slug within the same org is allowed.
+        Project.Insert(db, new Project { OrgId = 1, Slug = "beta", ProjectName = "Beta", IsArchived = 0 });
+
+        // Partial UNIQUE INDEX (OrgId, ProjectName) WHERE IsArchived = 0:
+        // two active rows sharing (OrgId, ProjectName) collide.
+        Project.Insert(db, new Project { OrgId = 2, Slug = "s1", ProjectName = "Shared", IsArchived = 0 });
+        Should.Throw<SqliteException>(() =>
+            Project.Insert(db, new Project { OrgId = 2, Slug = "s2", ProjectName = "Shared", IsArchived = 0 }));
+
+        // Archived rows fall outside the predicate, so duplicates are permitted there.
+        Project.Insert(db, new Project { OrgId = 2, Slug = "s3", ProjectName = "Shared", IsArchived = 1 });
+        Project.Insert(db, new Project { OrgId = 2, Slug = "s4", ProjectName = "Shared", IsArchived = 1 });
+
+        Project.SelectCount(db).ShouldBe(5);
+
+        Project.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void EnsureSchema_AddsMissingColumnsAndIndexes_Idempotently()
+    {
+        using var db = OpenInMemory();
+
+        // Simulate an older database shape: only the key and one column exist.
+        using (IDbCommand create = db.CreateCommand())
+        {
+            create.CommandText = "CREATE TABLE widgets (WidgetId INTEGER PRIMARY KEY, WidgetLabel TEXT NOT NULL)";
+            create.ExecuteNonQuery();
+        }
+
+        using (IDbCommand seed = db.CreateCommand())
+        {
+            seed.CommandText = "INSERT INTO widgets (WidgetLabel) VALUES ('legacy')";
+            seed.ExecuteNonQuery();
+        }
+
+        // Additive migration brings the existing table up to the current model.
+        Widget.EnsureSchema(db).ShouldBeTrue();
+
+        // The pre-existing row is backfilled with the constant default (Quantity => 0);
+        // the newly added nullable column stays null.
+        Widget? legacy = Widget.SelectSingle(db, WidgetLabel: "legacy");
+        legacy.ShouldNotBeNull();
+        legacy!.Quantity.ShouldBe(0);
+        legacy.Tag.ShouldBeNull();
+
+        // The migrated table now accepts a fully populated insert.
+        Widget fresh = new() { WidgetLabel = "fresh", Quantity = 7, Tag = "t" };
+        Widget.Insert(db, fresh);
+        fresh.WidgetId.ShouldBeGreaterThan(0);
+
+        Widget? readback = Widget.SelectSingle(db, WidgetLabel: "fresh");
+        readback.ShouldNotBeNull();
+        readback!.Quantity.ShouldBe(7);
+        readback.Tag.ShouldBe("t");
+
+        // Re-running EnsureSchema is a no-op and must not throw.
+        Widget.EnsureSchema(db).ShouldBeTrue();
+        Widget.SelectCount(db).ShouldBe(2);
+
+        // The extension wrapper resolves through its generic constraint.
+        db.EnsureSchema<Widget>().ShouldBeTrue();
+
+        Widget.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void EnsureSchema_ReappliesCompositeUniqueConstraint_OnPreExistingTable()
+    {
+        using var db = OpenInMemory();
+
+        // Simulate a table created by an older generator that lacks the class-level
+        // UNIQUE (OrgId, Slug) constraint entirely.
+        using (IDbCommand create = db.CreateCommand())
+        {
+            create.CommandText = """
+                CREATE TABLE projects (
+                    ProjectId INTEGER PRIMARY KEY,
+                    OrgId INTEGER NOT NULL,
+                    Slug TEXT NOT NULL,
+                    ProjectName TEXT NOT NULL,
+                    IsArchived INTEGER NOT NULL
+                )
+                """;
+            create.ExecuteNonQuery();
+        }
+
+        using (IDbCommand seed = db.CreateCommand())
+        {
+            seed.CommandText = "INSERT INTO projects (OrgId, Slug, ProjectName, IsArchived) VALUES (1, 'alpha', 'Alpha', 0)";
+            seed.ExecuteNonQuery();
+        }
+
+        // Migration must re-assert the composite UNIQUE that CREATE TABLE IF NOT EXISTS cannot
+        // apply to a pre-existing table.
+        Project.EnsureSchema(db).ShouldBeTrue();
+
+        // A distinct (OrgId, Slug) is still accepted.
+        Project.Insert(db, new Project { OrgId = 1, Slug = "beta", ProjectName = "Beta", IsArchived = 0 });
+
+        // The same Slug under a different OrgId is accepted (proves the constraint is composite).
+        Project.Insert(db, new Project { OrgId = 2, Slug = "alpha", ProjectName = "Alpha2", IsArchived = 0 });
+
+        // A duplicate (OrgId, Slug) is now rejected — the constraint is enforced post-migration.
+        Should.Throw<SqliteException>(() =>
+            Project.Insert(db, new Project { OrgId = 1, Slug = "alpha", ProjectName = "Dupe", IsArchived = 0 }));
+
+        // Re-running the migration is idempotent and must not throw.
+        Project.EnsureSchema(db).ShouldBeTrue();
+
+        Project.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Upsert_InsertsUpdatesRespectsDoNothingAndIncrements()
+    {
+        using var db = OpenInMemory();
+        Counter.CreateTable(db).ShouldBeTrue();
+
+        string[] conflict = new[] { "Bucket" };
+
+        // Fresh conflict key inserts a new row.
+        Counter.Upsert(db, new Counter { Bucket = "a", Label = "first", Hits = 1 }, conflictColumns: conflict);
+        Counter? a1 = Counter.SelectSingle(db, Bucket: "a");
+        a1.ShouldNotBeNull();
+        a1!.Label.ShouldBe("first");
+        a1.Hits.ShouldBe(1);
+        Counter.SelectCount(db).ShouldBe(1);
+
+        // Existing key with default update columns overwrites every non-conflict column.
+        Counter.Upsert(db, new Counter { Bucket = "a", Label = "second", Hits = 9 }, conflictColumns: conflict);
+        Counter? a2 = Counter.SelectSingle(db, Bucket: "a");
+        a2!.Label.ShouldBe("second");
+        a2.Hits.ShouldBe(9);
+        Counter.SelectCount(db).ShouldBe(1);
+
+        // updateColumns: [] performs DO NOTHING, leaving the stored row untouched.
+        Counter.Upsert(db, new Counter { Bucket = "a", Label = "ignored", Hits = 100 }, conflictColumns: conflict, updateColumns: Array.Empty<string>());
+        Counter? a3 = Counter.SelectSingle(db, Bucket: "a");
+        a3!.Label.ShouldBe("second");
+        a3.Hits.ShouldBe(9);
+
+        // incrementColumns accumulate (Hits = Hits + excluded.Hits) while other columns overwrite.
+        Counter.Upsert(db, new Counter { Bucket = "a", Label = "third", Hits = 5 }, conflictColumns: conflict, updateColumns: new[] { "Label", "Hits" }, incrementColumns: new[] { "Hits" });
+        Counter? a4 = Counter.SelectSingle(db, Bucket: "a");
+        a4!.Label.ShouldBe("third");
+        a4.Hits.ShouldBe(14);
+
+        // A different conflict key inserts rather than updates.
+        Counter.Upsert(db, new Counter { Bucket = "b", Label = "other", Hits = 3 }, conflictColumns: conflict);
+        Counter.SelectCount(db).ShouldBe(2);
+
+        // The extension wrapper resolves by the value's type.
+        db.Upsert(new Counter { Bucket = "b", Label = "ext", Hits = 1 }, conflictColumns: conflict);
+        Counter? b = Counter.SelectSingle(db, Bucket: "b");
+        b!.Label.ShouldBe("ext");
+        b.Hits.ShouldBe(1);
+
+        Counter.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void InsertReturning_And_UpdateReturning_HydrateModel_AndBulkInsertSurfacesKeys()
+    {
+        using var db = OpenInMemory();
+        Job.CreateTable(db).ShouldBeTrue();
+
+        // InsertReturning surfaces the generated identity key and the server-computed
+        // CURRENT_TIMESTAMP default in a single round-trip, hydrating the passed instance.
+        Job inserted = new() { JobName = "hydrate-me", Status = "running", RetryCount = 2 };
+        Job? returned = Job.InsertReturning(db, inserted);
+
+        returned.ShouldNotBeNull();
+        ReferenceEquals(returned, inserted).ShouldBeTrue();
+        inserted.JobId.ShouldBeGreaterThan(0);
+        inserted.CreatedAt.ShouldNotBeNullOrWhiteSpace();
+        inserted.Status.ShouldBe("running");
+        inserted.RetryCount.ShouldBe(2);
+
+        // The row actually persisted with the database-computed timestamp.
+        Job? persisted = Job.SelectSingle(db, JobId: inserted.JobId);
+        persisted.ShouldNotBeNull();
+        persisted!.CreatedAt.ShouldBe(inserted.CreatedAt);
+
+        // UpdateReturning reflects the post-update state (RETURNING *).
+        inserted.Status = "done";
+        inserted.RetryCount = 5;
+        Job? updated = Job.UpdateReturning(db, inserted);
+        updated.ShouldNotBeNull();
+        updated!.Status.ShouldBe("done");
+        updated.RetryCount.ShouldBe(5);
+
+        Job? persistedAfter = Job.SelectSingle(db, JobId: inserted.JobId);
+        persistedAfter!.Status.ShouldBe("done");
+        persistedAfter.RetryCount.ShouldBe(5);
+
+        Job.DropTable(db).ShouldBeTrue();
+
+        // Bulk key surfacing: both the List<T> (regression) and IEnumerable<T> insert
+        // overloads populate each element's generated identity key.
+        Customer.CreateTable(db).ShouldBeTrue();
+
+        List<Customer> listRows = new()
+        {
+            NewCustomer("List-A", 20, 1, null),
+            NewCustomer("List-B", 21, 1, null),
+        };
+        Customer.Insert(db, listRows);
+        listRows[0].CustomerId.ShouldBeGreaterThan(0);
+        listRows[1].CustomerId.ShouldBeGreaterThan(0);
+        listRows[0].CustomerId.ShouldNotBe(listRows[1].CustomerId);
+
+        Customer[] enumRows =
+        [
+            NewCustomer("Enum-A", 22, 2, null),
+            NewCustomer("Enum-B", 23, 2, null),
+            NewCustomer("Enum-C", 24, 2, null),
+        ];
+        Customer.Insert(db, (IEnumerable<Customer>)enumRows);
+        enumRows[0].CustomerId.ShouldBeGreaterThan(0);
+        enumRows[1].CustomerId.ShouldBeGreaterThan(0);
+        enumRows[2].CustomerId.ShouldBeGreaterThan(0);
+        enumRows[0].CustomerId.ShouldNotBe(enumRows[1].CustomerId);
+        enumRows[1].CustomerId.ShouldNotBe(enumRows[2].CustomerId);
+
+        Customer.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ReturningWrites_NoRow_HasExplicitContract()
+    {
+        using var db = OpenInMemory();
+        Job.CreateTable(db).ShouldBeTrue();
+
+        // UpdateReturning whose WHERE matches no row returns null (not the unchanged input).
+        Job ghost = new() { JobId = 999, JobName = "ghost", Status = "queued", RetryCount = 0 };
+        Job? updatedGhost = Job.UpdateReturning(db, ghost);
+        updatedGhost.ShouldBeNull();
+        Job.SelectCount(db).ShouldBe(0);
+
+        // Seed a row, then attempt an INSERT OR IGNORE that conflicts on the primary key.
+        Job seed = new() { JobName = "dup", Status = "running", RetryCount = 1 };
+        Job? seeded = Job.InsertReturning(db, seed);
+        seeded.ShouldNotBeNull();
+        int seededId = seed.JobId;
+
+        // The ignored insert produces no RETURNING row, so the contract is an explicit null.
+        Job conflict = new() { JobId = seededId, JobName = "dup-conflict", Status = "failed", RetryCount = 9 };
+        Job? ignored = Job.InsertReturning(db, conflict, ignoreDuplicates: true, insertPrimaryKey: true);
+        ignored.ShouldBeNull();
+
+        // The original row is untouched by the ignored insert.
+        Job? persisted = Job.SelectSingle(db, JobId: seededId);
+        persisted.ShouldNotBeNull();
+        persisted!.JobName.ShouldBe("dup");
+        persisted.RetryCount.ShouldBe(1);
+
+        Job.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void MultiSelect_InAndNotIn_FilterOnNonKeyScalarColumn()
+    {
+        using var db = OpenInMemory();
+        Job.CreateTable(db).ShouldBeTrue();
+
+        Job.Insert(db, new Job { JobName = "a", Status = "queued" });
+        Job.Insert(db, new Job { JobName = "b", Status = "running" });
+        Job.Insert(db, new Job { JobName = "c", Status = "complete" });
+        Job.Insert(db, new Job { JobName = "d", Status = "failed" });
+        Job.Insert(db, new Job { JobName = "e", Status = "queued" });
+
+        // IN over a non-key scalar column.
+        List<Job> active = Job.SelectList(db, StatusValues: new[] { "queued", "running" });
+        active.Select(j => j.JobName).OrderBy(n => n).ToList().ShouldBe(new List<string> { "a", "b", "e" });
+
+        // NOT IN over the same non-key scalar column.
+        List<Job> notTerminal = Job.SelectList(db, StatusNotInValues: new[] { "complete", "failed" });
+        notTerminal.Select(j => j.JobName).OrderBy(n => n).ToList().ShouldBe(new List<string> { "a", "b", "e" });
+
+        // IN + NOT IN combined on the same column must not collide on bound parameter names.
+        List<Job> queuedOnly = Job.SelectList(db, StatusValues: new[] { "queued", "running" }, StatusNotInValues: new[] { "running" });
+        queuedOnly.Select(j => j.JobName).OrderBy(n => n).ToList().ShouldBe(new List<string> { "a", "e" });
+
+        // The extension wrapper threads the new NOT IN argument.
+        List<Job> viaExtension = db.SelectList<Job>(StatusNotInValues: new[] { "queued" });
+        viaExtension.Select(j => j.JobName).OrderBy(n => n).ToList().ShouldBe(new List<string> { "b", "c", "d" });
+
+        Job.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void OrderBy_MultiColumn_PerColumnDirection_Works()
+    {
+        using var db = OpenInMemory();
+        Customer.CreateTable(db).ShouldBeTrue();
+
+        // Two customers share Age 30 so the secondary Name sort key is exercised.
+        Customer.Insert(db, new List<Customer>
+        {
+            NewCustomer("Ana", 30, 1, 1),
+            NewCustomer("Bob", 30, 1, 1),
+            NewCustomer("Cy", 20, 1, 1),
+            NewCustomer("Dan", 40, 1, 1)
+        });
+
+        // Age DESC, then Name ASC.
+        List<Customer> descAsc = Customer.SelectList(
+            db,
+            orderByProperties: new[] { "Age", "Name" },
+            orderByDirections: new[] { "desc", "asc" });
+        descAsc.Select(c => c.Name).ToList().ShouldBe(new List<string> { "Dan", "Ana", "Bob", "Cy" });
+
+        // Per-column direction: Age ASC, then Name DESC (proves a single trailing direction is not applied to all columns).
+        List<Customer> ascDesc = Customer.SelectList(
+            db,
+            orderByProperties: new[] { "Age", "Name" },
+            orderByDirections: new[] { "asc", "desc" });
+        ascDesc.Select(c => c.Name).ToList().ShouldBe(new List<string> { "Cy", "Bob", "Ana", "Dan" });
+
+        // An unknown column in the middle is dropped, but directions stay paired to the surviving columns
+        // by their original input index (Name keeps "asc", not the dropped "Bogus" slot's "desc").
+        List<Customer> withUnknownMidList = Customer.SelectList(
+            db,
+            orderByProperties: new[] { "Age", "Bogus", "Name" },
+            orderByDirections: new[] { "desc", "desc", "asc" });
+        withUnknownMidList.Select(c => c.Name).ToList().ShouldBe(new List<string> { "Dan", "Ana", "Bob", "Cy" });
+
+        // Fewer directions than columns: the missing trailing slots fall back to the scalar orderByDirection.
+        List<Customer> shortDirections = Customer.SelectList(
+            db,
+            orderByProperties: new[] { "Age", "Name" },
+            orderByDirection: "desc",
+            orderByDirections: new[] { "asc" });
+        shortDirections.Select(c => c.Name).ToList().ShouldBe(new List<string> { "Cy", "Bob", "Ana", "Dan" });
+
+        // SelectEnumerable honors per-column directions too.
+        List<Customer> viaEnumerable = Customer.SelectEnumerable(
+            db,
+            orderByProperties: new[] { "Age", "Name" },
+            orderByDirections: new[] { "asc", "desc" }).ToList();
+        viaEnumerable.Select(c => c.Name).ToList().ShouldBe(new List<string> { "Cy", "Bob", "Ana", "Dan" });
+
+        // The extension wrapper threads the new orderByDirections argument.
+        List<Customer> viaExtension = db.SelectList<Customer>(
+            orderByProperties: new[] { "Age", "Name" },
+            orderByDirections: new[] { "desc", "asc" });
+        viaExtension.Select(c => c.Name).ToList().ShouldBe(new List<string> { "Dan", "Ana", "Bob", "Cy" });
+
+        Customer.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void PrimaryKey_Long_RoundTrip()
+    {
+        using var db = OpenInMemory();
+        LongKeyEntity.CreateTable(db).ShouldBeTrue();
+
+        LongKeyEntity.SelectMaxKey(db).ShouldBeNull();
+
+        var entity = new LongKeyEntity { LongName = "long-key" };
+        long id = LongKeyEntity.Insert(db, entity);
+
+        id.ShouldBeGreaterThan(0L);
+        entity.Id.ShouldBe(id);
+
+        var loaded = LongKeyEntity.SelectSingle(db, LongName: "long-key");
+        loaded.ShouldNotBeNull();
+        loaded!.Id.ShouldBe(id);
+        loaded.LongName.ShouldBe("long-key");
+
+        LongKeyEntity.SelectMaxKey(db).ShouldBe(id);
+    }
+
+    [Fact]
+    public void LoadMaxKey_PropagatesProviderError()
+    {
+        using var db = OpenInMemory();
+
+        // The customers table was never created, so SELECT MAX(...) fails at the provider.
+        // LoadMaxKey must let that error propagate instead of swallowing it and silently
+        // resetting the counter (which would let CreateTable/EnsureSchema report false success).
+        Should.Throw<SqliteException>(() => Customer.LoadMaxKey(db));
+
+        // An empty but existing table is NOT an error: MAX(...) is NULL, so the counter resets to
+        // its default and no exception is thrown.
+        Customer.CreateTable(db).ShouldBeTrue();
+        Should.NotThrow(() => Customer.LoadMaxKey(db));
+        Customer.SelectMaxKey(db).ShouldBeNull();
+
+        Customer.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void PrimaryKey_Guid_RoundTrip()
+    {
+        using var db = OpenInMemory();
+        GuidKeyEntity.CreateTable(db).ShouldBeTrue();
+
+        var entity = new GuidKeyEntity { GuidName = "guid-key" };
+        Guid id = GuidKeyEntity.Insert(db, entity);
+
+        id.ShouldNotBe(Guid.Empty);
+        entity.Id.ShouldBe(id);
+
+        var loaded = GuidKeyEntity.SelectSingle(db, GuidName: "guid-key");
+        loaded.ShouldNotBeNull();
+        loaded!.Id.ShouldBe(id);
+    }
+
+    [Fact]
+    public void PrimaryKey_String_RoundTrip()
+    {
+        using var db = OpenInMemory();
+        StringKeyEntity.CreateTable(db).ShouldBeTrue();
+
+        var entity = new StringKeyEntity { Id = "sk-1", StringName = "string-key" };
+        string id = StringKeyEntity.Insert(db, entity);
+
+        id.ShouldBe("sk-1");
+
+        var loaded = StringKeyEntity.SelectSingle(db, StringName: "string-key");
+        loaded.ShouldNotBeNull();
+        loaded!.Id.ShouldBe("sk-1");
+    }
+
+    [Fact]
+    public void Column_Decimal_RoundTrip()
+    {
+        using var db = OpenInMemory();
+        ScalarSample.CreateTable(db).ShouldBeTrue();
+
+        var sample = new ScalarSample
+        {
+            Label = "decimal-row",
+            Price = 1234.56m,
+            OptionalPrice = 78.90m,
+            Payload = [],
+            Duration = TimeSpan.Zero
+        };
+        ScalarSample.Insert(db, sample);
+
+        var loaded = ScalarSample.SelectSingle(db, Label: "decimal-row");
+        loaded.ShouldNotBeNull();
+        loaded!.Price.ShouldBe(1234.56m);
+        loaded.OptionalPrice.ShouldBe(78.90m);
+    }
+
+    [Fact]
+    public void Column_Decimal_NullRoundTrip()
+    {
+        using var db = OpenInMemory();
+        ScalarSample.CreateTable(db).ShouldBeTrue();
+
+        var sample = new ScalarSample
+        {
+            Label = "null-decimal",
+            Price = 0m,
+            OptionalPrice = null,
+            Payload = [],
+            Duration = TimeSpan.Zero
+        };
+        ScalarSample.Insert(db, sample);
+
+        var loaded = ScalarSample.SelectSingle(db, Label: "null-decimal");
+        loaded.ShouldNotBeNull();
+        loaded!.OptionalPrice.ShouldBeNull();
+    }
+
+    [Fact]
+    public void Column_ByteArray_RoundTrip()
+    {
+        using var db = OpenInMemory();
+        ScalarSample.CreateTable(db).ShouldBeTrue();
+
+        byte[] payload = [0x01, 0x02, 0x03, 0xFF, 0x00, 0x7F];
+        var sample = new ScalarSample
+        {
+            Label = "blob-row",
+            Price = 0m,
+            Payload = payload,
+            Duration = TimeSpan.Zero
+        };
+        ScalarSample.Insert(db, sample);
+
+        var loaded = ScalarSample.SelectSingle(db, Label: "blob-row");
+        loaded.ShouldNotBeNull();
+        loaded!.Payload.ShouldBe(payload);
+    }
+
+    [Fact]
+    public void Column_TimeSpan_RoundTrip()
+    {
+        using var db = OpenInMemory();
+        ScalarSample.CreateTable(db).ShouldBeTrue();
+
+        var duration = new TimeSpan(1, 2, 3, 4);
+        var sample = new ScalarSample
+        {
+            Label = "timespan-row",
+            Price = 0m,
+            Payload = [],
+            Duration = duration
+        };
+        ScalarSample.Insert(db, sample);
+
+        var loaded = ScalarSample.SelectSingle(db, Label: "timespan-row");
+        loaded.ShouldNotBeNull();
+        loaded!.Duration.ShouldBe(duration);
+    }
+
+    [Fact]
+    public void Delete_SingleValue_BindsAllPrimaryKeyShapes()
+    {
+        using var db = OpenInMemory();
+
+        // Identity (int) key: static, connection-extension, and model-extension overloads.
+        Customer.CreateTable(db).ShouldBeTrue();
+        var cA = NewCustomer("A", 20, 1, 10);
+        var cB = NewCustomer("B", 21, 1, 11);
+        var cC = NewCustomer("C", 22, 1, 12);
+        Customer.Insert(db, new List<Customer> { cA, cB, cC });
+        Customer.Delete(db, cA);
+        db.Delete(cB);
+        cC.Delete(db);
+        Customer.SelectCount(db).ShouldBe(0);
+
+        // Natural single string key (caller-supplied).
+        StringKeyEntity.CreateTable(db).ShouldBeTrue();
+        var sA = new StringKeyEntity { Id = "s-a", StringName = "alpha" };
+        var sB = new StringKeyEntity { Id = "s-b", StringName = "bravo" };
+        var sC = new StringKeyEntity { Id = "s-c", StringName = "charlie" };
+        StringKeyEntity.Insert(db, new List<StringKeyEntity> { sA, sB, sC });
+        StringKeyEntity.Delete(db, sA);
+        db.Delete(sB);
+        sC.Delete(db);
+        StringKeyEntity.SelectCount(db).ShouldBe(0);
+
+        // Natural single Guid key (auto-generated on insert).
+        GuidKeyEntity.CreateTable(db).ShouldBeTrue();
+        var gA = new GuidKeyEntity { GuidName = "alpha" };
+        var gB = new GuidKeyEntity { GuidName = "bravo" };
+        var gC = new GuidKeyEntity { GuidName = "charlie" };
+        GuidKeyEntity.Insert(db, new List<GuidKeyEntity> { gA, gB, gC });
+        GuidKeyEntity.Delete(db, gA);
+        db.Delete(gB);
+        gC.Delete(db);
+        GuidKeyEntity.SelectCount(db).ShouldBe(0);
+
+        // Long identity key.
+        LongKeyEntity.CreateTable(db).ShouldBeTrue();
+        var lA = new LongKeyEntity { LongName = "alpha" };
+        var lB = new LongKeyEntity { LongName = "bravo" };
+        var lC = new LongKeyEntity { LongName = "charlie" };
+        LongKeyEntity.Insert(db, new List<LongKeyEntity> { lA, lB, lC });
+        LongKeyEntity.Delete(db, lA);
+        db.Delete(lB);
+        lC.Delete(db);
+        LongKeyEntity.SelectCount(db).ShouldBe(0);
+
+        // Composite key: single-object delete must bind every key column.
+        UserWebsite.CreateTable(db).ShouldBeTrue();
+        var uA = new UserWebsite { UserId = 1, WebsiteId = 10, Role = "a" };
+        var uB = new UserWebsite { UserId = 1, WebsiteId = 20, Role = "b" };
+        var uC = new UserWebsite { UserId = 2, WebsiteId = 10, Role = "c" };
+        UserWebsite.Insert(db, new List<UserWebsite> { uA, uB, uC });
+        UserWebsite.Delete(db, uA);
+        db.Delete(uB);
+        uC.Delete(db);
+        UserWebsite.SelectCount(db).ShouldBe(0);
+    }
+
+    [Fact]
+    public void Key_AutoIncrementFalse_UsesSuppliedIntegerKey()
+    {
+        using var db = OpenInMemory();
+        SuppliedKeyEntity.CreateTable(db).ShouldBeTrue();
+
+        SuppliedKeyEntity.Insert(db, new SuppliedKeyEntity { Id = 42, SuppliedLabel = "answer" });
+        SuppliedKeyEntity.Insert(db, new SuppliedKeyEntity { Id = 7, SuppliedLabel = "lucky" });
+
+        // The caller-supplied integer keys must be preserved verbatim — no counter reassignment.
+        var fortyTwo = SuppliedKeyEntity.SelectSingle(db, Id: 42);
+        fortyTwo.ShouldNotBeNull();
+        fortyTwo!.SuppliedLabel.ShouldBe("answer");
+
+        var seven = SuppliedKeyEntity.SelectSingle(db, Id: 7);
+        seven.ShouldNotBeNull();
+        seven!.SuppliedLabel.ShouldBe("lucky");
+
+        SuppliedKeyEntity.SelectCount(db).ShouldBe(2);
+    }
+
+    [Fact]
+    public void ForeignKey_PositionalConstructorArguments_EmitAndEnforceConstraint()
+    {
+        using var db = OpenInMemory();
+
+        using (IDbCommand pragma = db.CreateCommand())
+        {
+            pragma.CommandText = "PRAGMA foreign_keys = ON;";
+            pragma.ExecuteNonQuery();
+        }
+
+        FkParent.CreateTable(db).ShouldBeTrue();
+        PosFkChild.CreateTable(db).ShouldBeTrue();
+
+        FkParent parent = new() { Label = "pos-root" };
+        FkParent.Insert(db, parent);
+        parent.ParentId.ShouldBeGreaterThan(0);
+
+        // A child referencing an existing parent is accepted.
+        PosFkChild.Insert(db, new PosFkChild { PosParentRef = parent.ParentId, PosNote = "ok" });
+        PosFkChild.SelectCount(db).ShouldBe(1);
+
+        // A child referencing a non-existent parent violates the positional FK constraint.
+        Should.Throw<SqliteException>(() =>
+            PosFkChild.Insert(db, new PosFkChild { PosParentRef = 999999, PosNote = "orphan" }));
+
+        // The positional onDelete: Cascade argument cascades the delete to children.
+        using (IDbCommand delete = db.CreateCommand())
+        {
+            delete.CommandText = "DELETE FROM fk_parents WHERE ParentId = " + parent.ParentId + ";";
+            delete.ExecuteNonQuery();
+        }
+
+        PosFkChild.SelectCount(db).ShouldBe(0);
+
+        PosFkChild.DropTable(db).ShouldBeTrue();
+        FkParent.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void EnsureSchema_RequiredColumnWithoutConstantDefault_FailsOrRemainsReadable()
+    {
+        using var db = OpenInMemory();
+
+        // Older shape: the required MigRequiredLabel column does not exist yet. On an EMPTY legacy
+        // table there are no rows to strand as NULL, so the additive migration proceeds and the
+        // migrated table round-trips a fully populated insert.
+        using (IDbCommand create = db.CreateCommand())
+        {
+            create.CommandText = "CREATE TABLE mig_required (MigRequiredId INTEGER PRIMARY KEY)";
+            create.ExecuteNonQuery();
+        }
+
+        MigRequiredEntity.EnsureSchema(db).ShouldBeTrue();
+
+        MigRequiredEntity entity = new() { MigRequiredLabel = "first" };
+        MigRequiredEntity.Insert(db, entity);
+        MigRequiredEntity? readback = MigRequiredEntity.SelectSingle(db, MigRequiredId: entity.MigRequiredId);
+        readback.ShouldNotBeNull();
+        readback!.MigRequiredLabel.ShouldBe("first");
+
+        MigRequiredEntity.DropTable(db).ShouldBeTrue();
+
+        // Older shape again, but POPULATED before the required column is introduced. Adding it
+        // nullable would leave the pre-existing row unreadable through the generated reader, so
+        // EnsureSchema must fail fast instead of reporting success.
+        using (IDbCommand create = db.CreateCommand())
+        {
+            create.CommandText = "CREATE TABLE mig_required (MigRequiredId INTEGER PRIMARY KEY)";
+            create.ExecuteNonQuery();
+        }
+        using (IDbCommand seed = db.CreateCommand())
+        {
+            seed.CommandText = "INSERT INTO mig_required (MigRequiredId) VALUES (1)";
+            seed.ExecuteNonQuery();
+        }
+
+        InvalidOperationException ex = Should.Throw<InvalidOperationException>(() => MigRequiredEntity.EnsureSchema(db));
+        ex.Message.ShouldContain("MigRequiredLabel");
+
+        // The migration aborted before altering the table — the pre-existing row is intact.
+        using (IDbCommand count = db.CreateCommand())
+        {
+            count.CommandText = "SELECT COUNT(*) FROM mig_required";
+            Convert.ToInt64(count.ExecuteScalar()).ShouldBe(1L);
+        }
+
+        MigRequiredEntity.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void EnsureSchema_RawDefaultColumn_FailsOrPreservesComputedDefault()
+    {
+        using var db = OpenInMemory();
+
+        // On an EMPTY legacy table the raw-default column is added (SQLite cannot apply the
+        // database-computed default via ALTER, but there are no rows to strand), and EnsureSchema
+        // reports success.
+        using (IDbCommand create = db.CreateCommand())
+        {
+            create.CommandText = "CREATE TABLE mig_raw (MigRawId INTEGER PRIMARY KEY)";
+            create.ExecuteNonQuery();
+        }
+
+        MigRawEntity.EnsureSchema(db).ShouldBeTrue();
+
+        bool hasColumn = false;
+        using (IDbCommand info = db.CreateCommand())
+        {
+            info.CommandText = "PRAGMA table_info(mig_raw)";
+            using IDataReader r = info.ExecuteReader();
+            while (r.Read())
+            {
+                if (string.Equals(r.GetString(1), "MigRawStamp", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasColumn = true;
+                }
+            }
+        }
+        hasColumn.ShouldBeTrue();
+
+        MigRawEntity.DropTable(db).ShouldBeTrue();
+
+        // On a POPULATED legacy table the raw default cannot backfill the pre-existing row, which
+        // would strand it NULL in a non-nullable slot. EnsureSchema must fail fast.
+        using (IDbCommand create = db.CreateCommand())
+        {
+            create.CommandText = "CREATE TABLE mig_raw (MigRawId INTEGER PRIMARY KEY)";
+            create.ExecuteNonQuery();
+        }
+        using (IDbCommand seed = db.CreateCommand())
+        {
+            seed.CommandText = "INSERT INTO mig_raw (MigRawId) VALUES (1)";
+            seed.ExecuteNonQuery();
+        }
+
+        InvalidOperationException ex = Should.Throw<InvalidOperationException>(() => MigRawEntity.EnsureSchema(db));
+        ex.Message.ShouldContain("MigRawStamp");
+
+        using (IDbCommand count = db.CreateCommand())
+        {
+            count.CommandText = "SELECT COUNT(*) FROM mig_raw";
+            Convert.ToInt64(count.ExecuteScalar()).ShouldBe(1L);
+        }
+
+        MigRawEntity.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ReservedWordColumn_QuotesAndRoundTrips()
+    {
+        using var db = OpenInMemory();
+        ReservedWordEntity.CreateTable(db).ShouldBeTrue();
+
+        var alpha = new ReservedWordEntity { Group = "alpha", Table = 10 };
+        ReservedWordEntity.Insert(db, alpha);
+        alpha.Id.ShouldBeGreaterThan(0);
+
+        ReservedWordEntity.Insert(db, new ReservedWordEntity { Group = "beta", Table = 20 });
+        ReservedWordEntity.Insert(db, new ReservedWordEntity { Group = "gamma", Table = 30 });
+
+        ReservedWordEntity.SelectCount(db).ShouldBe(3);
+
+        // Equality WHERE on a reserved-word column ("Table" = $Table).
+        ReservedWordEntity? single = ReservedWordEntity.SelectSingle(db, Table: 20);
+        single.ShouldNotBeNull();
+        single!.Group.ShouldBe("beta");
+
+        // IN filter ("Group" IN (...)) and ORDER BY on a reserved-word column ("Table" DESC).
+        List<ReservedWordEntity> filtered = ReservedWordEntity.SelectList(
+            db,
+            orderByProperties: new[] { "Table" },
+            orderByDirection: "desc",
+            GroupValues: new[] { "alpha", "gamma" });
+        filtered.Count.ShouldBe(2);
+        filtered[0].Group.ShouldBe("gamma"); // Table = 30 sorts first descending.
+        filtered[1].Group.ShouldBe("alpha");
+
+        // Update round-trips (UPDATE ... SET "Group" = ..., "Table" = ... WHERE "Id" = ...).
+        single.Table = 99;
+        ReservedWordEntity.Update(db, single);
+        ReservedWordEntity.SelectSingle(db, Group: "beta")!.Table.ShouldBe(99);
+
+        // Delete round-trips using a reserved-word equality filter.
+        ReservedWordEntity.Delete(db, Table: 99);
+        ReservedWordEntity.SelectCount(db).ShouldBe(2);
+
+        ReservedWordEntity.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Upsert_UnknownUpdateColumn_FailsPredictably()
+    {
+        using var db = OpenInMemory();
+        Counter.CreateTable(db).ShouldBeTrue();
+
+        Should.Throw<ArgumentException>(() =>
+            Counter.Upsert(
+                db,
+                new Counter { Bucket = "a", Label = "first", Hits = 1 },
+                conflictColumns: new[] { "Bucket" },
+                updateColumns: new[] { "NotAColumn" }));
+
+        Counter.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void IdentityOnlyInsert_UsesDefaultValues_Persists()
+    {
+        using var db = OpenInMemory();
+        IdentityOnlyEntity.CreateTable(db).ShouldBeTrue();
+
+        // An identity-only model has no insertable columns, so the generated INSERT uses
+        // "DEFAULT VALUES". Each insert must persist a row and auto-assign an increasing key.
+        var first = new IdentityOnlyEntity();
+        int firstId = IdentityOnlyEntity.Insert(db, first);
+        firstId.ShouldBeGreaterThan(0);
+        first.Id.ShouldBe(firstId);
+
+        var second = new IdentityOnlyEntity();
+        int secondId = IdentityOnlyEntity.Insert(db, second);
+        secondId.ShouldBeGreaterThan(firstId);
+
+        IdentityOnlyEntity.SelectCount(db).ShouldBe(2);
+
+        IdentityOnlyEntity.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void JsonColumns_ComplexObjectAndLists_RoundTrip()
+    {
+        using SqliteConnection db = OpenInMemory();
+
+        JsonDocEntity.CreateTable(db).ShouldBeTrue();
+
+        JsonDocEntity doc = new()
+        {
+            DocName = "spec",
+            Address = new JsonAddress { Street = "1 Main", City = "Metropolis", Zip = 12345 },
+            Tags = new List<string> { "alpha", "beta", "gamma" },
+            History = new List<JsonAddress>
+            {
+                new() { Street = "2 Old Rd", City = "Gotham", Zip = 54321 },
+                new() { Street = "3 Past Ln", City = "Star City", Zip = 99999 }
+            }
+        };
+
+        int id = JsonDocEntity.Insert(db, doc);
+        id.ShouldBeGreaterThan(0);
+
+        JsonDocEntity? loaded = JsonDocEntity.SelectSingle(db, Id: id);
+        loaded.ShouldNotBeNull();
+        loaded!.DocName.ShouldBe("spec");
+
+        loaded.Address.ShouldNotBeNull();
+        loaded.Address!.Street.ShouldBe("1 Main");
+        loaded.Address.City.ShouldBe("Metropolis");
+        loaded.Address.Zip.ShouldBe(12345);
+
+        loaded.Tags.Count.ShouldBe(3);
+        loaded.Tags.ShouldBe(new[] { "alpha", "beta", "gamma" });
+
+        loaded.History.Count.ShouldBe(2);
+        loaded.History[0].City.ShouldBe("Gotham");
+        loaded.History[0].Zip.ShouldBe(54321);
+        loaded.History[1].Street.ShouldBe("3 Past Ln");
+        loaded.History[1].Zip.ShouldBe(99999);
+
+        JsonDocEntity.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void DateTimeColumns_RoundTrip()
+    {
+        using SqliteConnection db = OpenInMemory();
+
+        TemporalSample.CreateTable(db).ShouldBeTrue();
+
+        DateTime occurred = new(2024, 7, 14, 9, 30, 15);
+        int nullId = TemporalSample.Insert(db, new TemporalSample { OccurredAt = occurred, MaybeAt = null });
+
+        TemporalSample? loadedNull = TemporalSample.SelectSingle(db, Id: nullId);
+        loadedNull.ShouldNotBeNull();
+        loadedNull!.OccurredAt.ShouldBe(occurred);
+        loadedNull.MaybeAt.ShouldBeNull();
+
+        DateTime later = new(2025, 1, 2, 3, 4, 5);
+        int valueId = TemporalSample.Insert(db, new TemporalSample { OccurredAt = occurred, MaybeAt = later });
+
+        TemporalSample? loadedValue = TemporalSample.SelectSingle(db, Id: valueId);
+        loadedValue.ShouldNotBeNull();
+        loadedValue!.OccurredAt.ShouldBe(occurred);
+        loadedValue.MaybeAt.ShouldBe(later);
+
+        TemporalSample.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Column_DateTimeOffset_RoundTrip()
+    {
+        using SqliteConnection db = OpenInMemory();
+
+        DateTimeOffsetSample.CreateTable(db).ShouldBeTrue();
+
+        DateTimeOffset occurred = new(2020, 6, 15, 12, 0, 0, TimeSpan.FromHours(5));
+        int nullId = DateTimeOffsetSample.Insert(db, new DateTimeOffsetSample { OccurredAt = occurred, MaybeAt = null });
+
+        DateTimeOffsetSample? loadedNull = DateTimeOffsetSample.SelectSingle(db, Id: nullId);
+        loadedNull.ShouldNotBeNull();
+        loadedNull!.OccurredAt.Offset.ShouldBe(TimeSpan.FromHours(5));
+        loadedNull.OccurredAt.ShouldBe(occurred);
+        loadedNull.OccurredAt.UtcDateTime.ShouldBe(occurred.UtcDateTime);
+        loadedNull.MaybeAt.ShouldBeNull();
+
+        DateTimeOffset later = new(2025, 1, 2, 3, 4, 5, TimeSpan.FromHours(-8));
+        int valueId = DateTimeOffsetSample.Insert(db, new DateTimeOffsetSample { OccurredAt = occurred, MaybeAt = later });
+
+        DateTimeOffsetSample? loadedValue = DateTimeOffsetSample.SelectSingle(db, Id: valueId);
+        loadedValue.ShouldNotBeNull();
+        loadedValue!.OccurredAt.ShouldBe(occurred);
+        loadedValue.MaybeAt.ShouldNotBeNull();
+        loadedValue.MaybeAt!.Value.Offset.ShouldBe(TimeSpan.FromHours(-8));
+        loadedValue.MaybeAt.Value.ShouldBe(later);
+
+        DateTimeOffsetSample.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void EnumColumn_RoundTrip()
+    {
+        using SqliteConnection db = OpenInMemory();
+
+        EnumRoundTripEntity.CreateTable(db).ShouldBeTrue();
+
+        EnumRoundTripEntity entity = new()
+        {
+            Level = Priority.High,
+            MaybeLevel = Priority.Medium,
+            Tags = [Priority.Low, Priority.High],
+            Buckets = [Priority.Medium, Priority.Medium, Priority.Low]
+        };
+        int id = EnumRoundTripEntity.Insert(db, entity);
+
+        EnumRoundTripEntity? loaded = EnumRoundTripEntity.SelectSingle(db, Id: id);
+        loaded.ShouldNotBeNull();
+        loaded!.Level.ShouldBe(Priority.High);
+        loaded.MaybeLevel.ShouldBe(Priority.Medium);
+        loaded.Tags.ShouldBe(new List<Priority> { Priority.Low, Priority.High });
+        loaded.Buckets.ShouldBe(new[] { Priority.Medium, Priority.Medium, Priority.Low });
+
+        EnumRoundTripEntity nullEntity = new()
+        {
+            Level = Priority.Low,
+            MaybeLevel = null,
+            Tags = [],
+            Buckets = []
+        };
+        int nullId = EnumRoundTripEntity.Insert(db, nullEntity);
+
+        EnumRoundTripEntity? loadedNull = EnumRoundTripEntity.SelectSingle(db, Id: nullId);
+        loadedNull.ShouldNotBeNull();
+        loadedNull!.Level.ShouldBe(Priority.Low);
+        loadedNull.MaybeLevel.ShouldBeNull();
+        loadedNull.Tags.ShouldBeEmpty();
+        loadedNull.Buckets.ShouldBeEmpty();
+
+        EnumRoundTripEntity.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Keyless_UpdateDelete_AffectZeroRows_NoThrow()
+    {
+        using SqliteConnection db = OpenInMemory();
+
+        KeylessLog.CreateTable(db).ShouldBeTrue();
+
+        KeylessLog.Insert(db, new KeylessLog { Message = "boot", Severity = 1 });
+        KeylessLog.Insert(db, new KeylessLog { Message = "warn", Severity = 2 });
+        KeylessLog.SelectCount(db).ShouldBe(2);
+
+        // A keyless model's by-key predicate is "1 = 0": every by-key Update/Delete affects zero
+        // rows and must return without throwing (single and bulk overloads alike).
+        KeylessLog target = new() { Message = "boot", Severity = 9 };
+        Should.NotThrow(() => KeylessLog.Update(db, target));
+        Should.NotThrow(() => KeylessLog.Update(db, new List<KeylessLog> { target }));
+        Should.NotThrow(() => KeylessLog.Delete(db, target));
+        Should.NotThrow(() => KeylessLog.Delete(db, new List<KeylessLog> { target }));
+
+        // No by-key mutation touched a row.
+        KeylessLog.SelectCount(db).ShouldBe(2);
+
+        KeylessLog.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void StaleKey_Update_ThrowsTypedException()
+    {
+        using SqliteConnection db = OpenInMemory();
+
+        Widget.CreateTable(db).ShouldBeTrue();
+
+        Widget live = new() { WidgetLabel = "live", Quantity = 1 };
+        Widget.Insert(db, live);
+
+        // A keyed model's by-key Update/Delete against a stale/already-gone key affects zero rows
+        // and throws the typed exception carrying the model name and offending SQL.
+        Widget ghost = new() { WidgetId = 999999, WidgetLabel = "gone", Quantity = 0 };
+
+        LdgCommandFailedException updateEx =
+            Should.Throw<LdgCommandFailedException>(() => { Widget.Update(db, ghost); });
+        updateEx.ModelName.ShouldBe("Widget");
+        updateEx.Sql.ShouldContain("UPDATE");
+
+        Should.Throw<LdgCommandFailedException>(() => Widget.Delete(db, ghost));
+
+        // The per-call opt-out suppresses the throw for both Update and Delete.
+        Should.NotThrow(() => { Widget.Update(db, ghost, throwOnZeroRowsAffected: false); });
+        Should.NotThrow(() => Widget.Delete(db, ghost, throwOnZeroRowsAffected: false));
+
+        // The real row is untouched throughout.
+        Widget.SelectCount(db).ShouldBe(1);
+
+        Widget.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ForeignKey_OnDeleteSetNull_NullsChildReference()
+    {
+        using SqliteConnection db = OpenInMemory();
+        EnableForeignKeys(db);
+
+        FkParent.CreateTable(db).ShouldBeTrue();
+        SetNullChild.CreateTable(db).ShouldBeTrue();
+
+        FkParent parent = new() { Label = "root" };
+        FkParent.Insert(db, parent);
+
+        int childId = SetNullChild.Insert(db, new SetNullChild { ParentRef = parent.ParentId, Note = "leaf" });
+
+        // ON DELETE SET NULL nulls the referencing column instead of deleting the child row.
+        ExecuteSql(db, "DELETE FROM fk_parents WHERE ParentId = " + parent.ParentId + ";");
+
+        SetNullChild? loaded = SetNullChild.SelectSingle(db, ChildId: childId);
+        loaded.ShouldNotBeNull();
+        loaded!.ParentRef.ShouldBeNull();
+
+        SetNullChild.DropTable(db).ShouldBeTrue();
+        FkParent.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ForeignKey_OnDeleteRestrict_BlocksParentDelete()
+    {
+        using SqliteConnection db = OpenInMemory();
+        EnableForeignKeys(db);
+
+        FkParent.CreateTable(db).ShouldBeTrue();
+        RestrictChild.CreateTable(db).ShouldBeTrue();
+
+        FkParent parent = new() { Label = "root" };
+        FkParent.Insert(db, parent);
+        RestrictChild.Insert(db, new RestrictChild { ParentRef = parent.ParentId, Note = "leaf" });
+
+        // ON DELETE RESTRICT rejects deleting a parent that still has referencing children.
+        Should.Throw<SqliteException>(() =>
+            ExecuteSql(db, "DELETE FROM fk_parents WHERE ParentId = " + parent.ParentId + ";"));
+
+        RestrictChild.SelectCount(db).ShouldBe(1);
+
+        RestrictChild.DropTable(db).ShouldBeTrue();
+        FkParent.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void CompositeForeignKey_OnDeleteCascade_RemovesChildRows()
+    {
+        using SqliteConnection db = OpenInMemory();
+        EnableForeignKeys(db);
+
+        UserWebsite.CreateTable(db).ShouldBeTrue();
+        Membership.CreateTable(db).ShouldBeTrue();
+
+        UserWebsite parent = new() { UserId = 1, WebsiteId = 100, Role = "owner" };
+        UserWebsite.Insert(db, parent);
+
+        Membership.Insert(db, new Membership { RefUserId = 1, RefWebsiteId = 100, MemberRole = "admin" });
+        Membership.Insert(db, new Membership { RefUserId = 1, RefWebsiteId = 100, MemberRole = "editor" });
+        Membership.SelectCount(db).ShouldBe(2);
+
+        // Deleting the composite parent row must cascade through the composite FOREIGN KEY, which
+        // only works if the emitted FOREIGN KEY (...) REFERENCES ... (...) DDL actually executed.
+        ExecuteSql(db, "DELETE FROM user_websites WHERE UserId = 1 AND WebsiteId = 100;");
+
+        Membership.SelectCount(db).ShouldBe(0);
+
+        Membership.DropTable(db).ShouldBeTrue();
+        UserWebsite.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void DynamicTableName_SameModelTargetsMultipleTables()
+    {
+        using SqliteConnection db = OpenInMemory();
+
+        // One model materialized into two independent physical tables via the dbTableName argument.
+        DynEvent.CreateTable(db, "dyn_events_live").ShouldBeTrue();
+        DynEvent.CreateTable(db, "dyn_events_archive").ShouldBeTrue();
+
+        int liveId = DynEvent.Insert(db, new DynEvent { Payload = "live-1" }, dbTableName: "dyn_events_live");
+        liveId.ShouldBeGreaterThan(0);
+        DynEvent.Insert(db, new DynEvent { Payload = "arch-1" }, dbTableName: "dyn_events_archive");
+
+        DynEvent.SelectCount(db, dbTableName: "dyn_events_live").ShouldBe(1);
+        DynEvent.SelectCount(db, dbTableName: "dyn_events_archive").ShouldBe(1);
+
+        DynEvent? liveLoaded = DynEvent.SelectSingle(db, dbTableName: "dyn_events_live", EventId: liveId);
+        liveLoaded.ShouldNotBeNull();
+        liveLoaded!.Payload.ShouldBe("live-1");
+
+        DynEvent.SelectList(db, dbTableName: "dyn_events_archive")
+            .ShouldHaveSingleItem().Payload.ShouldBe("arch-1");
+
+        DynEvent.DropTable(db, "dyn_events_live").ShouldBeTrue();
+        DynEvent.DropTable(db, "dyn_events_archive").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ReservedWordTableName_RoundTrips()
+    {
+        using SqliteConnection db = OpenInMemory();
+
+        // "Order" is a SQL reserved word; the generated DDL/DML must quote the compile-time default
+        // table name at every bare-identifier site for create/insert/select/update/delete to work.
+        ReservedTableEntity.CreateTable(db).ShouldBeTrue();
+        ReservedTableEntity.EnsureSchema(db).ShouldBeTrue();
+
+        int id = ReservedTableEntity.Insert(db, new ReservedTableEntity { ReservedLabel = "first" });
+        id.ShouldBeGreaterThan(0);
+        ReservedTableEntity.Insert(db, new ReservedTableEntity { ReservedLabel = "second" });
+
+        ReservedTableEntity.SelectCount(db).ShouldBe(2);
+
+        ReservedTableEntity? loaded = ReservedTableEntity.SelectSingle(db, ReservedId: id);
+        loaded.ShouldNotBeNull();
+        loaded!.ReservedLabel.ShouldBe("first");
+
+        loaded.ReservedLabel = "first-updated";
+        ReservedTableEntity.Update(db, loaded);
+        ReservedTableEntity.SelectSingle(db, ReservedId: id)!.ReservedLabel.ShouldBe("first-updated");
+
+        ReservedTableEntity.Delete(db, loaded);
+        ReservedTableEntity.SelectCount(db).ShouldBe(1);
+
+        ReservedTableEntity.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void GetIndex_Concurrent_AssignsUniquePerTableKeys()
+    {
+        // DynEvent has DynamicTableNames + an integer identity key, so its client-side key counter
+        // must be per-table and atomic. Parallel GetIndex calls on one table must never collide, and
+        // two distinct tables must not share a counter. These table names are unique to this test so
+        // the process-global per-table counters start empty.
+        const int perTable = 1000;
+        System.Collections.Concurrent.ConcurrentBag<int> alpha = [];
+        System.Collections.Concurrent.ConcurrentBag<int> beta = [];
+
+        Parallel.For(0, perTable, _ =>
+        {
+            alpha.Add(DynEvent.GetIndex("dyn_conc_alpha"));
+            beta.Add(DynEvent.GetIndex("dyn_conc_beta"));
+        });
+
+        // Atomic increment => every value handed out within a table is distinct.
+        alpha.Count.ShouldBe(perTable);
+        alpha.Distinct().Count().ShouldBe(perTable);
+        beta.Distinct().Count().ShouldBe(perTable);
+
+        // Per-table counters => each sequence is independently 1..perTable. A single shared counter
+        // would instead spread 1..(2*perTable) across the two bags (distinct union == 2*perTable).
+        alpha.Concat(beta).Distinct().Count().ShouldBe(perTable);
+        alpha.OrderBy(x => x).ShouldBe(Enumerable.Range(1, perTable));
+        beta.OrderBy(x => x).ShouldBe(Enumerable.Range(1, perTable));
+    }
+
+    [Theory]
+    [InlineData("!=", 30, 3)]               // {10, 20, 40}
+    [InlineData(">", 30, 1)]                // {40}
+    [InlineData("<", 30, 2)]                // {10, 20}
+    [InlineData("<=", 30, 3)]               // {10, 20, 30}
+    [InlineData("LessThanOrEqual", 30, 3)]  // named spelling of "<="
+    public void NumericOperator_FiltersCorrectly(string ageOperator, int age, int expectedCount)
+    {
+        // The generated numeric filter resolves an operator token/spelling to a SQL comparator via
+        // getNumericOperator. Seeding known ages and filtering with each operator proves a wrong
+        // mapping in that switch would change the returned row set.
+        using var db = OpenInMemory();
+        Customer.CreateTable(db).ShouldBeTrue();
+        new List<Customer>
+        {
+            NewCustomer("age10", 10, 1, 1),
+            NewCustomer("age20", 20, 1, 1),
+            NewCustomer("age30", 30, 1, 1),
+            NewCustomer("age40", 40, 1, 1),
+        }.Insert(db);
+
+        List<Customer> filtered = Customer.SelectList(db, Age: age, AgeOperator: ageOperator);
+
+        filtered.Count.ShouldBe(expectedCount);
+    }
+
+    [Fact]
+    public void Insert_WithInsertPrimaryKey_PersistsSuppliedIdentityKey()
+    {
+        using SqliteConnection db = OpenInMemory();
+
+        Widget.CreateTable(db).ShouldBeTrue();
+
+        // insertPrimaryKey: true includes the identity column in the INSERT so the caller-supplied
+        // key is stored verbatim instead of being auto-assigned.
+        Widget.Insert(db, new Widget { WidgetId = 5000, WidgetLabel = "explicit", Quantity = 7 }, insertPrimaryKey: true);
+
+        Widget? loaded = Widget.SelectSingle(db, WidgetId: 5000);
+        loaded.ShouldNotBeNull();
+        loaded!.WidgetId.ShouldBe(5000);
+        loaded.WidgetLabel.ShouldBe("explicit");
+        loaded.Quantity.ShouldBe(7);
+
+        Widget.DropTable(db).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void SelectEnumerable_IsLazyAndDisposesOnPartialEnumeration()
+    {
+        using SqliteConnection db = OpenInMemory();
+
+        Widget.CreateTable(db).ShouldBeTrue();
+        for (int i = 0; i < 5; i++)
+        {
+            Widget.Insert(db, new Widget { WidgetLabel = "w" + i, Quantity = i });
+        }
+
+        IEnumerable<Widget> streamed = Widget.SelectEnumerable(db, orderByProperties: new[] { "WidgetId" });
+
+        // Abandoning the enumeration after two items must dispose the command/reader deterministically
+        // (the generated iterator scopes both in `using`), leaving the connection fully usable.
+        using (IEnumerator<Widget> enumerator = streamed.GetEnumerator())
+        {
+            enumerator.MoveNext().ShouldBeTrue();
+            enumerator.Current.WidgetLabel.ShouldBe("w0");
+            enumerator.MoveNext().ShouldBeTrue();
+            enumerator.Current.WidgetLabel.ShouldBe("w1");
+        }
+
+        Widget.SelectCount(db).ShouldBe(5);
+        Widget.SelectEnumerable(db).Count().ShouldBe(5);
+
+        Widget.DropTable(db).ShouldBeTrue();
+    }
+
+    private static void EnableForeignKeys(IDbConnection db)
+    {
+        using IDbCommand pragma = db.CreateCommand();
+        pragma.CommandText = "PRAGMA foreign_keys = ON;";
+        pragma.ExecuteNonQuery();
+    }
+
+    private static void ExecuteSql(IDbConnection db, string sql)
+    {
+        using IDbCommand command = db.CreateCommand();
+        command.CommandText = sql;
+        command.ExecuteNonQuery();
     }
 
     private static SqliteConnection OpenInMemory()

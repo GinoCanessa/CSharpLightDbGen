@@ -10,7 +10,7 @@ public class LightSQLiteGenerator_FilterParityTests
     public void GeneratedMethods_Include_CompareStringsWithLike_OnQueryMethods()
     {
         var run = GeneratorTestHost.Run(FixtureSources.BasicTableFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntitySQLite.g.cs");
+        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntity.Table.g.cs");
 
         source.ShouldContain("SelectSingle(");
         source.ShouldContain("SelectList(");
@@ -24,13 +24,13 @@ public class LightSQLiteGenerator_FilterParityTests
     public void GeneratedFilters_Include_NullTriState_ValuesIn_AndNumericOperators()
     {
         var run = GeneratorTestHost.Run(FixtureSources.BasicTableFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntitySQLite.g.cs");
+        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntity.Table.g.cs");
 
         source.ShouldContain("bool? OptionalScoreIsNull = null");
         source.ShouldContain("IEnumerable<int>? ParentKeyValues = null");
         source.ShouldContain("string ParentKeyOperator");
         source.ShouldContain("getNumericOperator(ParentKeyOperator)");
-        source.ShouldContain("ParentKey IN ");
+        source.ShouldContain("\\\"ParentKey\\\" IN ");
         source.ShouldContain("vParamNames");
     }
 
@@ -38,7 +38,7 @@ public class LightSQLiteGenerator_FilterParityTests
     public void GeneratedCode_Contains_SelectEnumerable_AndExtensionWrapper()
     {
         var run = GeneratorTestHost.Run(FixtureSources.BasicTableFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntitySQLite.g.cs");
+        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntity.Table.g.cs");
 
         source.ShouldContain("public static IEnumerable<BasicEntity> SelectEnumerable(");
         source.ShouldContain("public static IEnumerable<BasicEntity> SelectEnumerable<T>(");

@@ -6,9 +6,9 @@ This guide is intended for developers starting work on `CSharpLightDbGen`.
 
 `CSharpLightDbGen` generates SQLite data-access code at compile time for attributed `partial` classes/records. It provides:
 
-- schema lifecycle helpers (`CreateTable`, `DropTable`),
+- schema lifecycle helpers (`CreateTable`, `DropTable`, `EnsureSchema`),
 - query helpers (`SelectSingle/List/Enumerable/Dict/Count`),
-- mutation helpers (`Insert`, `Update`, `Delete`),
+- mutation helpers (`Insert`, `InsertReturning`, `Update`, `UpdateReturning`, `Upsert`, `Delete`),
 - optional full-text-search generation via SQLite FTS5.
 
 ## 2) First-Day Setup
@@ -32,7 +32,9 @@ If these pass, your local dev environment is ready.
 Read in order:
 
 1. `src/cslightdbgen.sqlitegen/GeneratorAttributes.cs`
-2. `src/cslightdbgen.sqlitegen/LightSQLiteGenerator.cs`
+2. `src/cslightdbgen.sqlitegen/GeneratorModel.cs`
+3. `src/cslightdbgen.sqlitegen/GeneratorDiagnostics.cs`
+4. `src/cslightdbgen.sqlitegen/LightSQLiteGenerator.cs`
 
 Focus on:
 
@@ -105,11 +107,11 @@ This gives baseline comparisons versus Dapper and EF Core.
 
 ## 6) Gotchas You Should Know Early
 
-- Generator matching uses attribute name strings; attribute naming/qualification style matters.
+- Generator attribute discovery is primarily metadata-name based: the two table/FTS providers use Roslyn's `ForAttributeWithMetadataName` (fully-qualified metadata name). Base-class and syntax detection still consult the attribute name-string sets (`_ldAttributes` / `_ldClassAttributes`), so attribute naming/qualification style still matters for that residual path.
 - Inheritance member collection is based on base-type name lookup.
 - Complex/custom properties are serialized as JSON and parsed back.
 - FTS `sanitizeText=true` path strips HTML tags before insert.
-- Integration tests currently expect single-object delete overloads to throw under current runtime behavior; do not “fix” this without changing intended contract and tests.
+- Keyed by-key `Update`/`Delete` **throw** a typed `LdgCommandFailedException` when they affect zero rows (for example a stale or already-deleted key). This is the intended, documented contract — opt out per call with `throwOnZeroRowsAffected: false`. Keyless models (no primary key) use a `1 = 0` by-key predicate, never affect rows, and never throw (they omit the opt-out parameter entirely).
 
 ## 7) Where to Go Next
 

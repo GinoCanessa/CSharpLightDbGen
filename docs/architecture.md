@@ -28,11 +28,16 @@ Provides attribute source text injected into consuming compilations:
 - `LdgSQLiteIndex`
 - `LdgSQLiteKey`
 - `LdgSQLiteForeignKey`
+- `LdgSQLiteForeignKeyComposite`
 - `LdgSQLiteIgnore`
 - `LdgSQLiteUnique`
 - `LdgSQLiteMultiSelect`
+- `LdgSQLiteDefault`
 - `LdgSQLiteFtsTable`
 - `LdgSQLiteFtsUnindexed`
+
+These attribute types are emitted as **`public`** (not `internal`) so that models and generated APIs
+remain usable across assembly boundaries in a multi-project solution (see [Multi-Project Placement](#4-multi-project-placement-cs0436)).
 
 ### 2) Incremental Generator (`LightSQLiteGenerator.cs`)
 
@@ -47,9 +52,9 @@ Implements `IIncrementalGenerator` and does the following:
 
 For regular table models (`[LdgSQLiteTable]`):
 
-- DDL: create/drop table, index creation
+- DDL: create/drop table, index creation, additive `EnsureSchema` migration
 - Queries: `SelectSingle`, `SelectList`, `SelectEnumerable`, `SelectDict`, `SelectCount`
-- Mutations: `Insert`, `Update`, `Delete`
+- Mutations: `Insert`, `InsertReturning`, `Update`, `UpdateReturning`, `Upsert`, `Delete`
 - Helpers: max-key loading, numeric operator mapping, JSON serialization/parsing helpers
 - Extensions: convenience overloads on `IDbConnection`, model instances, and collections
 
@@ -59,6 +64,27 @@ For FTS models (`[LdgSQLiteFtsTable]`):
 - Population from source table (`Populate`)
 - Search by term list (`MATCH`) and count
 - Optional text sanitization with HTML stripping
+
+### 4) Multi-Project Placement (CS0436)
+
+Attribute definitions are added via `RegisterPostInitializationOutput`, so **every project that runs
+the analyzer** gets its own copy of the (public) attribute types. Because the types are public and the
+generated DAL is public and `static`, the supported multi-project model is:
+
+- **Host the analyzer in exactly one project.** Other projects take an ordinary `ProjectReference`
+  (without `OutputItemType="Analyzer"`) to that project and consume the generated public DAL and
+  public attribute types as metadata. The attribute types are declared once, so there is no
+  duplicate-type conflict.
+- **If two mutually-referencing projects both host the analyzer**, the downstream project sees the
+  attribute types both in its own source-generated output and in the referenced assembly's metadata.
+  The compiler reports **`CS0436`** ("type conflicts with the imported type") — a **warning**, not an
+  error; the build still succeeds using the locally-generated copy. The recommended fix is the
+  single-host topology above; alternatively the consuming project can set
+  `<NoWarn>$(NoWarn);CS0436</NoWarn>`.
+
+The attributes are intentionally **not** internalized: internal attribute types would break the
+first (recommended) topology, where downstream projects reference the generated types across the
+assembly boundary.
 
 ## Runtime Boundary
 
@@ -77,6 +103,16 @@ This keeps the generator package lean and lets consuming applications choose the
 
 ## Known Architectural Tradeoffs
 
-- Attribute detection is name-string based; naming/qualification conventions matter.
+- Attribute discovery is primarily metadata-name based (Roslyn `ForAttributeWithMetadataName` for the `[LdgSQLiteTable]`/`[LdgSQLiteFtsTable]` providers); base-class and syntax detection still use the attribute name-string sets (`_ldAttributes` / `_ldClassAttributes`), so naming/qualification conventions still matter for that residual path.
 - `orderByProperties` and table names are interpolated SQL fragments; they should be treated as trusted internal inputs.
 - Base-member discovery is type-name based in generator logic, which can be ambiguous in duplicate-name namespace scenarios.
+- **Auto-increment identity keys use a process-wide `static` counter (`_indexValue`) per generated
+  model.** `GetIndex()` (`Interlocked.Increment`) hands out the next integer key, and
+  `LoadMaxKey` — invoked by `EnsureSchema`/`CreateTable` for identity models — seeds it from
+  `SELECT MAX(key)` on a single connection. Because the counter is shared across every
+  `IDbConnection` used with that model in the process, the generated identity assignment assumes
+  **one logical database per model type per process**. Using the same model against multiple
+  databases concurrently (or mutating the table out-of-band) can desynchronize the counter; re-seed
+  it with `LoadMaxKey` against the target connection, or supply keys explicitly. Natural-key
+  (`string`/`Guid`), composite-key, and keyless models are inserted explicitly, never auto-assigned,
+  and so are unaffected.

@@ -51,7 +51,8 @@ sequenceDiagram
   - equality and optional `LIKE` for strings,
   - numeric operator switch (`=`, `!=`, `>`, `>=`, `<`, `<=` and named aliases),
   - nullable tri-state (`PropertyIsNull == true/false/null`),
-  - `PropertyValues` list for `IN (...)` on `*Key` style columns.
+  - `PropertyValues` list for `IN (...)` and `PropertyNotInValues` list for `NOT IN (...)`, generated for any `[LdgSQLiteMultiSelect]` property, the primary key, or (legacy heuristic) a `*Key`-style column.
+- Additional runtime paths beyond basic CRUD: `EnsureSchema` (additive, non-destructive migration), `Upsert` (`INSERT … ON CONFLICT`), and `InsertReturning`/`UpdateReturning` (write plus `RETURNING` hydration in a single round-trip).
 
 ## 3) Runtime FTS Flow (Generated FTS Models)
 

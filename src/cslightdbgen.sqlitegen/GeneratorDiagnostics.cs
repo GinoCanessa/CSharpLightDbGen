@@ -1,0 +1,74 @@
+using Microsoft.CodeAnalysis;
+
+namespace CsLightDbGen.SQLiteGenerator;
+
+/// <summary>
+/// Central registry of <see cref="DiagnosticDescriptor"/>s reported by the generator, plus small
+/// helpers for reporting them. The generator must never <c>throw</c> from its pipeline; a malformed,
+/// degenerate, or unsupported model is reported through one of these descriptors and gracefully
+/// skipped instead of aborting all generation with a <c>CS8785</c>.
+/// </summary>
+internal static class GeneratorDiagnostics
+{
+    public const string Category = "CsLightDbGen.SQLiteGenerator";
+
+    /// <summary>CSLDG001 — a value-type property has no SQLite scalar mapping and cannot be persisted.</summary>
+    public static readonly DiagnosticDescriptor UnmappedValueTypeColumn = new(
+        id: "CSLDG001",
+        title: "Unmapped value-type column",
+        messageFormat: "Property '{0}' on '{1}' has value type '{2}' with no SQLite scalar mapping and cannot be persisted (value-type JSON is not supported)",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    /// <summary>CSLDG003 — a composite primary key was combined with AutoIncrement.</summary>
+    public static readonly DiagnosticDescriptor CompositeKeyAutoIncrementConflict = new(
+        id: "CSLDG003",
+        title: "Composite primary key cannot auto-increment",
+        messageFormat: "Model '{0}' declares a composite primary key but requests AutoIncrement on '{1}', which SQLite supports only for a single INTEGER primary key",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    /// <summary>CSLDG005 — an unsupported key / foreign-key attribute combination.</summary>
+    public static readonly DiagnosticDescriptor UnsupportedKeyOrForeignKeyCombination = new(
+        id: "CSLDG005",
+        title: "Unsupported key or foreign-key attribute combination",
+        messageFormat: "Property '{0}' on '{1}' uses an unsupported key or foreign-key attribute combination: {2}",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    /// <summary>CSLDG006 — an FTS model's source table could not be resolved to a generated table.</summary>
+    public static readonly DiagnosticDescriptor FtsSourceTableUnresolved = new(
+        id: "CSLDG006",
+        title: "FTS source table unresolved",
+        messageFormat: "FTS model '{0}' references source table '{1}', which does not correspond to a generated table in this compilation",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    /// <summary>Reports <paramref name="descriptor"/> at an explicit location (or none).</summary>
+    public static void Report(
+        SourceProductionContext context,
+        DiagnosticDescriptor descriptor,
+        Location? location,
+        params object?[] messageArgs)
+    {
+        context.ReportDiagnostic(Diagnostic.Create(descriptor, location ?? Location.None, messageArgs));
+    }
+
+    /// <summary>Reports <paramref name="descriptor"/> at <paramref name="symbol"/>'s first declaration location.</summary>
+    public static void Report(
+        SourceProductionContext context,
+        DiagnosticDescriptor descriptor,
+        ISymbol? symbol,
+        params object?[] messageArgs)
+    {
+        Location location = symbol != null && symbol.Locations.Length > 0
+            ? symbol.Locations[0]
+            : Location.None;
+
+        context.ReportDiagnostic(Diagnostic.Create(descriptor, location, messageArgs));
+    }
+}

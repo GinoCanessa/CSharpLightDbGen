@@ -10,37 +10,68 @@ public class LightSQLiteGenerator_MultiSelectTests
     public void ExplicitAttribute_EmitsValuesParameter_OnNonKeyProperty()
     {
         var run = GeneratorTestHost.Run(FixtureSources.MultiSelectFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MultiSelectTargetSQLite.g.cs");
+        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MultiSelectTarget.Table.g.cs");
 
         source.ShouldContain("IEnumerable<string>? SlugValues = null");
-        source.ShouldContain("Slug IN ");
+        source.ShouldContain("\\\"Slug\\\" IN ");
+    }
+
+    [Fact]
+    public void ExplicitAttribute_EmitsNotInValuesParameter_OnNonKeyProperty()
+    {
+        GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.MultiSelectFixture);
+        string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MultiSelectTarget.Table.g.cs");
+
+        source.ShouldContain("IEnumerable<string>? SlugNotInValues = null");
+        source.ShouldContain("\\\"Slug\\\" NOT IN ");
+    }
+
+    [Fact]
+    public void NotIn_UsesDistinctParameterNames_FromIn()
+    {
+        GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.MultiSelectFixture);
+        string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MultiSelectTarget.Table.g.cs");
+
+        // NOT IN binds its own parameters so an IN + NOT IN filter on the same column cannot
+        // collide in command.Parameters.
+        source.ShouldContain("SlugNotInParam");
+        source.ShouldContain("SlugNotInValuesList");
+    }
+
+    [Fact]
+    public void NonScalarProperty_WithMultiSelectAttribute_DoesNotEmitNotInValuesParameter()
+    {
+        GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.MultiSelectFixture);
+        string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MultiSelectTarget.Table.g.cs");
+
+        source.ShouldNotContain("TagsNotInValues");
     }
 
     [Fact]
     public void PrimaryKey_EmitsValuesParameter_Automatically()
     {
         var run = GeneratorTestHost.Run(FixtureSources.MultiSelectFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MultiSelectTargetSQLite.g.cs");
+        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MultiSelectTarget.Table.g.cs");
 
         source.ShouldContain("IEnumerable<int>? IdValues = null");
-        source.ShouldContain("Id IN ");
+        source.ShouldContain("\\\"Id\\\" IN ");
     }
 
     [Fact]
     public void LegacyKeyNameHeuristic_StillEmitsValuesParameter()
     {
         var run = GeneratorTestHost.Run(FixtureSources.BasicTableFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntitySQLite.g.cs");
+        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntity.Table.g.cs");
 
         source.ShouldContain("IEnumerable<int>? ParentKeyValues = null");
-        source.ShouldContain("ParentKey IN ");
+        source.ShouldContain("\\\"ParentKey\\\" IN ");
     }
 
     [Fact]
     public void NonScalarProperty_WithMultiSelectAttribute_DoesNotEmitValuesParameter()
     {
         var run = GeneratorTestHost.Run(FixtureSources.MultiSelectFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MultiSelectTargetSQLite.g.cs");
+        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MultiSelectTarget.Table.g.cs");
 
         source.ShouldNotContain("TagsValues");
     }
@@ -49,7 +80,7 @@ public class LightSQLiteGenerator_MultiSelectTests
     public void Delete_SignatureIncludes_ValuesParameter()
     {
         var run = GeneratorTestHost.Run(FixtureSources.MultiSelectFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MultiSelectTargetSQLite.g.cs");
+        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MultiSelectTarget.Table.g.cs");
 
         int deleteIdx = source.IndexOf("public static void Delete(\n");
         if (deleteIdx < 0)
@@ -68,7 +99,7 @@ public class LightSQLiteGenerator_MultiSelectTests
     public void EnumerableMaterialization_IsPresentInGeneratedCode()
     {
         var run = GeneratorTestHost.Run(FixtureSources.MultiSelectFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MultiSelectTargetSQLite.g.cs");
+        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MultiSelectTarget.Table.g.cs");
 
         source.ShouldContain("SlugValuesList");
         source.ShouldContain("as List<string>");
