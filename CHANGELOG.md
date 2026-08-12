@@ -10,8 +10,7 @@ collects user-visible changes newer than the latest published version.
 
 ## [Unreleased]
 
-<!-- Maintainer note: when this batch is published to nuget.org, move CSLDG001/003/005/006
-     from AnalyzerReleases.Unshipped.md into AnalyzerReleases.Shipped.md under that release header. -->
+## [2026.716.1308] - 2026-07-16
 
 ### Added
 
