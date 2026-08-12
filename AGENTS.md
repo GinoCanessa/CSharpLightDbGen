@@ -314,8 +314,10 @@ Rules for the block:
 
 Note on the changelog: `CHANGELOG.md` groups entries by the date-based version
 actually published to nuget.org, and `[Unreleased]` collects everything newer
-than the latest published version. Entries always go under `[Unreleased]`;
-never invent a version header.
+than the latest published version. Entries always go under `[Unreleased]`, and
+a version header is never invented for unpublished work. The one time a version
+header is created is the publish-time roll of `[Unreleased]` into the version
+that was actually pushed — a defined step in `docs/releasing.md`.
 
 ---
 
@@ -354,11 +356,13 @@ scratch/<MMDD>-<##>/
   `AnalyzerReleases.Unshipped.md`** in the same change. Both ledgers are
   `AdditionalFiles` and the release-tracking analyzer fails the build when a
   descriptor is missing from them. On publish, rules move from `Unshipped` to
-  `AnalyzerReleases.Shipped.md` under the released version header — there is a
-  maintainer note in `CHANGELOG.md` tracking the pending move.
+  `AnalyzerReleases.Shipped.md` under the released version header — that move,
+  and the rest of the post-publish bookkeeping, is written down in
+  `docs/releasing.md`.
 - **`docs/` is expected to stay true.** `docs/dependencies.md` mirrors the
   `csproj` package versions; `docs/api-contracts.md`, `docs/commands.md`, and
-  `docs/process-flows.md` describe generated API and generator behavior.
+  `docs/process-flows.md` describe generated API and generator behavior;
+  `docs/releasing.md` describes the post-publish bookkeeping procedure.
   A change to any of those must update the corresponding doc.
 - **`obj/` and `bin/` are off-limits for editing.** Generated `*.g.cs` under
   `obj/` is build output; to change it, change the generator.
