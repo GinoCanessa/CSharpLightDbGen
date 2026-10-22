@@ -1,6 +1,6 @@
 ---
 name: dev-request
-description: "Drafts and iterates on local-development feature requests in the role of a staff-level Product Manager. USE FOR: capturing a new feature idea as a structured `featurerequest.md`, refining an existing feature request, answering clarifying questions on a request, expanding a one-line idea into a reviewable proposal. Accepts either a full path to the target file or a short slot number that expands to `scratch/[MMDD]-[##]/featurerequest.md`, and optionally an existing GitHub issue reference to seed the draft from and link to. Pairs with `dev-report` (bugs), `dev-plan` (implementation plan from a request), `dev-do` (execute a plan), `dev-review` (review the result), `dev-issue` (publish the request to GitHub), and `dev-pr-open` (push and open the PR)."
+description: "Drafts and iterates on local-development feature requests in the role of a staff-level Product Manager. USE FOR: capturing a new feature idea as a structured `featurerequest.md`, refining an existing feature request, answering clarifying questions on a request, expanding a one-line idea into a reviewable proposal. Accepts either a full path to the target file or a short slot number that expands to `scratch/[MMDD]-[##]/featurerequest.md`, and optionally an existing GitHub issue reference to seed the draft from and link to. Pairs with `dev-report` (bugs), `dev-approach` (contest the solution shape), `dev-plan` (implementation plan from a request), `dev-do` (execute a plan), `dev-review` (review the result), `dev-issue` (publish the request to GitHub), and `dev-pr-open` (push and open the PR)."
 ---
 
 # Dev Request Skill
@@ -90,6 +90,10 @@ summarize what's there, and ask what they want changed.
 1. **Resolve the target path.** If it's a number, expand to
    `scratch/<MMDD>-<##>/featurerequest.md` using today's date. Echo the
    resolved path.
+   If that directory's `request.md` carries
+   `| Workflow | dev-explore |`, stop and ask for a different slot.
+   Do not convert a documentation exploration into implementation work
+   or overwrite its request, including through a custom target filename.
 2. **Load existing content** if the file is present.
 3. **Reconcile new input** with existing content (or treat as a fresh
    draft).
@@ -254,6 +258,22 @@ the same judgment you would on any other pass. When a `Status` change
 does follow, the gated hand-off offer below is made **after** the
 walkthrough closes, once.
 
+## Approach Hand-off
+
+When you set `Status` to `Ready-for-plan`, close your report with one
+offer:
+
+> *"Status is Ready-for-plan. Want three competing solution shapes
+> before planning? (`dev-approach <slot>`)"*
+
+Unlike the GitHub hand-off below, this offer is **not gated** — it is
+made whether or not the integration is on, because `dev-approach` writes
+only to `scratch/` and never touches GitHub.
+
+It is still an **offer**: make it once, and declining is normal and
+changes nothing. `dev-approach` is optional, and going straight to
+`dev-plan` is a fully-supported path.
+
 ## GitHub Integration (optional)
 
 **Gate.** If `AGENTS.md` has no `## GitHub Integration` section, or its
@@ -316,7 +336,9 @@ command itself.
   wall of questions is not a walkthrough.
 - **Do not modify `bugreport.md` or `plan.md`** in the same slot — those
   are owned by `dev-report` and `dev-plan` respectively. The same goes
-  for `analysis.md`, which is owned by `dev-review`.
+  for `review.md`, which is owned by `dev-review`, and for
+  `approach-a.md`, `approach-b.md`, `approach-c.md`, and `approach.md`,
+  which are owned by `dev-approach`.
 - **You write the `Issue` row only at seed time.** After that, the row
   belongs to `dev-issue`. The **no-downgrade ratchet** applies: never
   replace an existing `#N` with `not published`. If two sources

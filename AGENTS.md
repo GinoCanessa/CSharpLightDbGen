@@ -243,6 +243,11 @@ These are decisions, not preferences. Violating one is a review Blocker.
   identifier or an unparameterized value is a security finding.
 - **Diagnostic IDs are permanent.** A `CSLDG###` ID is never reused for a
   different meaning and never renumbered once shipped.
+- **Documentation exploration stays documentation-only.** `dev-explore`
+  may write its own slot artifacts and manifest-listed documentation
+  output, never application code, dependencies, configuration, or git
+  history. Static HTML assets are part of the documentation deliverable.
+  Exploration and implementation slots are separate.
 
 ---
 
@@ -329,9 +334,32 @@ Local inner-loop work is organized into **slots** under `scratch/`:
 scratch/<MMDD>-<##>/
   featurerequest.md    # authored by the dev-request skill
   bugreport.md         # authored by the dev-report skill
+  approach-a.md        # authored by dev-approach (minimum change)
+  approach-b.md        # authored by dev-approach (cleanest architecture)
+  approach-c.md        # authored by dev-approach (unconstrained)
+  approach.md          # authored by dev-approach (the judge's selection)
   plan.md              # authored by dev-plan, updated by dev-do
-  analysis.md          # authored by dev-review
+  review.md            # authored by dev-review
 ```
+
+Use a **separate exploration slot** for `dev-explore`:
+
+```text
+scratch\<MMDD>-<##>\
+  request.md           # Workflow: dev-explore; options, state, manifest
+  approaches.md        # competing documentation shapes and selection
+  sources.md           # source inventory and evidence map
+  outline.md           # pages, sections, and question coverage
+  review.md            # review of the current deliverable
+  output\              # default generated documentation directory
+    README.md          # Markdown entry, or index.html for HTML
+```
+
+`dev-explore` owns these artifacts, never calls the implementation or
+publishing loop, and never commits. `output` may explicitly name a
+dedicated documentation directory outside scratch; it must be empty or
+already owned by that exploration. Existing manual edits are protected.
+An exploration carries no `Issue` binding.
 
 - `<MMDD>` is the local date (zero-padded month + day); `<##>` is a
   zero-padded two-digit slot number.
@@ -348,7 +376,11 @@ scratch/<MMDD>-<##>/
 - Read this file before proposing any build, test, or lint command. **Never
   invent a command.** If something you need is not documented here, say so
   rather than guessing.
-- Subagents must use the same model configuration as the spawning agent.
+- Subagents follow the **subagent model policy** recorded below.
+- `dev-explore` defaults to automatic decisions and uses the same model
+  policy. Explicit per-run model selections do not rewrite this file.
+  Its concurrency and total-child budgets include rechecks and retries;
+  resuming does not reset cumulative spend.
 - Do not add new linting, building, or testing tooling without being asked.
 - Prefer the smallest targeted verification that covers the change; escalate
   to the full suite only when the targeted run indicates it is needed.
@@ -367,3 +399,29 @@ scratch/<MMDD>-<##>/
 - **`obj/` and `bin/` are off-limits for editing.** Generated `*.g.cs` under
   `obj/` is build output; to change it, change the generator.
 - Do not hand-edit version numbers — they are computed from the build date.
+
+### Subagent model policy
+
+Every `dev-*` skill that fans out reads this table before it spawns
+anything, and each skill classifies its own roles as **reasoning** or
+**mechanical**. **An absent or unreadable table means `uniform`** — the
+conservative default, and the behavior every repo had before this table
+existed.
+
+| Setting | Value |
+|-|-|
+| Policy | tiered |
+| Mechanical-tier model | gpt-5.3-codex |
+
+- **`uniform`** — every sub-agent runs the spawning agent's model
+  configuration, whatever its role.
+- **`tiered`** — a sub-agent in a **reasoning** role runs the spawning
+  agent's configuration; a sub-agent in a **mechanical** role runs the
+  recorded mechanical-tier model.
+
+The role classification lives in the skills, not here: it is a property
+of the loop and does not vary between repositories. Only the policy and
+the model id do, which is why they are the two rows recorded.
+
+A recorded value here is a **resolved answer**. `dev-setup` asks once and
+never re-prompts, exactly as it treats the GitHub integration block.

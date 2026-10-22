@@ -1,12 +1,13 @@
 ---
 name: dev-plan
-description: "Builds and iterates on a detailed implementation plan in the role of a staff-level Engineering Lead, working from either a `featurerequest.md` (from `dev-request`) or a `bugreport.md` (from `dev-report`). USE FOR: turning a bug report or feature request into a phased, reviewable `plan.md`; refining or answering questions on an existing plan. Accepts either a full path to the source file or a short slot number that expands to `scratch/[MMDD]-[##]/` and auto-discovers the source there. The source request file is read-only. Plan output is written to `plan.md` in the same directory. Pairs with `dev-do` (execute the plan), `dev-review` (review the result), `dev-issue` (publish the plan to its GitHub issue), and `dev-pr-open` (push and open the PR)."
+description: "Builds and iterates on a detailed implementation plan in the role of a staff-level Engineering Lead, working from either a `featurerequest.md` (from `dev-request`) or a `bugreport.md` (from `dev-report`). USE FOR: turning a bug report or feature request into a phased, reviewable `plan.md`; refining or answering questions on an existing plan. Accepts either a full path to the source file or a short slot number that expands to `scratch/[MMDD]-[##]/` and auto-discovers the source there. Plans from a sibling `approach.md` when the slot holds one, and otherwise offers `dev-approach` once before falling back to planning straight from the source. The source request and every approach artifact are read-only. Plan output is written to `plan.md` in the same directory. Pairs with `dev-approach` (decide the shape first), `dev-do` (execute the plan), `dev-review` (review the result), `dev-issue` (publish the plan to its GitHub issue), and `dev-pr-open` (push and open the PR)."
 ---
 
 # Dev Plan Skill
 
 Acts as a **staff-level Engineering Lead** for local development work in
-this repository. Reads a `bugreport.md` or `featurerequest.md` and
+this repository. Reads a `bugreport.md` or `featurerequest.md` — and a
+sibling `approach.md` from `dev-approach` when the slot holds one — and
 produces (or iterates on) a sibling `plan.md` that an engineer (human or
 `dev-do`) can execute end-to-end.
 
@@ -63,11 +64,64 @@ modify, rename, or delete it. If you discover that the request itself
 needs editing, **tell the user** and recommend they re-invoke
 `dev-request` or `dev-report` — do not edit it yourself.
 
+## Planning From an Approach
+
+`dev-approach` is an optional step between the source request and this
+skill. It writes four files into the slot — `approach-a.md`,
+`approach-b.md`, `approach-c.md`, and `approach.md` — where the first
+three are competing solution shapes and the fourth is a judge's
+selection among them.
+
+**When `approach.md` is present**, it is the **decided shape**. Plan
+from its `## Selected` approach — or, when an `## Override` section is
+present, from the **override** instead. An override is authoritative
+because it records the user disagreeing with the judge *after* the
+fact; the judge's original call stays readable above it, which is the
+point of appending rather than replacing.
+
+- `## Approach` in `plan.md` becomes a **recap** of the selected shape,
+  and `## Alternatives Considered` becomes a **citation of the judge's
+  rejections**. No re-derivation, no drift. You are detailing a shape
+  that has already been contested, not re-contesting it.
+- **Carry-overs are non-binding.** `approach.md` records material worth
+  salvaging from a rejected approach. Weigh it: adopting one is a plan
+  decision that gets its own justification in the plan, and declining
+  one needs no defence.
+- **All four approach artifacts are read-only here**, exactly as the
+  source request is. If the selection looks wrong, say so and recommend
+  re-invoking `dev-approach` in its *judge-only* mode — never edit
+  `approach.md` to a different winner.
+- **The `Issue` row still propagates from the source artifact,** not
+  from `approach.md`, under the unchanged no-downgrade ratchet in
+  *Workflow* step 6.5. `approach.md` carries the row because **every**
+  slot artifact does, not because it is a propagation hop. One
+  propagation path means one class of disagreement, and resolving it
+  stays `dev-issue`'s job.
+- **Three things are now called "approach", and they are not the same
+  thing.** `approach.md` is a never-published local artifact. `plan.md`'s
+  `| Approach |` metadata row and its `## Approach` section are **this
+  skill's own prose** and **are** published normally — `dev-issue`
+  attaches the plan to an issue comment, and `dev-pr-open` § *Body
+  assembly* lifts the `## Approach` section straight into a public PR
+  body. Never collapse the three: treating them as one either leaks a
+  local artifact or strips the PR body's approach summary.
+
+**When `approach.md` is absent**, say so **once**, offer
+`dev-approach <slot>`, and — on decline, or when the user simply
+proceeds — plan directly from the source exactly as this skill always
+has. Never re-offer in the same pass, and **never gate on it**. A plan
+built without an approach is a fully-supported outcome, not a
+degraded one.
+
 ## Workflow
 
 1. **Resolve paths.** Determine source path and `plan.md` path. Echo
    both.
 2. **Read the source** in full. Read `plan.md` too if it exists.
+2.5. **Check for a sibling `approach.md`** and follow § *Planning From
+   an Approach*. Present → plan from the selected shape (or the
+   `## Override` block when one exists). Absent → offer
+   `dev-approach <slot>` once, then proceed either way.
 3. **Read `AGENTS.md`** at the repository root. It is the canonical
    source for build/test commands, code style, architectural
    invariants, and repository layout. If it is absent, fall back to
@@ -93,11 +147,14 @@ needs editing, **tell the user** and recommend they re-invoke
 7. **Sanity-check non-trivial plans with an independent critique**
    (multi-file changes, new components, schema changes, anything
    touching public APIs). Use the `rubber-duck` agent, or a registered
-   review specialist when one is available; otherwise use a
+   review specialist when one is available; fall back to a
    `general-purpose` sub-agent explicitly prompted to act as an
-   adversarial reviewer. Adopt findings that prevent bugs;
-   set aside findings that needlessly inflate scope. Briefly summarize
-   what changed as a result.
+   adversarial reviewer only where neither exists. A single-file plan
+   with no new component, no schema change, and no public-API change is
+   **trivial** and skips this step — say that you skipped it and why.
+   Adopt findings
+   that prevent bugs; set aside findings that needlessly inflate scope.
+   Briefly summarize what changed as a result.
 8. **Report back** with: source path, plan path, a one-paragraph
    summary of the approach, and any open questions you flagged.
 9. **Offer the open-questions walkthrough** whenever the plan's *Open
@@ -125,6 +182,7 @@ needs editing, **tell the user** and recommend they re-invoke
 |-|-|
 | Slot | `scratch/<MMDD>-<##>/` (or full path) |
 | Source | `featurerequest.md` / `bugreport.md` (read-only) |
+| Approach | `approach.md` (selected: {A\|B\|C}) — or `n/a` |
 | Issue | [#N](<url>) — or `not published` |
 | Status | Draft / Ready-to-execute / In-progress / Complete / Blocked |
 | Created | {YYYY-MM-DD} |
@@ -138,12 +196,22 @@ self-contained. Do not paste the source; summarize.}
 ## Approach
 
 {The chosen approach in one paragraph. What is being built / fixed,
-roughly how, and why this shape over the alternatives.}
+roughly how, and why this shape over the alternatives.
+
+When a sibling `approach.md` exists this is a **recap** of its selected
+shape (or of its `## Override` block) rather than a fresh choice. When
+none exists it is your own choice, as always. Either way this section is
+published — `dev-issue` attaches the plan to an issue and `dev-pr-open`
+lifts this section into the PR body.}
 
 ## Alternatives Considered
 
 - **{Alt A}** — {one-line description}. Rejected because {reason}.
 - **{Alt B}** — {one-line description}. Rejected because {reason}.
+
+{When a sibling `approach.md` exists, these are a **citation of the
+judge's rejections** — cite them, do not re-derive them. When none
+exists, they are the alternatives you weighed yourself.}
 
 ## Affected Areas
 
@@ -247,6 +315,25 @@ this section. Never delete or rewrite an existing `COMMIT` or `NOTE` entry.}
 {Free-form. Links to docs, prior art, related plans.}
 ```
 
+## Sub-Agent Model Tier
+
+Resolve each role against the **subagent model policy** in the
+repository's `AGENTS.md` (`## Agent guardrails`). An absent or
+unreadable policy means `uniform`, and every role below runs the
+spawning agent's model.
+
+| Role | Tier | Agent |
+|-|-|-|
+| Adversarial critique of a plan | reasoning | `rubber-duck` |
+| Surveying an unfamiliar area the plan will touch | mechanical | `explore` |
+| Confirming a command or path the plan cites actually exists | mechanical | `explore` |
+
+Planning is the skill that fans out least, and it should stay that way:
+you author the plan yourself. The critique in the Workflow's step 7 is
+the one dispatch that earns its keep, and a trivial plan skips even
+that. Everything else here is discovery, which the built-in `explore`
+agent already runs on a lightweight model.
+
 ## Iteration Mode
 
 When `plan.md` already exists:
@@ -259,11 +346,16 @@ When `plan.md` already exists:
 - If the user's new input invalidates a Complete phase, surface that
   clearly in your response and propose a new phase to undo/redo it
   rather than rewriting history.
-- If a sibling `analysis.md` (from `dev-review`) exists in the slot,
+- If a sibling `review.md` (from `dev-review`) exists in the slot,
   read it. Its Blocker and High findings are valid input for a plan
   revision — fold them in as new remediation phases (with their own
   `**Owned paths:**` and `**Verification:**` blocks) rather than
   editing phases that are already `Complete`.
+- If an `approach.md` appears in a slot that already holds a `plan.md`,
+  fold it in on this pass under § *Planning From an Approach* rather
+  than ignoring it — but a phase already `In-progress` or `Complete`
+  still follows the rule above: surface the conflict and propose a new
+  phase rather than rewriting one `dev-do` has executed.
 
 ## Open Questions Walkthrough
 
@@ -373,6 +465,16 @@ step 7 before calling the plan `Ready-to-execute`.
 - **Source is read-only.** Never write to `featurerequest.md` or
   `bugreport.md`. If they need changes, recommend re-invoking the
   authoring skill.
+- **Approach artifacts are read-only.** `approach.md`, `approach-a.md`,
+  `approach-b.md`, and `approach-c.md` belong to `dev-approach`. Read
+  them freely; never edit, rename, or delete one. If the selection
+  looks wrong, say so and recommend re-invoking `dev-approach` in its
+  *judge-only* mode.
+- **The nudge is a nudge.** When a slot has no `approach.md`, offer
+  `dev-approach` exactly once per pass, then proceed either way.
+  Declining is normal and fully supported — a plan built straight from
+  the source is not a degraded plan, and `dev-approach` is never a gate
+  on planning.
 - **Never write a `#N` you did not read from the source artifact.** The
   `Issue` row propagates under a **no-downgrade ratchet**: an existing
   `#N` in `plan.md` is never replaced with `not published`. A
