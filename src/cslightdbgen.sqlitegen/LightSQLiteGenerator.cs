@@ -52,6 +52,15 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             "LdgSQLiteGeneratorAttributes.g.cs",
             SourceText.From(GeneratorAttributes.LdgAttributes, Encoding.UTF8)));
 
+        // Runtime helpers are ordinary output, owned by this host even when it has no models.
+        // Resolve names once into an equatable value before combining them with model inputs.
+        IncrementalValueProvider<RuntimeHelperNames> runtimeHelperNames = context.CompilationProvider
+            .Select(static (_, _) => new RuntimeHelperNames(AttributesNamespace));
+
+        context.RegisterSourceOutput(runtimeHelperNames, static (spc, names) => spc.AddSource(
+            "LdgSQLiteRuntimeHelpers.g.cs",
+            SourceText.From(RuntimeHelpersEmitter.Emit(names.Namespace), Encoding.UTF8)));
+
         // Regular [LdgSQLiteTable] models. ForAttributeWithMetadataName finds targets cheaply and,
         // paired with a fully value-equatable TableModel, lets the pipeline cache each model
         // independently: editing one model (or unrelated code) no longer re-runs generation for
@@ -65,7 +74,9 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             .Select(static (model, _) => model!.Value)
             .WithTrackingName(TableModelTrackingName);
 
-        context.RegisterSourceOutput(tableModels, static (spc, model) => emit(model, spc));
+        context.RegisterSourceOutput(
+            tableModels.Combine(runtimeHelperNames),
+            static (spc, pair) => emit(pair.Left, pair.Right.CommandFailedExceptionName, spc));
 
         // FTS5 [LdgSQLiteFtsTable] models follow the same equatable pipeline shape.
         IncrementalValuesProvider<FtsModel> ftsModels = context.SyntaxProvider
@@ -97,15 +108,15 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         // assembly) reports CSLDG006 and is skipped; membership is case-insensitive because SQLite
         // identifiers are.
         context.RegisterSourceOutput(
-            ftsModels.Combine(knownTableNames),
-            static (spc, pair) => EmitFtsResolved(pair.Left, pair.Right, spc));
+            ftsModels.Combine(knownTableNames).Combine(runtimeHelperNames),
+            static (spc, pair) => EmitFtsResolved(pair.Left.Left, pair.Left.Right, pair.Right.CommandFailedExceptionName, spc));
     }
 
     /// <summary>
     /// Emits an FTS model only when its source table resolves to a known <c>[LdgSQLiteTable]</c>
     /// table (in this compilation or a referenced assembly); otherwise reports CSLDG006 and skips it.
     /// </summary>
-    private static void EmitFtsResolved(FtsModel model, EquatableArray<string> knownTableNames, SourceProductionContext context)
+    private static void EmitFtsResolved(FtsModel model, EquatableArray<string> knownTableNames, string commandFailedExceptionName, SourceProductionContext context)
     {
         ImmutableHashSet<string> known = ImmutableHashSet.CreateRange(StringComparer.OrdinalIgnoreCase, knownTableNames);
 
@@ -120,7 +131,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             return;
         }
 
-        emitFts(model, context);
+        emitFts(model, commandFailedExceptionName, context);
     }
 
     /// <summary>Sorts and de-duplicates (ordinal) a collected set of table names into an equatable array.</summary>
@@ -909,7 +920,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         }
     }
 
-    private static void emit(TableModel model, SourceProductionContext context)
+    private static void emit(TableModel model, string commandFailedExceptionName, SourceProductionContext context)
     {
         string className = model.ClassName;
         string? classNamespace = model.ClassNamespace;
@@ -2916,18 +2927,18 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                         else
                         {
                             yield return "int rowsAffected = command.ExecuteNonQuery();";
-                            yield return $"if ((rowsAffected == 0) && throwOnZeroRowsAffected) throw new global::CsLightDbGen.SQLiteGenerator.{GeneratorAttributes._ldgCommandFailedException}(\"{className}\", command.CommandText);";
+                            yield return $"if ((rowsAffected == 0) && throwOnZeroRowsAffected) throw new {commandFailedExceptionName}(\"{className}\", command.CommandText);";
                         }
                     }
                     else if (ignoreDupeProperty == null)
                     {
                         yield return "int rowsAffected = command.ExecuteNonQuery();";
-                        yield return $"if (rowsAffected == 0) throw new global::CsLightDbGen.SQLiteGenerator.{GeneratorAttributes._ldgCommandFailedException}(\"{className}\", command.CommandText);";
+                        yield return $"if (rowsAffected == 0) throw new {commandFailedExceptionName}(\"{className}\", command.CommandText);";
                     }
                     else
                     {
                         yield return "int rowsAffected = command.ExecuteNonQuery();";
-                        yield return $"if (!{ignoreDupeProperty} && (rowsAffected == 0)) throw new global::CsLightDbGen.SQLiteGenerator.{GeneratorAttributes._ldgCommandFailedException}(\"{className}\", command.CommandText);";
+                        yield return $"if (!{ignoreDupeProperty} && (rowsAffected == 0)) throw new {commandFailedExceptionName}(\"{className}\", command.CommandText);";
                     }
                 }
                 else
@@ -2935,7 +2946,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     if (ignoreDupeProperty == null)
                     {
                         yield return "object? commandResult = command.ExecuteScalar();";
-                        yield return $"if (commandResult == null) throw new global::CsLightDbGen.SQLiteGenerator.{GeneratorAttributes._ldgCommandFailedException}(\"{className}\", command.CommandText);";
+                        yield return $"if (commandResult == null) throw new {commandFailedExceptionName}(\"{className}\", command.CommandText);";
 
                         switch (identityColType)
                         {
@@ -2953,7 +2964,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                     else
                     {
                         yield return "object? commandResult = command.ExecuteScalar();";
-                        yield return $"if (!{ignoreDupeProperty} && (commandResult == null)) throw new global::CsLightDbGen.SQLiteGenerator.{GeneratorAttributes._ldgCommandFailedException}(\"{className}\", command.CommandText);";
+                        yield return $"if (!{ignoreDupeProperty} && (commandResult == null)) throw new {commandFailedExceptionName}(\"{className}\", command.CommandText);";
 
                         switch (identityColType)
                         {
@@ -2973,7 +2984,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         }
     }
 
-    private static void emitFts(FtsModel model, SourceProductionContext context)
+    private static void emitFts(FtsModel model, string commandFailedExceptionName, SourceProductionContext context)
     {
         string className = model.ClassName;
         string? classNamespace = model.ClassNamespace;
@@ -3167,7 +3178,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     {{{string.Join(_line_4, getPopulateCleanLines(addParam: false))}}}
 
                                     int ra = command.ExecuteNonQuery();
-                                    if (ra == 0) throw new global::CsLightDbGen.SQLiteGenerator.{{{GeneratorAttributes._ldgCommandFailedException}}}("{{{className}}}", command.CommandText);
+                                    if (ra == 0) throw new {{{commandFailedExceptionName}}}("{{{className}}}", command.CommandText);
                                     rowsAffected += ra;
                                 }
 

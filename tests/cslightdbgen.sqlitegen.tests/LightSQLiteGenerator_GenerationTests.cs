@@ -3,6 +3,7 @@ using cslightdbgen.sqlitegen.tests.TestInfrastructure;
 using Shouldly;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using CsLightDbGen.SQLiteGenerator;
 using System.Reflection;
 using GeneratorRunResult = cslightdbgen.sqlitegen.tests.TestInfrastructure.GeneratorRunResult;
@@ -79,27 +80,24 @@ public class LightSQLiteGenerator_GenerationTests
 
         run.GeneratedSources.Keys.ShouldContain("LdgSQLiteGeneratorAttributes.g.cs");
 
-        // The post-init source must carry real content, not just exist: the attribute definitions
-        // and the shared LdgCommandFailedException (with its ModelName/Sql surface) that the emitted
-        // DAL throws on zero-row keyed mutations.
+        // Annotations bootstrap semantic discovery; the public runtime contract is ordinary output.
         string attributes = run.GeneratedSources["LdgSQLiteGeneratorAttributes.g.cs"];
         attributes.ShouldContain("class LdgSQLiteTable");
         attributes.ShouldContain("class LdgSQLiteKey");
         attributes.ShouldContain("class LdgSQLiteFtsTable");
         attributes.ShouldContain("public class LdgSQLiteTable : System.Attribute");
-        attributes.ShouldContain("class LdgCommandFailedException");
-        attributes.ShouldContain("public string ModelName");
-        attributes.ShouldContain("public string Sql");
-        attributes.ShouldContain("public sealed class LdgCommandFailedException : System.Exception");
-        attributes.ShouldContain("public LdgCommandFailedException(string modelName, string sql)");
-        attributes.ShouldContain("""
+        attributes.ShouldNotContain("LdgCommandFailedException");
+        run.GeneratedSources.Keys.ShouldContain("LdgSQLiteRuntimeHelpers.g.cs");
+        string runtime = run.GeneratedSources["LdgSQLiteRuntimeHelpers.g.cs"];
+        runtime.ShouldContain("public sealed class LdgCommandFailedException : System.Exception");
+        runtime.ShouldContain("public LdgCommandFailedException(string modelName, string sql)");
+        runtime.ShouldContain("""
             : base($"The command for model '{modelName}' affected no rows (expected at least one). SQL: {sql}")
             """);
-        attributes.ShouldContain("ModelName = modelName;");
-        attributes.ShouldContain("Sql = sql;");
-        attributes.ShouldContain("public string ModelName { get; }");
-        attributes.ShouldContain("public string Sql { get; }");
-        run.GeneratedSources.Keys.ShouldNotContain("LdgSQLiteRuntimeHelpers.g.cs");
+        runtime.ShouldContain("ModelName = modelName;");
+        runtime.ShouldContain("Sql = sql;");
+        runtime.ShouldContain("public string ModelName { get; }");
+        runtime.ShouldContain("public string Sql { get; }");
 
         INamedTypeSymbol? exception = run.OutputCompilation.GetTypeByMetadataName(
             "CsLightDbGen.SQLiteGenerator.LdgCommandFailedException");
@@ -113,6 +111,256 @@ public class LightSQLiteGenerator_GenerationTests
         exception.InstanceConstructors[0].Parameters.Select(static parameter => parameter.Type.SpecialType)
             .ShouldBe([SpecialType.System_String, SpecialType.System_String]);
         AssertSuccessfulRun(run);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("namespace T; public class Placeholder { }")]
+    public void RuntimeHelpers_DefaultContract_EmitsWithoutModels(string source)
+    {
+        GeneratorRunResult run = GeneratorTestHost.Run(source);
+        AssertSuccessfulRun(run);
+        run.GeneratedSources.Keys.OrderBy(static hint => hint, StringComparer.Ordinal).ShouldBe(
+            ["LdgSQLiteGeneratorAttributes.g.cs", "LdgSQLiteRuntimeHelpers.g.cs"]);
+        run.GeneratedSources["LdgSQLiteGeneratorAttributes.g.cs"].ShouldNotContain("LdgCommandFailedException");
+        run.GeneratedSources["LdgSQLiteRuntimeHelpers.g.cs"].ShouldBe("""
+            #nullable enable
+            namespace CsLightDbGen.SQLiteGenerator
+            {
+                /// <summary>
+                /// Thrown by generated keyed by-key mutations (Update/Delete) when a command that was
+                /// expected to affect at least one row affected none (for example, a stale or
+                /// already-deleted key). Carries the originating model name and SQL text. Keyless
+                /// models never throw this because their by-key predicate matches nothing.
+                /// </summary>
+                public sealed class LdgCommandFailedException : System.Exception
+                {
+                    public LdgCommandFailedException(string modelName, string sql)
+                        : base($"The command for model '{modelName}' affected no rows (expected at least one). SQL: {sql}")
+                    {
+                        ModelName = modelName;
+                        Sql = sql;
+                    }
+
+                    public string ModelName { get; }
+
+                    public string Sql { get; }
+                }
+            }
+            #nullable restore
+            """);
+
+        INamedTypeSymbol? exception = run.OutputCompilation.GetTypeByMetadataName(
+            "CsLightDbGen.SQLiteGenerator.LdgCommandFailedException");
+        exception.ShouldNotBeNull();
+        exception.DeclaringSyntaxReferences.ShouldHaveSingleItem();
+        exception.DeclaringSyntaxReferences[0].SyntaxTree.FilePath.ShouldEndWith("LdgSQLiteRuntimeHelpers.g.cs");
+        exception.GetMembers().OfType<IPropertySymbol>().Select(static property => property.Name)
+            .ShouldBe(["ModelName", "Sql"]);
+        foreach (IPropertySymbol property in exception.GetMembers().OfType<IPropertySymbol>())
+        {
+            property.DeclaredAccessibility.ShouldBe(Accessibility.Public);
+            property.Type.SpecialType.ShouldBe(SpecialType.System_String);
+            property.SetMethod.ShouldBeNull();
+        }
+    }
+
+    [Fact]
+    public void RuntimeHelpers_AllTableAndFtsThrowBranchesUseResolvedName()
+    {
+        const string additionalModels = """
+            using CsLightDbGen.SQLiteGenerator;
+            namespace Defaults;
+
+            [LdgSQLiteTable("long_identity")]
+            public partial class LongIdentity
+            {
+                [LdgSQLiteKey]
+                public long Id { get; set; }
+                public string Title { get; set; } = string.Empty;
+            }
+
+            [LdgSQLiteTable("supplied_key")]
+            public partial class SuppliedKey
+            {
+                [LdgSQLiteKey(false)]
+                public int Id { get; set; }
+                public string Title { get; set; } = string.Empty;
+            }
+
+            [LdgSQLiteTable("text_key")]
+            public partial class TextKey
+            {
+                [LdgSQLiteKey]
+                public string Id { get; set; } = string.Empty;
+                public string Title { get; set; } = string.Empty;
+            }
+            """;
+        GeneratorRunResult run = GeneratorTestHost.Run(DefaultContractSource, additionalModels);
+        AssertSuccessfulRun(run);
+        const string resolvedName = "global::CsLightDbGen.SQLiteGenerator.LdgCommandFailedException";
+        INamedTypeSymbol? exception = run.OutputCompilation.GetTypeByMetadataName(resolvedName.Substring("global::".Length));
+        exception.ShouldNotBeNull();
+
+        (string Model, bool Identity, bool Keyless)[] tables =
+        [
+            ("DefaultRow", true, false),
+            ("LongIdentity", true, false),
+            ("SuppliedKey", false, false),
+            ("TextKey", false, false),
+            ("DefaultComposite", false, false),
+            ("DefaultKeyless", false, true),
+            ("DefaultJson", true, false),
+        ];
+        foreach ((string model, bool identity, bool keyless) in tables)
+        {
+            string hint = $"Defaults.{model}.Table.g.cs";
+            SyntaxTree tree = run.OutputCompilation.SyntaxTrees.Single(tree => tree.FilePath.EndsWith(hint, StringComparison.Ordinal));
+            SemanticModel semanticModel = run.OutputCompilation.GetSemanticModel(tree);
+            ThrowStatementSyntax[] throws = tree.GetRoot().DescendantNodes().OfType<ThrowStatementSyntax>()
+                .Where(static statement => statement.Expression is ObjectCreationExpressionSyntax creation &&
+                    creation.Type.ToString().EndsWith("LdgCommandFailedException", StringComparison.Ordinal))
+                .ToArray();
+            throws.Length.ShouldBe(keyless ? 6 : 10, model);
+            List<string> guards = [];
+            foreach (ThrowStatementSyntax statement in throws)
+            {
+                ObjectCreationExpressionSyntax creation = (ObjectCreationExpressionSyntax)statement.Expression!;
+                creation.Type.ToString().ShouldBe(resolvedName, hint);
+                SymbolEqualityComparer.Default.Equals(semanticModel.GetTypeInfo(creation).Type, exception).ShouldBeTrue(hint);
+                creation.ArgumentList.ShouldNotBeNull();
+                creation.ArgumentList.Arguments.Select(static argument => argument.ToString())
+                    .ShouldBe([$"\"{model}\"", "command.CommandText"]);
+                IfStatementSyntax? guard = statement.Parent as IfStatementSyntax;
+                guard.ShouldNotBeNull();
+                guards.Add(guard.Condition.ToString());
+                string? method = statement.FirstAncestorOrSelf<MethodDeclarationSyntax>()?.Identifier.ValueText;
+                method.ShouldBeOneOf("Insert", "Update", "Delete");
+            }
+
+            guards.Count(static guard => guard == "(rowsAffected == 0) && throwOnZeroRowsAffected").ShouldBe(keyless ? 0 : 4, model);
+            guards.Count(static guard => guard == "!ignoreDuplicates && (rowsAffected == 0)").ShouldBe(identity ? 3 : 6, model);
+            guards.Count(static guard => guard == "!ignoreDuplicates && (commandResult == null)").ShouldBe(identity ? 3 : 0, model);
+            string table = run.GeneratedSources[hint];
+            table.ShouldContain("using IDbCommand command = dbConnection.CreateCommand();");
+            table.ShouldContain("command.Transaction = _txn;");
+            table.ShouldContain("if (_ownTxn) _txn.Commit();");
+            table.ShouldContain("if (_ownTxn) _txn.Dispose();");
+            if (identity)
+            {
+                string conversion = model == "LongIdentity" ? "ToInt64" : "ToInt32";
+                table.ShouldContain($"if (commandResult != null) value.Id = Convert.{conversion}(commandResult);");
+            }
+            else
+            {
+                table.ShouldNotContain("value.Id = Convert.");
+            }
+            if (keyless)
+            {
+                table.ShouldContain("WHERE 1 = 0");
+                table.ShouldNotContain("throwOnZeroRowsAffected");
+            }
+        }
+
+        string fts = run.GeneratedSources["Defaults.DefaultSearch.Fts.g.cs"];
+        CompilationUnitSyntax ftsRoot = CSharpSyntaxTree.ParseText(fts).GetCompilationUnitRoot();
+        ThrowStatementSyntax ftsThrow = ftsRoot.DescendantNodes().OfType<ThrowStatementSyntax>().Single();
+        ftsThrow.Expression.ShouldBeOfType<ObjectCreationExpressionSyntax>().Type.ToString().ShouldBe(resolvedName);
+        ftsThrow.Parent.ShouldBeOfType<IfStatementSyntax>().Condition.ToString().ShouldBe("ra == 0");
+        ftsThrow.FirstAncestorOrSelf<MethodDeclarationSyntax>()?.Identifier.ValueText.ShouldBe("Populate");
+        fts.ShouldContain($"if (ra == 0) throw new {resolvedName}(\"DefaultSearch\", command.CommandText);");
+        fts.ShouldContain("if (sanitizeText == false)");
+        fts.ShouldContain("rowsAffected = popCommand.ExecuteNonQuery();");
+        fts.ShouldContain("using IDbCommand readCommand = dbConnection.CreateCommand();");
+        fts.ShouldContain("using (IDataReader reader = readCommand.ExecuteReader())");
+        fts.ShouldContain("using IDbCommand command = dbConnection.CreateCommand();");
+        fts.ShouldContain("command.Transaction = _txn;");
+        fts.ShouldContain("if (_ownTxn) _txn.Commit();");
+        fts.ShouldContain("if (_ownTxn) _txn.Dispose();");
+    }
+
+    [Theory]
+    [InlineData(true, false, null, null, "command.ExecuteNonQuery();", "(rowsAffected == 0) && throwOnZeroRowsAffected", null)]
+    [InlineData(false, false, null, null, "command.ExecuteNonQuery();", "rowsAffected == 0", null)]
+    [InlineData(false, false, null, "ignoreDuplicates", "command.ExecuteNonQuery();", "!ignoreDuplicates && (rowsAffected == 0)", null)]
+    [InlineData(false, false, "int", null, "command.ExecuteScalar();", "commandResult == null", "value.Id = Convert.ToInt32(commandResult);")]
+    [InlineData(false, false, "long", null, "command.ExecuteScalar();", "commandResult == null", "value.Id = Convert.ToInt64(commandResult);")]
+    [InlineData(false, false, "int", "ignoreDuplicates", "command.ExecuteScalar();", "!ignoreDuplicates && (commandResult == null)", "if (commandResult != null) value.Id = Convert.ToInt32(commandResult);")]
+    [InlineData(false, false, "long", "ignoreDuplicates", "command.ExecuteScalar();", "!ignoreDuplicates && (commandResult == null)", "if (commandResult != null) value.Id = Convert.ToInt64(commandResult);")]
+    [InlineData(true, true, null, null, "command.ExecuteNonQuery();", null, null)]
+    public void RuntimeHelpers_TableFailureIterator_RoutesEveryBranchWithoutChangingGuards(
+        bool byKeyMutation,
+        bool isKeyless,
+        string? identityType,
+        string? ignoreDupeProperty,
+        string execution,
+        string? guard,
+        string? hydration)
+    {
+        // Current emit callers always supply ignoreDuplicates for scalar inserts; cover the
+        // dormant unguarded scalar/non-query branches without adding a public generator seam.
+        MethodInfo iterator = typeof(LightSQLiteGenerator).GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+            .Concat(typeof(LightSQLiteGenerator).GetNestedTypes(BindingFlags.NonPublic)
+                .SelectMany(static type => type.GetMethods(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)))
+            .Single(static method => method.Name.Contains("g__getInsertCommandParamLines|", StringComparison.Ordinal));
+        ParameterInfo[] parameters = iterator.GetParameters();
+        Type scopeType = iterator.IsStatic
+            ? parameters.Single(static parameter => parameter.ParameterType.IsByRef).ParameterType.GetElementType()!
+            : iterator.DeclaringType!;
+        object? scope = Activator.CreateInstance(scopeType);
+        scope.ShouldNotBeNull();
+        const string resolvedName = "global::Routing.Probe.LdgCommandFailedException";
+        HashSet<string> rawDefaultColumnNames = [];
+        (string Name, object Value)[] scopeValues =
+        [
+            ("className", "IteratorModel"),
+            ("commandFailedExceptionName", resolvedName),
+            ("isKeyless", isKeyless),
+            ("rawDefaultColumnNames", rawDefaultColumnNames),
+        ];
+        foreach ((string name, object value) in scopeValues)
+        {
+            FieldInfo? field = scopeType.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            field.ShouldNotBeNull(name);
+            field.SetValue(scope, value);
+        }
+        FieldInfo? columns = scopeType.GetField("tableColInfo", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        columns.ShouldNotBeNull();
+        columns.SetValue(scope, Activator.CreateInstance(columns.FieldType));
+        object?[] arguments = parameters.Select(parameter => parameter.Name switch
+        {
+            "singleValue" => (object)true,
+            "identityColName" => identityType is null ? null : "Id",
+            "identityColType" => identityType,
+            "byKeyMutation" => byKeyMutation,
+            "ignoreDupeProperty" => ignoreDupeProperty,
+            _ => parameter.ParameterType.IsByRef ? scope : parameter.DefaultValue,
+        }).ToArray();
+        object? result = iterator.Invoke(iterator.IsStatic ? null : scope, arguments);
+        result.ShouldNotBeNull();
+        result.ShouldBeAssignableTo<IEnumerable<string>>();
+        IEnumerable<string> lines = (IEnumerable<string>)result;
+        string emitted = string.Join(Environment.NewLine, lines);
+        emitted.ShouldContain(execution);
+        if (guard is null)
+        {
+            emitted.ShouldNotContain("throw new");
+            emitted.ShouldNotContain("rowsAffected");
+        }
+        else
+        {
+            emitted.ShouldContain($"if ({guard}) throw new {resolvedName}(\"IteratorModel\", command.CommandText);");
+            emitted.ShouldNotContain("CsLightDbGen.SQLiteGenerator.LdgCommandFailedException");
+            emitted.Split(Environment.NewLine).Count(static line => line.Contains("throw new", StringComparison.Ordinal)).ShouldBe(1);
+        }
+        if (hydration is null)
+        {
+            emitted.ShouldNotContain("value.Id =");
+        }
+        else
+        {
+            emitted.ShouldContain(hydration);
+        }
     }
 
     [Fact]

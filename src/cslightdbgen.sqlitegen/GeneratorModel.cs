@@ -17,6 +17,12 @@ internal enum LdGenCategory
     Record,
 }
 
+/// <summary>Resolved, value-equatable names shared by runtime-helper and DAL emission.</summary>
+internal record struct RuntimeHelperNames(string Namespace)
+{
+    public string CommandFailedExceptionName => $"global::{Namespace}.{GeneratorAttributes._ldgCommandFailedException}";
+}
+
 /// <summary>
 /// A value-equatable wrapper over <see cref="ImmutableArray{T}"/>. <see cref="ImmutableArray{T}"/>
 /// only offers reference equality, which defeats incremental-generator caching when it is embedded
