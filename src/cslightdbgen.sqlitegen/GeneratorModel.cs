@@ -29,6 +29,17 @@ internal record struct GenerationParseOptions(bool MultiHost);
 /// <summary>A diagnostic description without compiler objects, reconstructed at ordinary output.</summary>
 internal record struct ConfigurationDiagnostic(string Reason, LocationInfo? Location);
 
+/// <summary>A validated direct call, with no consumer symbols retained by emission.</summary>
+internal record struct JsonOptionsBinding(string FactoryInvocation, string ModelName);
+
+/// <summary>Retains diagnostics even when a model's JSON configuration is rejected.</summary>
+internal record struct JsonOptionsResolution(
+    JsonOptionsBinding? Binding,
+    EquatableArray<ConfigurationDiagnostic> Diagnostics)
+{
+    public bool IsValid => Diagnostics.Count == 0;
+}
+
 /// <summary>Host configuration after semantic validation; no compilation or symbols escape resolution.</summary>
 internal record struct GenerationEnvironment(
     RuntimeHelperNames RuntimeHelpers,
@@ -219,7 +230,8 @@ internal record struct TableModel(
     EquatableArray<ColumnInput> Columns,
     EquatableArray<string> CompositeFkLines,
     EquatableArray<EquatableColumnSet> ClassUniqueColumnSets,
-    EquatableArray<IndexInfo> Indexes);
+    EquatableArray<IndexInfo> Indexes,
+    JsonOptionsResolution JsonOptions);
 
 /// <summary>
 /// A value-equatable set of column names (used for class-level composite UNIQUE constraints). A thin
@@ -241,4 +253,5 @@ internal record struct FtsModel(
     string? Tokenizer,
     LdGenCategory GenCategory,
     LocationInfo? Location,
-    EquatableArray<ColumnInput> Columns);
+    EquatableArray<ColumnInput> Columns,
+    JsonOptionsResolution JsonOptions);

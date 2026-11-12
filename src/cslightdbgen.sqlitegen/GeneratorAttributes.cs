@@ -22,6 +22,7 @@ public class GeneratorAttributes
     internal const string _ldgSQLiteFtsTable = "LdgSQLiteFtsTable";
     internal const string _ldgSQLiteFtsUnindexed = "LdgSQLiteFtsUnindexed";
     internal const string _ldgSQLiteRuntimeNamespace = "LdgSQLiteRuntimeNamespace";
+    internal const string _ldgSQLiteJsonOptions = "LdgSQLiteJsonOptions";
 
     internal const string _ldgCommandFailedException = "LdgCommandFailedException";
 
@@ -39,6 +40,7 @@ public class GeneratorAttributes
         _ldgSQLiteDefault,
         _ldgSQLiteFtsTable,
         _ldgSQLiteFtsUnindexed,
+        _ldgSQLiteJsonOptions,
         ];
 
     internal static HashSet<string> _ldClassAttributes = [
@@ -64,6 +66,23 @@ public class GeneratorAttributes
                 }
 
                 public string Value { get; }
+            }
+
+            [System.AttributeUsage(System.AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
+        #if CSLIGHTDBGEN_MULTI_HOST
+            internal class {{{_ldgSQLiteJsonOptions}}} : System.Attribute
+        #else
+            public class {{{_ldgSQLiteJsonOptions}}} : System.Attribute
+        #endif
+            {
+                public {{{_ldgSQLiteJsonOptions}}}(System.Type factoryType, string factoryMethod)
+                {
+                    FactoryType = factoryType;
+                    FactoryMethod = factoryMethod;
+                }
+
+                public System.Type FactoryType { get; }
+                public string FactoryMethod { get; }
             }
 
             [System.AttributeUsage(System.AttributeTargets.Class, Inherited = false, AllowMultiple = false)]

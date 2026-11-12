@@ -1,4 +1,6 @@
 using System.Data;
+using System.Text.Json;
+using System.Threading;
 using cslightdbgen.sqlitegen.integration.Models;
 using CsLightDbGen.SQLiteGenerator;
 
@@ -1938,6 +1940,369 @@ public class LightSQLiteGenerator_IntegrationTests
         ExecuteSql(reopened, "CREATE TABLE missing_key (Label TEXT NOT NULL DEFAULT 'seed')");
         NoUniqueTextKey.EnsureSchema(reopened, "missing_key").ShouldBeTrue();
         ReadKeyPolicyColumns(reopened, "missing_key").Select(column => column.Name).ShouldBe(new[] { "Label" });
+    }
+
+    [Fact]
+    public void JsonOptions_WritesReadsAndJsonFilters_UseConsumerConverters()
+    {
+        using SqliteConnection db = OpenInMemory();
+        ConfiguredJsonDocument.CreateTable(db).ShouldBeTrue();
+        AlternateJsonDocument.CreateTable(db).ShouldBeTrue();
+        ConfiguredJsonDocument first = NewConfiguredJson(1, "alpha");
+        ConfiguredJsonDocument.Insert(db, first).ShouldBe(1);
+        ConfiguredJsonDocument.Insert(db, new List<ConfiguredJsonDocument> { NewConfiguredJson(2, "beta") });
+        ConfiguredJsonDocument.Insert(db, (IEnumerable<ConfiguredJsonDocument>)new[] { NewConfiguredJson(3, "gamma") });
+        db.Insert(NewConfiguredJson(4, "delta"));
+        NewConfiguredJson(5, "epsilon").Insert(db);
+        new List<ConfiguredJsonDocument> { NewConfiguredJson(6, "zeta") }.Insert(db);
+        ((IEnumerable<ConfiguredJsonDocument>)new[] { NewConfiguredJson(7, "eta") }).Insert(db);
+        db.Insert(new List<ConfiguredJsonDocument> { NewConfiguredJson(8, "theta") });
+        db.Insert((IEnumerable<ConfiguredJsonDocument>)new[] { NewConfiguredJson(9, "iota") });
+        ConfiguredJsonDocument.SelectCount(db).ShouldBe(9);
+
+        JsonCell(db, "configured_json", "Value", 1).ShouldBe("\"wire:alpha\"");
+        JsonCell(db, "configured_json", "Nested", 1).ShouldBe("{\"Inner\":\"wire:alpha-nested\"}");
+        JsonCell(db, "configured_json", "Items", 1).ShouldBe("{\"batch\":[\"wire:alpha-list\"]}");
+        ConfiguredJsonDocument loaded = ConfiguredJsonDocument.SelectSingle(db, Value: new JsonPayload { Text = "alpha" })!;
+        loaded.Id.ShouldBe(1);
+        loaded.Nested.Inner.Text.ShouldBe("alpha-nested");
+        loaded.Items.Single().Text.ShouldBe("alpha-list");
+        ConfiguredJsonDocument.SelectList(db, Items: first.Items).Single().Id.ShouldBe(1);
+        ConfiguredJsonDocument.SelectEnumerable(db, Nested: first.Nested).Single().Id.ShouldBe(1);
+        ConfiguredJsonDocument.SelectCount(db, Value: first.Value).ShouldBe(1);
+        db.SelectSingle<ConfiguredJsonDocument>(Items: first.Items)!.Id.ShouldBe(1);
+        db.SelectList<ConfiguredJsonDocument>(Value: first.Value).Count.ShouldBe(1);
+        db.SelectEnumerable<ConfiguredJsonDocument>(Nested: first.Nested).Single().Id.ShouldBe(1);
+        db.SelectCount<ConfiguredJsonDocument>(Items: first.Items).ShouldBe(1);
+
+        first.Value.Text = "updated";
+        first.Nested.Inner.Text = "updated-nested";
+        first.Items[0].Text = "updated-list";
+        ConfiguredJsonDocument.Update(db, first);
+        JsonCell(db, "configured_json", "Value", 1).ShouldBe("\"wire:updated\"");
+        ConfiguredJsonDocument.Update(db, new List<ConfiguredJsonDocument> { first });
+        db.Update((IEnumerable<ConfiguredJsonDocument>)new[] { first });
+        first.Update(db);
+
+        ConfiguredJsonDocument upserted = NewConfiguredJson(1, "upserted");
+        ConfiguredJsonDocument.Upsert(db, upserted);
+        ConfiguredJsonDocument.SelectCount(db).ShouldBe(9);
+        ConfiguredJsonDocument.SelectSingle(db, Id: 1)!.Value.Text.ShouldBe("upserted");
+        db.Upsert(NewConfiguredJson(10, "newupsert"));
+        ConfiguredJsonDocument returned = ConfiguredJsonDocument.InsertReturning(db, NewConfiguredJson(11, "returning"))!;
+        returned.Value.Text.ShouldBe("returning");
+        returned.Items[0].Text.ShouldBe("returning-list");
+        returned.Value.Text = "returnupdated";
+        ConfiguredJsonDocument.UpdateReturning(db, returned)!.Value.Text.ShouldBe("returnupdated");
+        ConfiguredJsonDocument extensionReturned = db.InsertReturning(NewConfiguredJson(12, "extension"))!;
+        extensionReturned.Value.Text = "extensionupdated";
+        extensionReturned.UpdateReturning(db)!.Value.Text.ShouldBe("extensionupdated");
+
+        AlternateJsonDocument.Insert(db, new AlternateJsonDocument { Id = 1, Value = new JsonPayload { Text = "upserted" } });
+        JsonCell(db, "alternate_json", "Value", 1).ShouldBe("\"alternate:upserted\"");
+        AlternateJsonDocument.SelectSingle(db)!.Value.Text.ShouldBe("upserted");
+        AlternateJsonDocument.SelectCount(db, Value: upserted.Value).ShouldBe(1);
+        JsonCell(db, "configured_json", "Value", 1).ShouldBe("\"wire:upserted\"");
+
+        ConfiguredJsonDocument.Delete(db, Value: upserted.Value);
+        ConfiguredJsonDocument.SelectSingle(db, Id: 1).ShouldBeNull();
+        ConfiguredJsonDocumentExtensions.Delete(db, Items: NewConfiguredJson(2, "beta").Items);
+        ConfiguredJsonDocument.SelectCount(db, Id: 2).ShouldBe(0);
+        ConfiguredJsonDocument.Delete(db, Nested: NewConfiguredJson(3, "gamma").Nested);
+        ConfiguredJsonDocument.SelectCount(db, Id: 3).ShouldBe(0);
+        ConfiguredJsonDocument.SelectCount(db).ShouldBe(9);
+    }
+
+    [Fact]
+    public void JsonOptions_ArrayElementsAndConfiguredFts_ReadWithSelectedPolicy()
+    {
+        using SqliteConnection db = OpenInMemory();
+        ConfiguredJsonDocument.CreateTable(db);
+        ConfiguredJsonDocument.Insert(db, NewConfiguredJson(1, "searchable"));
+        ConfiguredJsonSearch.CreateTable(db);
+        ConfiguredJsonSearch.Populate(db).ShouldBe(1);
+        ConfiguredJsonSearch result = ConfiguredJsonSearch.Select(db, ["searchable"]).Single();
+        result.Value.Text.ShouldBe("searchable");
+        result.Nested.Inner.Text.ShouldBe("searchable-nested");
+        result.Items.Single().Text.ShouldBe("searchable-list");
+        ConfiguredJsonSearch.SelectCount(db, ["searchable"]).ShouldBe(1);
+        db.Select<ConfiguredJsonSearch>(["searchable"]).Single().Value.Text.ShouldBe("searchable");
+
+        JsonArrayDocument.CreateTable(db);
+        JsonArrayDocument value = new()
+        {
+            Id = 1,
+            Items = [new JsonPayload { Text = "arraytoken" }],
+            Sequence = new List<JsonPayload> { new JsonPayload { Text = "sequence" } },
+        };
+        JsonArrayDocument.Insert(db, value);
+        JsonCell(db, "json_arrays", "Items", 1).ShouldBe("[\"element:arraytoken\"]");
+        JsonCell(db, "json_arrays", "Sequence", 1).ShouldBe("[\"element:sequence\"]");
+        JsonArrayDocument read = JsonArrayDocument.SelectSingle(db, Items: value.Items)!;
+        read.Items.ShouldBeOfType<JsonPayload[]>();
+        read.Items.Single().Text.ShouldBe("arraytoken");
+        read.Sequence.ShouldBeOfType<List<JsonPayload>>();
+        read.Sequence.Single().Text.ShouldBe("sequence");
+        JsonArrayDocument.SelectCount(db, Sequence: value.Sequence).ShouldBe(1);
+        JsonArraySearch.CreateTable(db);
+        JsonArraySearch.Populate(db).ShouldBe(1);
+        JsonArraySearch search = JsonArraySearch.Select(db, ["arraytoken"]).Single();
+        search.Items.Single().Text.ShouldBe("arraytoken");
+        search.Sequence.Single().Text.ShouldBe("sequence");
+        JsonArrayDocument.Delete(db, Items: value.Items);
+        JsonArrayDocument.SelectCount(db).ShouldBe(0);
+    }
+
+    [Fact]
+    public void JsonOptions_NullEmptyWhitespaceAndSqlNull_RetainDefaultWrappers()
+    {
+        using SqliteConnection db = OpenInMemory();
+        SentinelJsonDocument.CreateTable(db);
+        SentinelJsonDocument sentinels = new()
+        {
+            Object = null!,
+            NullableObject = null,
+            Items = [],
+            NullableItems = [],
+            Array = null!,
+            NullableArray = null,
+            Sequence = null!,
+            NullableSequence = null,
+        };
+        int id = SentinelJsonDocument.Insert(db, sentinels);
+        foreach (string column in new[] { "Object", "Items", "Array", "Sequence" })
+        {
+            JsonCell(db, "json_sentinels", column, id).ShouldBe(string.Empty);
+        }
+        foreach (string column in new[] { "NullableObject", "NullableItems", "NullableArray", "NullableSequence" })
+        {
+            JsonCell(db, "json_sentinels", column, id).ShouldBe(DBNull.Value);
+        }
+        SentinelJsonDocument initial = SentinelJsonDocument.SelectSingle(db, Id: id)!;
+        initial.Object.Text.ShouldBeEmpty();
+        initial.Items.ShouldBeEmpty();
+        initial.Array.ShouldBeEmpty();
+        initial.Sequence.ShouldBeEmpty();
+        initial.NullableObject.ShouldBeNull();
+        initial.NullableItems.ShouldBeNull();
+        initial.NullableArray.ShouldBeNull();
+        initial.NullableSequence.ShouldBeNull();
+
+        SentinelJsonDocument arrays = new()
+        {
+            Object = new JsonPayload { Text = "nonnull" },
+            NullableObject = new JsonPayload { Text = "nullable" },
+            Items = [new JsonPayload { Text = "list" }],
+            NullableItems = [new JsonPayload { Text = "nullable-list" }],
+            Array = [],
+            NullableArray = [],
+            Sequence = Enumerable.Empty<JsonPayload>(),
+            NullableSequence = Enumerable.Empty<JsonPayload>(),
+        };
+        int other = SentinelJsonDocument.Insert(db, arrays);
+        foreach (string column in new[] { "Array", "NullableArray", "Sequence", "NullableSequence" })
+        {
+            JsonCell(db, "json_sentinels", column, other).ShouldBe("[]");
+        }
+        SentinelJsonDocument.SelectSingle(db, Id: other)!.NullableItems!.Single().Text.ShouldBe("nullable-list");
+        SentinelJsonDocument.SelectCount(db, NullableObject: null).ShouldBe(2);
+        SentinelJsonDocument.SelectCount(db, NullableObjectIsNull: true).ShouldBe(1);
+        SentinelJsonDocument.SelectCount(db, NullableObjectIsNull: false).ShouldBe(1);
+        SentinelJsonDocument.SelectCount(db, Items: []).ShouldBe(1);
+
+        foreach (string sentinel in new[] { "   ", "null" })
+        {
+            using SqliteCommand update = db.CreateCommand();
+            update.CommandText = """
+                UPDATE json_sentinels SET "Object"=$text, NullableObject=$text,
+                    Items=$text, NullableItems=$text, "Array"=$text, NullableArray=$text,
+                    Sequence=$text, NullableSequence=$text
+                """;
+            update.Parameters.AddWithValue("$text", sentinel);
+            update.ExecuteNonQuery();
+            SentinelJsonDocument read = SentinelJsonDocument.SelectSingle(db, Id: id)!;
+            read.Object.Text.ShouldBeEmpty();
+            read.NullableObject.ShouldBeNull();
+            read.Items.ShouldBeEmpty();
+            read.NullableItems.ShouldNotBeNull().ShouldBeEmpty();
+            read.Array.ShouldBeEmpty();
+            read.NullableArray.ShouldNotBeNull().ShouldBeEmpty();
+            read.Sequence.ShouldBeEmpty();
+            read.NullableSequence.ShouldNotBeNull().ShouldBeEmpty();
+        }
+        SentinelJsonDocument.Delete(db, NullableObjectIsNull: true);
+        SentinelJsonDocument.SelectCount(db).ShouldBe(2); // JSON null text is not SQL NULL.
+        SentinelJsonDocument.Delete(db, NullableObject: null); // Null equality omits the predicate.
+        SentinelJsonDocument.SelectCount(db).ShouldBe(0);
+    }
+
+    [Fact]
+    public void JsonOptions_GuardsDoNotInitializeFactory()
+    {
+        using SqliteConnection db = OpenInMemory();
+        GuardJsonFactory.Calls.ShouldBe(0);
+        GuardJsonDocument.DefaultTableName.ShouldBe("json_guards");
+        GuardJsonDocument.SQLiteColumnNames.ShouldContain("Object");
+        GuardJsonDocument.CreateTable(db);
+        GuardJsonDocument.EnsureSchema(db);
+        GuardJsonDocument.LoadMaxKey(db);
+        GuardJsonDocument.GetIndex().ShouldBeGreaterThan(0);
+        GuardJsonDocument.SelectMaxKey(db).ShouldBeNull();
+        GuardJsonDocument sentinel = new()
+        {
+            Object = null!, Items = [], Array = null!, Sequence = null!,
+        };
+        int id = GuardJsonDocument.Insert(db, sentinel);
+        GuardJsonDocument.Update(db, sentinel);
+        GuardJsonDocument.SelectSingle(db, Id: id)!.Object.Text.ShouldBeEmpty();
+        GuardJsonDocument.SelectCount(db, NullableObject: null, NullableObjectIsNull: true, Items: []).ShouldBe(1);
+        ExecuteSql(db, """
+            UPDATE json_guards SET "Object"=' ', Items=' ', "Array"=' ', Sequence=' '
+            """);
+        GuardJsonDocument.SelectList(db).Single().Array.ShouldBeEmpty();
+        GuardJsonDocument.SelectEnumerable(db).Single().NullableObject.ShouldBeNull();
+        GuardJsonDocument.Delete(db, Id: -1, Items: []);
+        GuardJsonFactory.Calls.ShouldBe(0);
+        sentinel.Object = new JsonPayload { Text = "first-real-use" };
+        GuardJsonDocument.Update(db, sentinel);
+        GuardJsonFactory.Calls.ShouldBe(1);
+        JsonCell(db, "json_guards", "Object", id).ShouldBe("\"guard:first-real-use\"");
+        GuardJsonDocument.SelectSingle(db)!.Object.Text.ShouldBe("first-real-use");
+        GuardJsonFactory.Calls.ShouldBe(1);
+
+        ScalarJsonDocument.CreateTable(db);
+        ScalarJsonDocument.EnsureSchema(db);
+        ScalarJsonDocument.Insert(db, new ScalarJsonDocument { Label = "scalar" });
+        ScalarJsonDocument.SelectSingle(db)!.Label.ShouldBe("scalar");
+        UnusedJsonFactory.Calls.ShouldBe(0);
+    }
+
+    [Fact]
+    public void JsonOptions_ConcurrentFirstUse_IsOncePerModelAndIsolated()
+    {
+        ConcurrentJsonFactory.FirstCalls.ShouldBe(0);
+        ConcurrentJsonFactory.SecondCalls.ShouldBe(0);
+        Parallel.For(0, 24, index =>
+        {
+            using SqliteConnection db = OpenInMemory();
+            ConcurrentJsonFirst.CreateTable(db);
+            ConcurrentJsonSecond.CreateTable(db);
+            ConcurrentJsonFirst.Insert(db, new ConcurrentJsonFirst { Id = index, Value = new JsonPayload { Text = "a" } });
+            ConcurrentJsonSecond.Insert(db, new ConcurrentJsonSecond { Id = index, Value = new JsonPayload { Text = "b" } });
+            ConcurrentJsonFirst.SelectSingle(db)!.Value!.Text.ShouldBe("a");
+            ConcurrentJsonSecond.SelectSingle(db)!.Value!.Text.ShouldBe("b");
+            JsonCell(db, "json_concurrent_a", "Value", index).ShouldBe("\"concurrent-a:a\"");
+            JsonCell(db, "json_concurrent_b", "Value", index).ShouldBe("\"concurrent-b:b\"");
+        });
+        ConcurrentJsonFactory.FirstCalls.ShouldBe(1);
+        ConcurrentJsonFactory.SecondCalls.ShouldBe(1);
+    }
+
+    [Fact]
+    public void JsonOptions_SnapshotIsIndependentOfReturnedOptions()
+    {
+        using SqliteConnection db = OpenInMemory();
+        SnapshotJsonDocument.CreateTable(db);
+        SnapshotJsonDocument.Insert(db, new SnapshotJsonDocument { Id = 1, Value = new JsonPayload { Text = "before" } });
+        JsonPayloadConverter sharedConverter = (JsonPayloadConverter)SnapshotJsonFactory.Original.Converters.Single();
+        Volatile.Read(ref sharedConverter.Writes).ShouldBe(1);
+        SnapshotJsonFactory.Original.IsReadOnly.ShouldBeFalse();
+        SnapshotJsonFactory.Original.WriteIndented = true;
+        SnapshotJsonFactory.Original.Converters.Clear();
+        SnapshotJsonFactory.Original.Converters.Add(new JsonPayloadConverter("mutated:"));
+        SnapshotJsonDocument.Insert(db, new SnapshotJsonDocument { Id = 2, Value = new JsonPayload { Text = "after" } });
+        JsonCell(db, "json_snapshot", "Value", 2).ShouldBe("\"snapshot:after\"");
+        SnapshotJsonDocument.SelectSingle(db, Id: 2)!.Value!.Text.ShouldBe("after");
+        Volatile.Read(ref sharedConverter.Writes).ShouldBe(2);
+        Volatile.Read(ref sharedConverter.Reads).ShouldBe(1);
+        JsonSerializer.Serialize(new JsonPayload { Text = "original" }, SnapshotJsonFactory.Original).ShouldBe("\"mutated:original\"");
+        SnapshotJsonFactory.Calls.ShouldBe(1);
+    }
+
+    [Fact]
+    public void JsonOptions_FactoryNullAndThrow_AreVisibleAndCached()
+    {
+        using SqliteConnection db = OpenInMemory();
+        NullFactoryJsonDocument.CreateTable(db);
+        ThrowFactoryJsonDocument.CreateTable(db);
+        FailedJsonFactory.NullCalls.ShouldBe(0);
+        FailedJsonFactory.ThrowCalls.ShouldBe(0);
+        NullFactoryJsonDocument.Insert(db, new NullFactoryJsonDocument { Id = 1 });
+        ThrowFactoryJsonDocument.Insert(db, new ThrowFactoryJsonDocument { Id = 1 });
+        NullFactoryJsonDocument.SelectSingle(db)!.Value.ShouldBeNull();
+        ThrowFactoryJsonDocument.SelectSingle(db)!.Value.ShouldBeNull();
+        FailedJsonFactory.NullCalls.ShouldBe(0);
+        FailedJsonFactory.ThrowCalls.ShouldBe(0);
+        JsonPayload payload = new() { Text = "trigger" };
+        InvalidOperationException nullFailure = Should.Throw<InvalidOperationException>(() =>
+            NullFactoryJsonDocument.Insert(db, new NullFactoryJsonDocument { Id = 2, Value = payload }));
+        nullFailure.GetType().ShouldBe(typeof(InvalidOperationException));
+        nullFailure.Message.ShouldContain(nameof(NullFactoryJsonDocument));
+        nullFailure.Message.ShouldContain("FailedJsonFactory.Null()");
+        nullFailure.Message.ShouldContain("returned null");
+        Should.Throw<InvalidOperationException>(() => NullFactoryJsonDocument.SelectCount(db, Value: payload)).ShouldBeSameAs(nullFailure);
+        InvalidOperationException throwFailure = Should.Throw<InvalidOperationException>(() =>
+            ThrowFactoryJsonDocument.Insert(db, new ThrowFactoryJsonDocument { Id = 2, Value = payload }));
+        throwFailure.GetType().ShouldBe(typeof(InvalidOperationException));
+        throwFailure.Message.ShouldBe("consumer factory failed");
+        Should.Throw<InvalidOperationException>(() => ThrowFactoryJsonDocument.Delete(db, Value: payload)).ShouldBeSameAs(throwFailure);
+        ExecuteSql(db, """UPDATE json_null_factory SET Value='"valid"'; UPDATE json_throw_factory SET Value='"valid"';""");
+        Should.Throw<InvalidOperationException>(() => NullFactoryJsonDocument.SelectList(db)).ShouldBeSameAs(nullFailure);
+        Should.Throw<InvalidOperationException>(() => ThrowFactoryJsonDocument.SelectSingle(db)).ShouldBeSameAs(throwFailure);
+        FailedJsonFactory.NullCalls.ShouldBe(1);
+        FailedJsonFactory.ThrowCalls.ShouldBe(1);
+        NullFactoryJsonDocument.Insert(db, new NullFactoryJsonDocument { Id = 3 });
+        ThrowFactoryJsonDocument.Insert(db, new ThrowFactoryJsonDocument { Id = 3 });
+        NullFactoryJsonDocument.SelectSingle(db, Id: 3)!.Value.ShouldBeNull();
+        ThrowFactoryJsonDocument.SelectSingle(db, Id: 3)!.Value.ShouldBeNull();
+    }
+
+    [Fact]
+    public void JsonOptions_MalformedJsonAndConverterFailures_Propagate()
+    {
+        using SqliteConnection db = OpenInMemory();
+        FailingConverterJsonDocument.CreateTable(db);
+        MalformedJsonDocument.CreateTable(db);
+        JsonPayload payload = new() { Text = "failure" };
+        Should.Throw<InvalidOperationException>(() => FailingConverterJsonDocument.Insert(db,
+            new FailingConverterJsonDocument { Id = 1, Value = payload })).Message.ShouldBe("consumer converter write failed");
+        FailingConverterJsonDocument.SelectCount(db).ShouldBe(0);
+        Should.Throw<InvalidOperationException>(() => FailingConverterJsonDocument.SelectCount(db, Value: payload))
+            .Message.ShouldBe("consumer converter write failed");
+        Should.Throw<InvalidOperationException>(() => FailingConverterJsonDocument.SelectSingle(db, Value: payload))
+            .Message.ShouldBe("consumer converter write failed");
+        Should.Throw<InvalidOperationException>(() => FailingConverterJsonDocument.Delete(db, Value: payload))
+            .Message.ShouldBe("consumer converter write failed");
+        ExecuteSql(db, """INSERT INTO json_converter_failure (Id, Value) VALUES (2, '"read"')""");
+        Should.Throw<InvalidOperationException>(() => FailingConverterJsonDocument.SelectSingle(db))
+            .Message.ShouldBe("consumer converter read failed");
+        Should.Throw<InvalidOperationException>(() => FailingConverterJsonDocument.SelectEnumerable(db).ToList())
+            .Message.ShouldBe("consumer converter read failed");
+        FailingConverterFactory.Calls.ShouldBe(1);
+
+        ExecuteSql(db, """INSERT INTO json_malformed (Id, Value) VALUES (1, '{not json')""");
+        Should.Throw<JsonException>(() => MalformedJsonDocument.SelectSingle(db));
+        Should.Throw<JsonException>(() => MalformedJsonDocument.SelectList(db));
+        Should.Throw<JsonException>(() => MalformedJsonDocument.SelectEnumerable(db).ToList());
+        ExecuteSql(db, """UPDATE json_malformed SET Value='"wrong-policy:payload"'""");
+        Should.Throw<JsonException>(() => MalformedJsonDocument.SelectSingle(db));
+    }
+
+    private static ConfiguredJsonDocument NewConfiguredJson(int id, string text) => new()
+    {
+        Id = id,
+        Label = text,
+        Value = new JsonPayload { Text = text },
+        Nested = new JsonEnvelope { Inner = new JsonPayload { Text = text + "-nested" } },
+        Items = [new JsonPayload { Text = text + "-list" }],
+    };
+
+    private static object? JsonCell(SqliteConnection db, string table, string column, int id)
+    {
+        using SqliteCommand command = db.CreateCommand();
+        command.CommandText = $"SELECT {QuoteKeyPolicyIdentifier(column)} FROM {QuoteKeyPolicyIdentifier(table)} WHERE Id = $id";
+        command.Parameters.AddWithValue("$id", id);
+        return command.ExecuteScalar();
     }
 
     private static bool CreateKeyPolicyTable(IDbConnection db, string table) => table switch

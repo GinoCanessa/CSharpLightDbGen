@@ -172,6 +172,105 @@ public class LightSQLiteGenerator_CachingTests
         LightSQLiteGenerator.FtsEmissionTrackingName,
     ];
 
+    private const string JsonFactorySource = """
+        public static class JsonFactory
+        {
+            public static System.Text.Json.JsonSerializerOptions First() => new() { WriteIndented = false };
+            public static System.Text.Json.JsonSerializerOptions Second() => new();
+        }
+        """;
+
+    private const string JsonModelsSource = """
+        using CsLightDbGen.SQLiteGenerator;
+        namespace Demo;
+        public class Payload { public string Text { get; set; } = ""; }
+        [LdgSQLiteTable("first"), LdgSQLiteJsonOptions(typeof(JsonFactory), "First")]
+        public partial class First { public Payload Value { get; set; } = new(); }
+        [LdgSQLiteTable("second"), LdgSQLiteJsonOptions(typeof(JsonFactory), "Second")]
+        public partial class Second { public Payload Value { get; set; } = new(); }
+        [LdgSQLiteFtsTable("second"), LdgSQLiteJsonOptions(typeof(JsonFactory), "Second")]
+        public partial class Search { public Payload Value { get; set; } = new(); }
+        """;
+
+    [Fact]
+    public void JsonBinding_UnrelatedAndFactoryBodyEditsReuseOutputs()
+    {
+        GeneratorRunResult first = GeneratorTestHost.Run(
+            new GeneratorTestOptions { TrackIncrementalSteps = true }, JsonModelsSource, JsonFactorySource, UnrelatedSource);
+        GeneratorRunResult unrelated = GeneratorTestHost.ReRun(first,
+            new Dictionary<int, string> { [2] = UnrelatedSource.Replace("int X", "long X", StringComparison.Ordinal) });
+        GeneratorRunResult factoryEdit = GeneratorTestHost.ReRun(unrelated,
+            new Dictionary<int, string> { [1] = JsonFactorySource.Replace("WriteIndented = false", "WriteIndented = true", StringComparison.Ordinal) });
+        AssertClean(first);
+        foreach (GeneratorRunResult current in new[] { unrelated, factoryEdit })
+        {
+            AssertClean(current);
+            AssertSameSources(first, current);
+            foreach (string name in EffectiveEmissionTrackingNames)
+            {
+                AssertAllStepOutputsReused(current.DriverRunResult, name);
+                AssertSourceOutputReasons(current.DriverRunResult, name, changed: false);
+            }
+        }
+    }
+
+    [Fact]
+    public void JsonBinding_ModelSelectionChangeInvalidatesOnlyThatModel()
+    {
+        int split = JsonModelsSource.IndexOf("[LdgSQLiteTable(\"second\")", StringComparison.Ordinal);
+        string selectedModel = JsonModelsSource.Substring(0, split);
+        string otherModels = "using CsLightDbGen.SQLiteGenerator; namespace Demo; " + JsonModelsSource.Substring(split);
+        GeneratorRunResult first = GeneratorTestHost.Run(
+            new GeneratorTestOptions { TrackIncrementalSteps = true }, selectedModel, otherModels, JsonFactorySource);
+        GeneratorRunResult changed = GeneratorTestHost.ReRun(first,
+            new Dictionary<int, string> { [0] = selectedModel.Replace("typeof(JsonFactory), \"First\"", "typeof(JsonFactory), \"Second\"", StringComparison.Ordinal) });
+        AssertClean(first);
+        AssertClean(changed);
+        foreach (KeyValuePair<string, string> source in first.GeneratedSources)
+        {
+            if (source.Key.EndsWith("First.Table.g.cs", StringComparison.Ordinal))
+            {
+                changed.GeneratedSources[source.Key].ShouldNotBe(source.Value);
+            }
+            else
+            {
+                changed.GeneratedSources[source.Key].ShouldBe(source.Value);
+            }
+        }
+        IncrementalStepRunReason[] tableReasons = changed.DriverRunResult.Results.Single().TrackedSteps[LightSQLiteGenerator.TableEmissionTrackingName]
+            .SelectMany(static step => step.Outputs).Select(static output => output.Reason).ToArray();
+        tableReasons.Count(static reason => reason == IncrementalStepRunReason.Modified).ShouldBe(1);
+        tableReasons.Count(static reason => reason == IncrementalStepRunReason.Cached || reason == IncrementalStepRunReason.Unchanged).ShouldBe(1);
+        AssertAllStepOutputsReused(changed.DriverRunResult, LightSQLiteGenerator.FtsEmissionTrackingName);
+        AssertSourceOutputReasons(changed.DriverRunResult, LightSQLiteGenerator.FtsEmissionTrackingName, changed: false);
+        IncrementalStepRunReason[] outputReasons = changed.DriverRunResult.Results.Single().TrackedOutputSteps.Values
+            .SelectMany(static steps => steps)
+            .Where(static step => step.Inputs.Any(static input => input.Source.Name == LightSQLiteGenerator.TableEmissionTrackingName))
+            .SelectMany(static step => step.Outputs).Select(static output => output.Reason).ToArray();
+        outputReasons.Count(static reason => reason == IncrementalStepRunReason.Modified).ShouldBe(1);
+        outputReasons.Count(static reason => reason == IncrementalStepRunReason.Cached || reason == IncrementalStepRunReason.Unchanged).ShouldBe(1);
+    }
+
+    [Fact]
+    public void JsonBinding_FtsSelectionChangeReusesTableOutputs()
+    {
+        GeneratorRunResult first = GeneratorTestHost.Run(
+            new GeneratorTestOptions { TrackIncrementalSteps = true }, JsonModelsSource, JsonFactorySource);
+        GeneratorRunResult changed = GeneratorTestHost.ReRun(first, new Dictionary<int, string>
+        {
+            [0] = JsonModelsSource.Replace(
+                "LdgSQLiteFtsTable(\"second\"), LdgSQLiteJsonOptions(typeof(JsonFactory), \"Second\")",
+                "LdgSQLiteFtsTable(\"second\"), LdgSQLiteJsonOptions(typeof(JsonFactory), \"First\")",
+                StringComparison.Ordinal),
+        });
+        AssertClean(first);
+        AssertClean(changed);
+        AssertAllStepOutputsReused(changed.DriverRunResult, LightSQLiteGenerator.TableEmissionTrackingName);
+        AssertSourceOutputReasons(changed.DriverRunResult, LightSQLiteGenerator.TableEmissionTrackingName, changed: false);
+        AssertStepChanged(changed.DriverRunResult, LightSQLiteGenerator.FtsEmissionTrackingName);
+        AssertSourceOutputReasons(changed.DriverRunResult, LightSQLiteGenerator.FtsEmissionTrackingName, changed: true);
+    }
+
     private static void AssertEnvironmentChange(GeneratorRunResult previous, GeneratorRunResult current, string runtimeNamespace)
     {
         AssertClean(previous);

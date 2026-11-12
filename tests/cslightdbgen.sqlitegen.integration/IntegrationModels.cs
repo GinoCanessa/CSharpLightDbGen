@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Threading;
 using CsLightDbGen.SQLiteGenerator;
 
 namespace cslightdbgen.sqlitegen.integration.Models;
@@ -303,6 +306,269 @@ public partial class JsonDocEntity
     public List<string> Tags { get; set; } = [];
 
     public List<JsonAddress> History { get; set; } = [];
+}
+
+public class JsonPayload
+{
+    public string Text { get; set; } = string.Empty;
+}
+
+public class JsonEnvelope
+{
+    public JsonPayload Inner { get; set; } = new();
+}
+
+public sealed class JsonPayloadConverter(string prefix) : JsonConverter<JsonPayload>
+{
+    public int Writes;
+    public int Reads;
+
+    public override JsonPayload? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        Interlocked.Increment(ref Reads);
+        string text = reader.GetString() ?? throw new JsonException("Missing payload");
+        if (!text.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            throw new JsonException("Wrong JSON policy");
+        }
+        return new JsonPayload { Text = text.Substring(prefix.Length) };
+    }
+
+    public override void Write(Utf8JsonWriter writer, JsonPayload value, JsonSerializerOptions options)
+    {
+        Interlocked.Increment(ref Writes);
+        writer.WriteStringValue(prefix + value.Text);
+    }
+}
+
+public sealed class JsonPayloadListConverter : JsonConverter<List<JsonPayload>>
+{
+    public override List<JsonPayload>? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        using JsonDocument document = JsonDocument.ParseValue(ref reader);
+        List<JsonPayload> result = [];
+        foreach (JsonElement element in document.RootElement.GetProperty("batch").EnumerateArray())
+        {
+            result.Add(JsonSerializer.Deserialize<JsonPayload>(element.GetRawText(), options) ?? new JsonPayload());
+        }
+        return result;
+    }
+
+    public override void Write(Utf8JsonWriter writer, List<JsonPayload> value, JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+        writer.WritePropertyName("batch");
+        writer.WriteStartArray();
+        foreach (JsonPayload payload in value)
+        {
+            JsonSerializer.Serialize(writer, payload, options);
+        }
+        writer.WriteEndArray();
+        writer.WriteEndObject();
+    }
+}
+
+public static class JsonPolicies
+{
+    public static JsonSerializerOptions Create(string prefix, bool list = false)
+    {
+        JsonSerializerOptions options = new() { WriteIndented = false };
+        options.Converters.Add(new JsonPayloadConverter(prefix));
+        if (list)
+        {
+            options.Converters.Add(new JsonPayloadListConverter());
+        }
+        return options;
+    }
+
+    public static JsonSerializerOptions Primary() => Create("wire:", list: true);
+    public static JsonSerializerOptions Alternate() => Create("alternate:", list: true);
+    public static JsonSerializerOptions Elements() => Create("element:");
+}
+
+[LdgSQLiteTable("configured_json"), LdgSQLiteJsonOptions(typeof(JsonPolicies), nameof(JsonPolicies.Primary))]
+public partial class ConfiguredJsonDocument
+{
+    [LdgSQLiteKey(false)]
+    public int Id { get; set; }
+    public string Label { get; set; } = string.Empty;
+    public JsonPayload Value { get; set; } = new();
+    public JsonEnvelope Nested { get; set; } = new();
+    public List<JsonPayload> Items { get; set; } = [];
+}
+
+[LdgSQLiteTable("alternate_json"), LdgSQLiteJsonOptions(typeof(JsonPolicies), nameof(JsonPolicies.Alternate))]
+public partial class AlternateJsonDocument
+{
+    [LdgSQLiteKey(false)]
+    public int Id { get; set; }
+    public JsonPayload Value { get; set; } = new();
+}
+
+[LdgSQLiteFtsTable("configured_json", "configured_json_search"), LdgSQLiteJsonOptions(typeof(JsonPolicies), nameof(JsonPolicies.Primary))]
+public partial class ConfiguredJsonSearch
+{
+    public string Label { get; set; } = string.Empty;
+    public JsonPayload Value { get; set; } = new();
+    public JsonEnvelope Nested { get; set; } = new();
+    public List<JsonPayload> Items { get; set; } = [];
+}
+
+[LdgSQLiteTable("json_arrays"), LdgSQLiteJsonOptions(typeof(JsonPolicies), nameof(JsonPolicies.Elements))]
+public partial class JsonArrayDocument
+{
+    [LdgSQLiteKey(false)]
+    public int Id { get; set; }
+    public JsonPayload[] Items { get; set; } = [];
+    public IEnumerable<JsonPayload> Sequence { get; set; } = [];
+}
+
+[LdgSQLiteFtsTable("json_arrays", "json_array_search"), LdgSQLiteJsonOptions(typeof(JsonPolicies), nameof(JsonPolicies.Elements))]
+public partial class JsonArraySearch
+{
+    public JsonPayload[] Items { get; set; } = [];
+    public IEnumerable<JsonPayload> Sequence { get; set; } = [];
+}
+
+public static class GuardJsonFactory
+{
+    public static int Calls;
+    public static JsonSerializerOptions Create()
+    {
+        Interlocked.Increment(ref Calls);
+        return JsonPolicies.Create("guard:");
+    }
+}
+
+[LdgSQLiteBaseClass]
+public class JsonSentinelRow
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+    public JsonPayload Object { get; set; } = new();
+    public JsonPayload? NullableObject { get; set; }
+    public List<JsonPayload> Items { get; set; } = [];
+    public List<JsonPayload>? NullableItems { get; set; }
+    public JsonPayload[] Array { get; set; } = [];
+    public JsonPayload[]? NullableArray { get; set; }
+    public IEnumerable<JsonPayload> Sequence { get; set; } = [];
+    public IEnumerable<JsonPayload>? NullableSequence { get; set; }
+}
+
+[LdgSQLiteTable("json_guards"), LdgSQLiteJsonOptions(typeof(GuardJsonFactory), nameof(GuardJsonFactory.Create))]
+public partial class GuardJsonDocument : JsonSentinelRow { }
+
+[LdgSQLiteTable("json_sentinels"), LdgSQLiteJsonOptions(typeof(JsonPolicies), nameof(JsonPolicies.Elements))]
+public partial class SentinelJsonDocument : JsonSentinelRow { }
+
+[LdgSQLiteBaseClass]
+public class JsonLifecycleRow
+{
+    [LdgSQLiteKey(false)]
+    public int Id { get; set; }
+    public JsonPayload? Value { get; set; }
+}
+
+public static class ConcurrentJsonFactory
+{
+    public static int FirstCalls;
+    public static int SecondCalls;
+    public static JsonSerializerOptions First()
+    {
+        Interlocked.Increment(ref FirstCalls);
+        return JsonPolicies.Create("concurrent-a:");
+    }
+    public static JsonSerializerOptions Second()
+    {
+        Interlocked.Increment(ref SecondCalls);
+        return JsonPolicies.Create("concurrent-b:");
+    }
+}
+
+[LdgSQLiteTable("json_concurrent_a"), LdgSQLiteJsonOptions(typeof(ConcurrentJsonFactory), nameof(ConcurrentJsonFactory.First))]
+public partial class ConcurrentJsonFirst : JsonLifecycleRow { }
+
+[LdgSQLiteTable("json_concurrent_b"), LdgSQLiteJsonOptions(typeof(ConcurrentJsonFactory), nameof(ConcurrentJsonFactory.Second))]
+public partial class ConcurrentJsonSecond : JsonLifecycleRow { }
+
+public static class SnapshotJsonFactory
+{
+    public static int Calls;
+    public static readonly JsonSerializerOptions Original = JsonPolicies.Create("snapshot:");
+    public static JsonSerializerOptions Create()
+    {
+        Interlocked.Increment(ref Calls);
+        return Original;
+    }
+}
+
+[LdgSQLiteTable("json_snapshot"), LdgSQLiteJsonOptions(typeof(SnapshotJsonFactory), nameof(SnapshotJsonFactory.Create))]
+public partial class SnapshotJsonDocument : JsonLifecycleRow { }
+
+public static class FailedJsonFactory
+{
+    public static int NullCalls;
+    public static int ThrowCalls;
+    public static JsonSerializerOptions? Null()
+    {
+        Interlocked.Increment(ref NullCalls);
+        return null;
+    }
+    public static JsonSerializerOptions Throw()
+    {
+        Interlocked.Increment(ref ThrowCalls);
+        throw new InvalidOperationException("consumer factory failed");
+    }
+}
+
+[LdgSQLiteTable("json_null_factory"), LdgSQLiteJsonOptions(typeof(FailedJsonFactory), nameof(FailedJsonFactory.Null))]
+public partial class NullFactoryJsonDocument : JsonLifecycleRow { }
+
+[LdgSQLiteTable("json_throw_factory"), LdgSQLiteJsonOptions(typeof(FailedJsonFactory), nameof(FailedJsonFactory.Throw))]
+public partial class ThrowFactoryJsonDocument : JsonLifecycleRow { }
+
+public sealed class FailingJsonConverter : JsonConverter<JsonPayload>
+{
+    public override JsonPayload? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+        throw new InvalidOperationException("consumer converter read failed");
+    public override void Write(Utf8JsonWriter writer, JsonPayload value, JsonSerializerOptions options) =>
+        throw new InvalidOperationException("consumer converter write failed");
+}
+
+public static class FailingConverterFactory
+{
+    public static int Calls;
+    public static JsonSerializerOptions Create()
+    {
+        Interlocked.Increment(ref Calls);
+        JsonSerializerOptions options = new();
+        options.Converters.Add(new FailingJsonConverter());
+        return options;
+    }
+}
+
+[LdgSQLiteTable("json_converter_failure"), LdgSQLiteJsonOptions(typeof(FailingConverterFactory), nameof(FailingConverterFactory.Create))]
+public partial class FailingConverterJsonDocument : JsonLifecycleRow { }
+
+[LdgSQLiteTable("json_malformed"), LdgSQLiteJsonOptions(typeof(JsonPolicies), nameof(JsonPolicies.Elements))]
+public partial class MalformedJsonDocument : JsonLifecycleRow { }
+
+public static class UnusedJsonFactory
+{
+    public static int Calls;
+    public static JsonSerializerOptions Create()
+    {
+        Interlocked.Increment(ref Calls);
+        throw new InvalidOperationException("unused factory must never run");
+    }
+}
+
+[LdgSQLiteTable("json_scalar"), LdgSQLiteJsonOptions(typeof(UnusedJsonFactory), nameof(UnusedJsonFactory.Create))]
+public partial class ScalarJsonDocument
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+    public string Label { get; set; } = string.Empty;
 }
 
 // H2: DateTime scalar columns (TEXT-backed) must round-trip through insert/select, including the

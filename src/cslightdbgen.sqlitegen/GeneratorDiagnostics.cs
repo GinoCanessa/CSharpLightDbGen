@@ -48,6 +48,15 @@ internal static class GeneratorDiagnostics
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
+    /// <summary>CSLDG007 — invalid model-local JSON options factory.</summary>
+    public static readonly DiagnosticDescriptor InvalidJsonOptionsFactory = new(
+        id: "CSLDG007",
+        title: "Invalid JSON options factory",
+        messageFormat: "Invalid JSON options factory for model '{0}': {1}",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
     /// <summary>CSLDG008 — invalid host runtime namespace or multi-host configuration.</summary>
     public static readonly DiagnosticDescriptor InvalidHostConfiguration = new(
         id: "CSLDG008",

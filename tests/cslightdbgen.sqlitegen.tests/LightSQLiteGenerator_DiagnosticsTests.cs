@@ -16,6 +16,7 @@ public class LightSQLiteGenerator_DiagnosticsTests
         //   CSLDG003 (CompositeKeyAutoIncrementConflict)    -> LightSQLiteGenerator_CompositeKeyTests
         //   CSLDG005 (UnsupportedKeyOrForeignKeyCombination)-> incomplete-FK path
         //   CSLDG006 (FtsSourceTableUnresolved)             -> Fts_UnresolvedSource_ReportsCSLDG006
+        //   CSLDG007 (InvalidJsonOptionsFactory)            -> JsonFactory_InvalidBindings_ReportCSLDG007
         //   CSLDG008 (InvalidHostConfiguration)            -> MultiHost_InvalidConfiguration_ReportsCSLDG008
         // Re-introducing an orphan descriptor (as CSLDG002/CSLDG004 once were) fails this test.
         Type diagnosticsType = typeof(LightSQLiteGenerator).Assembly
@@ -29,6 +30,6 @@ public class LightSQLiteGenerator_DiagnosticsTests
             .OrderBy(static id => id, StringComparer.Ordinal)
             .ToArray();
 
-        declaredIds.ShouldBe(["CSLDG001", "CSLDG003", "CSLDG005", "CSLDG006", "CSLDG008"]);
+        declaredIds.ShouldBe(["CSLDG001", "CSLDG003", "CSLDG005", "CSLDG006", "CSLDG007", "CSLDG008"]);
     }
 }
