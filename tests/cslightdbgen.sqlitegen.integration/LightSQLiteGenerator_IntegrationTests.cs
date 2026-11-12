@@ -1,13 +1,146 @@
 using System.Data;
+using System.Reflection;
 using System.Text.Json;
 using System.Threading;
 using cslightdbgen.sqlitegen.integration.Models;
+using CsLightDbGen.Integration.HostA.Models;
+using CsLightDbGen.Integration.HostB.Models;
 using CsLightDbGen.SQLiteGenerator;
+using HostACommandFailedException = CsLightDbGen.Integration.HostA.Runtime.LdgCommandFailedException;
+using HostBCommandFailedException = CsLightDbGen.Integration.HostB.Runtime.LdgCommandFailedException;
 
 namespace cslightdbgen.sqlitegen.integration;
 
 public class LightSQLiteGenerator_IntegrationTests
 {
+    [Fact]
+    public void MultiHost_RealProjects_ExecuteBothDalsAndExposeDistinctPublicExceptions()
+    {
+        using SqliteConnection db = OpenInMemory();
+        ExecuteSql(db, "PRAGMA foreign_keys = ON");
+        HostAItem.CreateTable(db).ShouldBeTrue();
+        HostBItem.CreateTable(db).ShouldBeTrue();
+
+        HostAItem parent = new() { ItemKey = 11, Label = "parent" };
+        HostAItem.Insert(db, parent);
+        HostBItem child = new() { ItemKey = 21, LocalKey = "first", HostAItemKey = 11, Label = "child" };
+        HostBItem sibling = new() { ItemKey = 21, LocalKey = "second", HostAItemKey = 11, Label = "sibling" };
+        HostBItem.Insert(db, child);
+        HostBItem.Insert(db, sibling);
+
+        parent.Label = "searchable";
+        HostAItem.Update(db, parent);
+        child.Label = "updated";
+        HostBItem.Update(db, child);
+        HostAItem.SelectSingle(db, ItemKey: 11)!.Label.ShouldBe("searchable");
+        HostBItem.SelectSingle(db, ItemKey: 21, LocalKey: "first")!.Label.ShouldBe("updated");
+        HostBItem.SelectSingle(db, ItemKey: 21, LocalKey: "second")!.Label.ShouldBe("sibling");
+
+        HostASearch.CreateTable(db).ShouldBeTrue();
+        HostASearch.Populate(db).ShouldBe(1);
+        HostASearch.Select(db, ["searchable"]).Single().ItemKey.ShouldBe(11);
+
+        HostAItem ghostA = new() { ItemKey = -1, Label = "missing" };
+        HostBItem ghostB = new() { ItemKey = 21, LocalKey = "missing", HostAItemKey = 11, Label = "missing" };
+        HostACommandFailedException updateA = Should.Throw<HostACommandFailedException>(
+            () => HostAItem.Update(db, ghostA, null, null, true));
+        HostACommandFailedException deleteA = Should.Throw<HostACommandFailedException>(
+            () => HostAItem.Delete(db, ghostA, null, null, true));
+        HostBCommandFailedException updateB = Should.Throw<HostBCommandFailedException>(
+            () => HostBItem.Update(db, ghostB, null, null, true));
+        HostBCommandFailedException deleteB = Should.Throw<HostBCommandFailedException>(
+            () => HostBItem.Delete(db, ghostB, null, null, true));
+
+        foreach (HostACommandFailedException exception in new[] { updateA, deleteA })
+        {
+            exception.GetType().ShouldBe(typeof(HostACommandFailedException));
+            exception.ModelName.ShouldBe(nameof(HostAItem));
+            exception.Sql.ShouldContain("multi_host_a");
+            exception.Message.ShouldBe(
+                $"The command for model 'HostAItem' affected no rows (expected at least one). SQL: {exception.Sql}");
+        }
+        foreach (HostBCommandFailedException exception in new[] { updateB, deleteB })
+        {
+            exception.GetType().ShouldBe(typeof(HostBCommandFailedException));
+            exception.ModelName.ShouldBe(nameof(HostBItem));
+            exception.Sql.ShouldContain("multi_host_b");
+            exception.Sql.ShouldContain("\"ItemKey\" = $ItemKey");
+            exception.Sql.ShouldContain("\"LocalKey\" = $LocalKey");
+            exception.Message.ShouldBe(
+                $"The command for model 'HostBItem' affected no rows (expected at least one). SQL: {exception.Sql}");
+        }
+        updateA.Sql.ShouldContain("UPDATE");
+        deleteA.Sql.ShouldContain("DELETE");
+        updateB.Sql.ShouldContain("UPDATE");
+        deleteB.Sql.ShouldContain("DELETE");
+        HostBItem.SelectCount(db).ShouldBe(2);
+        HostBItem.Delete(db, child);
+        HostBItem.SelectCount(db).ShouldBe(1);
+        HostAItem.Delete(db, parent);
+        HostAItem.SelectCount(db).ShouldBe(0);
+        HostBItem.SelectCount(db).ShouldBe(0); // B's local FK action cascades.
+    }
+
+    [Fact]
+    public void MultiHost_RealProjects_HaveInternalAnnotationsAndNoRuntimeGeneratorReference()
+    {
+        Assembly hostA = typeof(HostAItem).Assembly;
+        Assembly hostB = typeof(HostBItem).Assembly;
+        const string attributesNamespace = "CsLightDbGen.SQLiteGenerator.";
+        // Actual AssemblyName from cslightdbgen.sqlitegen.csproj (not its RootNamespace).
+        const string generatorAssemblyName = "cslightdbgen.sqlitegen";
+        foreach (Assembly host in new[] { hostA, hostB })
+        {
+            Type[] annotations = host.GetTypes().Where(type =>
+                type.Namespace == "CsLightDbGen.SQLiteGenerator" &&
+                (typeof(Attribute).IsAssignableFrom(type) || type.IsEnum)).ToArray();
+            annotations.ShouldNotBeEmpty();
+            annotations.ShouldContain(type => type.Name == "LdgSQLiteRuntimeNamespace");
+            annotations.ShouldContain(type => type.Name == "LdgSQLiteJsonOptions");
+            annotations.ShouldContain(type => type.Name == "LdgSQLiteKeyNoUnique");
+            annotations.ShouldContain(type => type.Name == "LdgSQLiteFkAction" && type.IsEnum);
+            foreach (Type annotation in annotations)
+            {
+                annotation.IsNotPublic.ShouldBeTrue();
+                host.GetExportedTypes().ShouldNotContain(annotation);
+            }
+            host.GetType(attributesNamespace + "LdgCommandFailedException").ShouldBeNull();
+        }
+
+        typeof(HostAItemBase).GetCustomAttributesData().ShouldContain(attribute =>
+            attribute.AttributeType.FullName == attributesNamespace + "LdgSQLiteBaseClass" &&
+            attribute.AttributeType.Assembly == hostA && attribute.AttributeType.IsNotPublic);
+        typeof(HostBItem).BaseType.ShouldBe(typeof(HostAItemBase));
+        typeof(HostBItem).GetProperty("ItemKey")!.GetCustomAttributesData().ShouldContain(attribute =>
+            attribute.AttributeType.FullName == attributesNamespace + "LdgSQLiteKey" &&
+            attribute.AttributeType.Assembly == hostA && attribute.AttributeType.IsNotPublic);
+        typeof(HostBItem).GetProperty("LocalKey")!.GetCustomAttributesData().ShouldContain(attribute =>
+            attribute.AttributeType.FullName == attributesNamespace + "LdgSQLiteKeyNoUnique" &&
+            attribute.AttributeType.Assembly == hostB && attribute.AttributeType.IsNotPublic);
+        CustomAttributeData foreignKey = typeof(HostBItem).GetProperty("HostAItemKey")!
+            .GetCustomAttributesData().Single(attribute =>
+                attribute.AttributeType.FullName == attributesNamespace + "LdgSQLiteForeignKey");
+        foreignKey.AttributeType.Assembly.ShouldBe(hostB);
+        foreignKey.ConstructorArguments[3].ArgumentType.ShouldBe(hostB.GetType(attributesNamespace + "LdgSQLiteFkAction"));
+        Convert.ToInt32(foreignKey.ConstructorArguments[3].Value).ShouldBe(4); // Cascade.
+
+        typeof(HostACommandFailedException).IsPublic.ShouldBeTrue();
+        typeof(HostBCommandFailedException).IsPublic.ShouldBeTrue();
+        typeof(HostACommandFailedException).Assembly.ShouldBe(hostA);
+        typeof(HostBCommandFailedException).Assembly.ShouldBe(hostB);
+        typeof(HostACommandFailedException).FullName.ShouldBe("CsLightDbGen.Integration.HostA.Runtime.LdgCommandFailedException");
+        typeof(HostBCommandFailedException).FullName.ShouldBe("CsLightDbGen.Integration.HostB.Runtime.LdgCommandFailedException");
+        typeof(HostACommandFailedException).ShouldNotBe(typeof(HostBCommandFailedException));
+        typeof(LdgCommandFailedException).IsPublic.ShouldBeTrue();
+        typeof(LdgCommandFailedException).Assembly.ShouldBe(typeof(LightSQLiteGenerator_IntegrationTests).Assembly);
+        foreach (Assembly consumer in new[] { hostA, hostB, typeof(LightSQLiteGenerator_IntegrationTests).Assembly })
+        {
+            consumer.GetReferencedAssemblies().ShouldNotContain(reference => reference.Name == generatorAssemblyName);
+        }
+        AppDomain.CurrentDomain.GetAssemblies().ShouldNotContain(assembly =>
+            assembly.GetName().Name == generatorAssemblyName);
+    }
+
     [Fact]
     public void Customer_TableGeneratedApis_Work_EndToEnd()
     {
