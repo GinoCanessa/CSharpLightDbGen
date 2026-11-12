@@ -48,6 +48,15 @@ internal static class GeneratorDiagnostics
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
+    /// <summary>CSLDG008 — invalid host runtime namespace or multi-host configuration.</summary>
+    public static readonly DiagnosticDescriptor InvalidHostConfiguration = new(
+        id: "CSLDG008",
+        title: "Invalid host runtime configuration",
+        messageFormat: "Invalid SQLite generator host configuration: {0}",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
     /// <summary>Reports <paramref name="descriptor"/> at an explicit location (or none).</summary>
     public static void Report(
         SourceProductionContext context,

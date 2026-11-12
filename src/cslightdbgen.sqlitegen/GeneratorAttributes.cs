@@ -20,6 +20,7 @@ public class GeneratorAttributes
 
     internal const string _ldgSQLiteFtsTable = "LdgSQLiteFtsTable";
     internal const string _ldgSQLiteFtsUnindexed = "LdgSQLiteFtsUnindexed";
+    internal const string _ldgSQLiteRuntimeNamespace = "LdgSQLiteRuntimeNamespace";
 
     internal const string _ldgCommandFailedException = "LdgCommandFailedException";
 
@@ -48,8 +49,27 @@ public class GeneratorAttributes
         #nullable enable
         namespace CsLightDbGen.SQLiteGenerator
         {
+            [System.AttributeUsage(System.AttributeTargets.Assembly, Inherited = false, AllowMultiple = false)]
+        #if CSLIGHTDBGEN_MULTI_HOST
+            internal class {{{_ldgSQLiteRuntimeNamespace}}} : System.Attribute
+        #else
+            public class {{{_ldgSQLiteRuntimeNamespace}}} : System.Attribute
+        #endif
+            {
+                public {{{_ldgSQLiteRuntimeNamespace}}}(string value)
+                {
+                    Value = value;
+                }
+
+                public string Value { get; }
+            }
+
             [System.AttributeUsage(System.AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
+        #if CSLIGHTDBGEN_MULTI_HOST
+            internal class {{{_ldgSQLiteBaseClass}}} : System.Attribute
+        #else
             public class {{{_ldgSQLiteBaseClass}}} : System.Attribute
+        #endif
             {
                 public {{{_ldgSQLiteBaseClass}}}()
                 {
@@ -57,7 +77,11 @@ public class GeneratorAttributes
             }
 
             [System.AttributeUsage(System.AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
+        #if CSLIGHTDBGEN_MULTI_HOST
+            internal class {{{_ldgSQLiteTable}}} : System.Attribute
+        #else
             public class {{{_ldgSQLiteTable}}} : System.Attribute
+        #endif
             {
                 public string? TableName { get; set; }
                 public bool DynamicTableNames { get; set; }
@@ -70,7 +94,11 @@ public class GeneratorAttributes
             }
 
             [System.AttributeUsage(System.AttributeTargets.Class, Inherited = false, AllowMultiple = true)]
+        #if CSLIGHTDBGEN_MULTI_HOST
+            internal class {{{_ldgSQLiteIndex}}} : System.Attribute
+        #else
             public class {{{_ldgSQLiteIndex}}} : System.Attribute
+        #endif
             {
                 public string[] Columns { get; set; }
 
@@ -85,7 +113,11 @@ public class GeneratorAttributes
             }
         
             [System.AttributeUsage(System.AttributeTargets.Property, Inherited = false, AllowMultiple = false)]
+        #if CSLIGHTDBGEN_MULTI_HOST
+            internal class {{{_ldgSQLiteKey}}} : System.Attribute
+        #else
             public class {{{_ldgSQLiteKey}}} : System.Attribute
+        #endif
             {
                 public bool AutoIncrement { get; set; }
                 public {{{_ldgSQLiteKey}}}(bool autoIncrement = true)
@@ -95,7 +127,11 @@ public class GeneratorAttributes
             }
 
             [System.AttributeUsage(System.AttributeTargets.Property, Inherited = false, AllowMultiple = true)]
+        #if CSLIGHTDBGEN_MULTI_HOST
+            internal class {{{_ldgSQLiteForeignKey}}} : System.Attribute
+        #else
             public class {{{_ldgSQLiteForeignKey}}} : System.Attribute
+        #endif
             {
                 public string? ReferenceTable { get; set; }
                 public string? ReferenceColumn { get; set; }
@@ -112,7 +148,11 @@ public class GeneratorAttributes
                 }
             }
 
+        #if CSLIGHTDBGEN_MULTI_HOST
+            internal enum {{{_ldgSQLiteFkAction}}}
+        #else
             public enum {{{_ldgSQLiteFkAction}}}
+        #endif
             {
                 NoAction = 0,
                 Restrict = 1,
@@ -122,7 +162,11 @@ public class GeneratorAttributes
             }
 
             [System.AttributeUsage(System.AttributeTargets.Class, Inherited = false, AllowMultiple = true)]
+        #if CSLIGHTDBGEN_MULTI_HOST
+            internal class {{{_ldgSQLiteForeignKeyComposite}}} : System.Attribute
+        #else
             public class {{{_ldgSQLiteForeignKeyComposite}}} : System.Attribute
+        #endif
             {
                 public string[] Columns { get; set; }
                 public string ReferenceTable { get; set; }
@@ -140,7 +184,11 @@ public class GeneratorAttributes
             }
 
             [System.AttributeUsage(System.AttributeTargets.Property, Inherited = false, AllowMultiple = true)]
+        #if CSLIGHTDBGEN_MULTI_HOST
+            internal class {{{_ldgSQLiteIgnore}}} : System.Attribute
+        #else
             public class {{{_ldgSQLiteIgnore}}} : System.Attribute
+        #endif
             {
                 public {{{_ldgSQLiteIgnore}}}()
                 {
@@ -148,7 +196,11 @@ public class GeneratorAttributes
             }
 
             [System.AttributeUsage(System.AttributeTargets.Property | System.AttributeTargets.Class, Inherited = false, AllowMultiple = true)]
+        #if CSLIGHTDBGEN_MULTI_HOST
+            internal class {{{_ldgSQLiteUnique}}} : System.Attribute
+        #else
             public class {{{_ldgSQLiteUnique}}} : System.Attribute
+        #endif
             {
                 public string[] Columns { get; set; }
 
@@ -159,7 +211,11 @@ public class GeneratorAttributes
             }
 
             [System.AttributeUsage(System.AttributeTargets.Property, Inherited = false, AllowMultiple = false)]
+        #if CSLIGHTDBGEN_MULTI_HOST
+            internal class {{{_ldgSQLiteMultiSelect}}} : System.Attribute
+        #else
             public class {{{_ldgSQLiteMultiSelect}}} : System.Attribute
+        #endif
             {
                 public {{{_ldgSQLiteMultiSelect}}}()
                 {
@@ -167,7 +223,11 @@ public class GeneratorAttributes
             }
 
             [System.AttributeUsage(System.AttributeTargets.Property, Inherited = false, AllowMultiple = false)]
+        #if CSLIGHTDBGEN_MULTI_HOST
+            internal class {{{_ldgSQLiteDefault}}} : System.Attribute
+        #else
             public class {{{_ldgSQLiteDefault}}} : System.Attribute
+        #endif
             {
                 public object? Value { get; set; }
                 public bool Raw { get; set; }
@@ -180,7 +240,11 @@ public class GeneratorAttributes
             }
 
             [System.AttributeUsage(System.AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
+        #if CSLIGHTDBGEN_MULTI_HOST
+            internal class {{{_ldgSQLiteFtsTable}}} : System.Attribute
+        #else
             public class {{{_ldgSQLiteFtsTable}}} : System.Attribute
+        #endif
             {
                 public string? TableName { get; set; }
                 public string? SourceTableName { get; set; }
@@ -195,7 +259,11 @@ public class GeneratorAttributes
             }
         
             [System.AttributeUsage(System.AttributeTargets.Property, Inherited = false, AllowMultiple = true)]
+        #if CSLIGHTDBGEN_MULTI_HOST
+            internal class {{{_ldgSQLiteFtsUnindexed}}} : System.Attribute
+        #else
             public class {{{_ldgSQLiteFtsUnindexed}}} : System.Attribute
+        #endif
             {
                 public {{{_ldgSQLiteFtsUnindexed}}}()
                 {

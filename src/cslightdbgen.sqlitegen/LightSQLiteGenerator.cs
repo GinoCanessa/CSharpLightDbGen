@@ -38,6 +38,11 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
     /// <summary>Tracking name for the FTS equatable model step (asserted by caching tests).</summary>
     public const string FtsModelTrackingName = "LdgFtsModel";
 
+    public const string EnvironmentTrackingName = "LdgEnvironment";
+    public const string RuntimeEmissionTrackingName = "LdgRuntimeEmission";
+    public const string TableEmissionTrackingName = "LdgTableEmission";
+    public const string FtsEmissionTrackingName = "LdgFtsEmission";
+
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
 #if DO_NOT_ATTACH_DEBUGGER
@@ -52,14 +57,36 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             "LdgSQLiteGeneratorAttributes.g.cs",
             SourceText.From(GeneratorAttributes.LdgAttributes, Encoding.UTF8)));
 
-        // Runtime helpers are ordinary output, owned by this host even when it has no models.
-        // Resolve names once into an equatable value before combining them with model inputs.
-        IncrementalValueProvider<RuntimeHelperNames> runtimeHelperNames = context.CompilationProvider
-            .Select(static (_, _) => new RuntimeHelperNames(AttributesNamespace));
+        IncrementalValueProvider<GenerationParseOptions> parseOptions = context.ParseOptionsProvider
+            .Select(static (options, _) => GeneratorConfiguration.ResolveParseOptions(options));
+        IncrementalValueProvider<GenerationEnvironment> environment = context.CompilationProvider
+            .Combine(parseOptions)
+            .Select(static (pair, ct) => GeneratorConfiguration.ResolveEnvironment(pair.Left, pair.Right, ct))
+            .WithTrackingName(EnvironmentTrackingName);
 
-        context.RegisterSourceOutput(runtimeHelperNames, static (spc, names) => spc.AddSource(
-            "LdgSQLiteRuntimeHelpers.g.cs",
-            SourceText.From(RuntimeHelpersEmitter.Emit(names.Namespace), Encoding.UTF8)));
+        context.RegisterSourceOutput(environment, static (spc, settings) =>
+        {
+            foreach (ConfigurationDiagnostic diagnostic in settings.Diagnostics)
+            {
+                GeneratorDiagnostics.Report(spc, GeneratorDiagnostics.InvalidHostConfiguration,
+                    diagnostic.Location?.ToLocation(), diagnostic.Reason);
+            }
+        });
+
+        // Only the validated, equatable helper contract reaches emission, never a compilation.
+        // A rejected host keeps bootstrap annotations but emits no ordinary runtime or DAL source.
+        IncrementalValueProvider<RuntimeHelperNames?> runtimeHelperNames = environment
+            .Select(static (settings, _) => settings.IsValid ? (RuntimeHelperNames?)settings.RuntimeHelpers : null)
+            .WithTrackingName(RuntimeEmissionTrackingName);
+
+        context.RegisterSourceOutput(runtimeHelperNames, static (spc, names) =>
+        {
+            if (names is RuntimeHelperNames resolved)
+            {
+                spc.AddSource("LdgSQLiteRuntimeHelpers.g.cs",
+                    SourceText.From(RuntimeHelpersEmitter.Emit(resolved.Namespace), Encoding.UTF8));
+            }
+        });
 
         // Regular [LdgSQLiteTable] models. ForAttributeWithMetadataName finds targets cheaply and,
         // paired with a fully value-equatable TableModel, lets the pipeline cache each model
@@ -74,15 +101,29 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             .Select(static (model, _) => model!.Value)
             .WithTrackingName(TableModelTrackingName);
 
-        context.RegisterSourceOutput(
-            tableModels.Combine(runtimeHelperNames),
-            static (spc, pair) => emit(pair.Left, pair.Right.CommandFailedExceptionName, spc));
+        IncrementalValuesProvider<TableEmissionInput> tableEmission = tableModels.Combine(runtimeHelperNames)
+            .Select(static (pair, _) => new TableEmissionInput(pair.Left, pair.Right))
+            .WithTrackingName(TableEmissionTrackingName);
 
-        // FTS5 [LdgSQLiteFtsTable] models follow the same equatable pipeline shape.
+        context.RegisterSourceOutput(tableEmission,
+            static (spc, input) =>
+            {
+                if (input.RuntimeHelpers is RuntimeHelperNames names)
+                {
+                    emit(input.Model, names.CommandFailedExceptionName, spc);
+                }
+            });
+
+        // Use a separate semantic syntax projection for FTS. Two metadata-name queries can lose
+        // the FTS branch after a same-driver parse-option update followed by an assembly edit.
+        // Select only the FTS-annotated partial declaration; other annotated parts must not emit it.
         IncrementalValuesProvider<FtsModel> ftsModels = context.SyntaxProvider
-            .ForAttributeWithMetadataName(
-                $"{AttributesNamespace}.{GeneratorAttributes._ldgSQLiteFtsTable}",
-                predicate: static (node, _) => IsSyntaxTargetClassDec(node) || IsSyntaxTargetRecordDec(node),
+            .CreateSyntaxProvider(
+                predicate: static (node, _) =>
+                    node is TypeDeclarationSyntax declaration &&
+                    (node is ClassDeclarationSyntax || node is RecordDeclarationSyntax) &&
+                    declaration.AttributeLists.Any(static list => list.Attributes.Any(static attribute =>
+                        attribute.Name.ToString() == GeneratorAttributes._ldgSQLiteFtsTable)),
                 transform: static (ctx, ct) => TransformFts(ctx, ct))
             .Where(static model => model is not null)
             .Select(static (model, _) => model!.Value)
@@ -107,9 +148,18 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         // An FTS model whose source table matches no known [LdgSQLiteTable] (here or in a referenced
         // assembly) reports CSLDG006 and is skipped; membership is case-insensitive because SQLite
         // identifiers are.
-        context.RegisterSourceOutput(
-            ftsModels.Combine(knownTableNames).Combine(runtimeHelperNames),
-            static (spc, pair) => EmitFtsResolved(pair.Left.Left, pair.Left.Right, pair.Right.CommandFailedExceptionName, spc));
+        IncrementalValuesProvider<FtsEmissionInput> ftsEmission = ftsModels.Combine(knownTableNames).Combine(runtimeHelperNames)
+            .Select(static (pair, _) => new FtsEmissionInput(pair.Left.Left, pair.Left.Right, pair.Right))
+            .WithTrackingName(FtsEmissionTrackingName);
+
+        context.RegisterSourceOutput(ftsEmission,
+            static (spc, input) =>
+            {
+                if (input.RuntimeHelpers is RuntimeHelperNames names)
+                {
+                    EmitFtsResolved(input.Model, input.KnownTableNames, names.CommandFailedExceptionName, spc);
+                }
+            });
     }
 
     /// <summary>
@@ -581,14 +631,16 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
     /// <see cref="TransformTable"/>, producing a reduced value-equatable <see cref="FtsModel"/>
     /// (no keys, foreign keys, indexes, or column defaults).
     /// </summary>
-    private static FtsModel? TransformFts(GeneratorAttributeSyntaxContext context, CancellationToken cancellationToken)
+    private static FtsModel? TransformFts(GeneratorSyntaxContext context, CancellationToken cancellationToken)
     {
-        if (context.TargetSymbol is not INamedTypeSymbol typeSymbol)
+        if (context.SemanticModel.GetDeclaredSymbol(context.Node, cancellationToken) is not INamedTypeSymbol typeSymbol ||
+            !typeSymbol.GetAttributes().Any(static attribute =>
+                attribute.AttributeClass?.ToDisplayString() == AttributesNamespace + "." + GeneratorAttributes._ldgSQLiteFtsTable))
         {
             return null;
         }
 
-        LdGenCategory genCategory = context.TargetNode is RecordDeclarationSyntax ? LdGenCategory.Record : LdGenCategory.Class;
+        LdGenCategory genCategory = context.Node is RecordDeclarationSyntax ? LdGenCategory.Record : LdGenCategory.Class;
 
         string className = typeSymbol.Name;
         string? classNamespace = typeSymbol.ContainingNamespace?.ToDisplayString();

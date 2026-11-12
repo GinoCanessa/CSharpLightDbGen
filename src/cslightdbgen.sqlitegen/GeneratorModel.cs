@@ -23,6 +23,28 @@ internal record struct RuntimeHelperNames(string Namespace)
     public string CommandFailedExceptionName => $"global::{Namespace}.{GeneratorAttributes._ldgCommandFailedException}";
 }
 
+/// <summary>Project-wide parse settings, projected before entering semantic configuration.</summary>
+internal record struct GenerationParseOptions(bool MultiHost);
+
+/// <summary>A diagnostic description without compiler objects, reconstructed at ordinary output.</summary>
+internal record struct ConfigurationDiagnostic(string Reason, LocationInfo? Location);
+
+/// <summary>Host configuration after semantic validation; no compilation or symbols escape resolution.</summary>
+internal record struct GenerationEnvironment(
+    RuntimeHelperNames RuntimeHelpers,
+    bool MultiHost,
+    EquatableArray<ConfigurationDiagnostic> Diagnostics)
+{
+    public bool IsValid => Diagnostics.Count == 0;
+}
+
+internal record struct TableEmissionInput(TableModel Model, RuntimeHelperNames? RuntimeHelpers);
+
+internal record struct FtsEmissionInput(
+    FtsModel Model,
+    EquatableArray<string> KnownTableNames,
+    RuntimeHelperNames? RuntimeHelpers);
+
 /// <summary>
 /// A value-equatable wrapper over <see cref="ImmutableArray{T}"/>. <see cref="ImmutableArray{T}"/>
 /// only offers reference equality, which defeats incremental-generator caching when it is embedded
