@@ -717,7 +717,11 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             propTypeName = propTypeName.Substring(0, propTypeName.Length - 1);
         }
 
-        bool isPrimaryKey = HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteKey);
+        bool hasDefaultKey = HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteKey);
+        bool hasPrimaryKeyOnly = HasLdgAttribute(propSymbol, GeneratorAttributes._ldgSQLiteKeyNoUnique);
+        KeyConstraintStyle keyStyle = hasPrimaryKeyOnly
+            ? KeyConstraintStyle.PrimaryKeyOnly
+            : (hasDefaultKey ? KeyConstraintStyle.Default : KeyConstraintStyle.None);
 
         // Decode [LdgSQLiteKey(autoIncrement)] — constructor arg 0 or the named AutoIncrement
         // property (default true). AttributeData yields the effective value even for
@@ -725,7 +729,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         // explicitly, which is needed to diagnose (but not over-report) composite + AutoIncrement.
         bool keyAutoIncrement = true;
         bool keyAutoIncrementExplicit = false;
-        if (isPrimaryKey)
+        if (hasDefaultKey)
         {
             AttributeData? keyAttrData = propSymbol.GetAttributes()
                 .FirstOrDefault(a => a.AttributeClass?.Name == GeneratorAttributes._ldgSQLiteKey);
@@ -754,6 +758,34 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                         keyAutoIncrementExplicit = true;
                     }
                 }
+            }
+        }
+
+        if (hasPrimaryKeyOnly)
+        {
+            AttributeData keyAttribute = propSymbol.GetAttributes()
+                .First(a => a.AttributeClass?.Name == GeneratorAttributes._ldgSQLiteKeyNoUnique);
+            if (keyAttribute.ConstructorArguments.Length > 0 &&
+                keyAttribute.ConstructorArguments[0].Value is bool constructorValue)
+            {
+                keyAutoIncrement = constructorValue;
+            }
+
+            foreach (KeyValuePair<string, TypedConstant> namedArgument in keyAttribute.NamedArguments)
+            {
+                if (namedArgument.Key == "AutoIncrement" && namedArgument.Value.Value is bool namedValue)
+                {
+                    keyAutoIncrement = namedValue;
+                    keyAutoIncrementExplicit = true;
+                }
+            }
+
+            // Metadata cannot distinguish an omitted optional true from an explicit constructor
+            // true. Named assignments remain observable; source spelling comes from the resolved
+            // attribute, so aliases and qualification do not change explicitness.
+            if (keyAttribute.ApplicationSyntaxReference?.GetSyntax() is AttributeSyntax keySyntax)
+            {
+                keyAutoIncrementExplicit = (keySyntax.ArgumentList?.Arguments.Count ?? 0) > 0;
             }
         }
 
@@ -882,7 +914,8 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             propName,
             propTypeName,
             nullable,
-            isPrimaryKey,
+            keyStyle,
+            hasDefaultKey && hasPrimaryKeyOnly,
             keyAutoIncrement,
             keyAutoIncrementExplicit,
             isUnique,
@@ -979,25 +1012,36 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         LdGenCategory genCategory = model.GenCategory;
         string tableName = model.TableName;
 
-        int? pkColIndex = null;
-        string? pkColName = null;
-        string? pkPropType = null;
-        bool pkIsIdentity = false;
-        bool anyColIsJson = false;
-
-        // pre-pass: identify composite primary key columns. Composite-ness must be known
-        // before the per-property column loop builds createColLines / TableColInfoRec.isIdentity,
-        // so it cannot be decided retroactively in a single forward pass.
-        List<(string name, string propType)> pkCols = [];
-        foreach (ColumnInput preCol in model.Columns)
+        TableSchemaPlan schemaPlan = TableSchemaPlanner.Plan(model.Columns);
+        bool hasKeyConflict = false;
+        foreach (ColumnSchemaPlan columnPlan in schemaPlan.Columns)
         {
-            if (preCol.IsKey)
+            if (columnPlan.Column.HasConflictingKeyAttributes)
             {
-                pkCols.Add((preCol.Name, preCol.TypeName));
+                GeneratorDiagnostics.Report(
+                    context,
+                    GeneratorDiagnostics.UnsupportedKeyOrForeignKeyCombination,
+                    columnPlan.Column.Location?.ToLocation(),
+                    columnPlan.Column.Name,
+                    className,
+                    "LdgSQLiteKey and LdgSQLiteKeyNoUnique cannot be combined on the same property");
+                hasKeyConflict = true;
             }
         }
 
-        bool compositePk = pkCols.Count > 1;
+        if (hasKeyConflict)
+        {
+            return;
+        }
+
+        int? pkColIndex = null;
+        string? pkColName = schemaPlan.SingleKey?.Name;
+        string? pkPropType = schemaPlan.SingleKey?.TypeName;
+        bool pkIsIdentity = schemaPlan.IsIdentity;
+        bool anyColIsJson = false;
+
+        EquatableArray<ColumnInput> pkCols = schemaPlan.Keys;
+        bool compositePk = schemaPlan.IsComposite;
 
         List<string> createColLines = [];
         List<string> createFKLines = [];
@@ -1005,21 +1049,18 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         HashSet<string> rawDefaultColumnNames = new(System.StringComparer.Ordinal);
         List<TableColInfoRec> tableColInfo = [];
 
-        foreach (ColumnInput col in model.Columns)
+        foreach (ColumnSchemaPlan columnPlan in schemaPlan.Columns)
         {
+            ColumnInput col = columnPlan.Column;
             string propName = col.Name;
             string propTypeName = col.TypeName;
             bool nullable = col.Nullable;
-            bool isPrimaryKey = col.IsKey;
+            bool isPrimaryKey = columnPlan.IsKey;
             bool keyAutoIncrement = col.KeyAutoIncrement;
             bool keyAutoIncrementExplicit = col.KeyAutoIncrementExplicit;
 
             if (isPrimaryKey)
             {
-                pkColName = propName;
-                pkPropType = propTypeName;
-                pkIsIdentity = !compositePk && (propTypeName == "int" || propTypeName == "long") && keyAutoIncrement;
-
                 // SQLite AUTOINCREMENT applies only to a single INTEGER primary key. Diagnose an
                 // explicit AutoIncrement request on a composite key; a bare [LdgSQLiteKey] on a
                 // composite member is the normal, supported spelling and must not be flagged.
@@ -1042,7 +1083,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             // a column is an auto-increment identity only when it is the sole primary key
             // (composite keys are inserted explicitly and never auto-assigned) and AutoIncrement
             // has not been disabled via [LdgSQLiteKey(false)].
-            bool colIsIdentity = isPrimaryKey && !compositePk && (propTypeName == "int" || propTypeName == "long") && keyAutoIncrement;
+            bool colIsIdentity = columnPlan.IsIdentity;
 
             bool isUnique = col.IsUnique;
 
@@ -1085,9 +1126,11 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
             // add our column line
             createColLines.Add(
                 $"{quoteIdent(propName)} {getSqlType(propTypeName, memberIsEnum, useJson, memberIsNonScalar)}" +
-                $"{((isPrimaryKey && !compositePk) ? " UNIQUE PRIMARY KEY NOT NULL" : string.Empty)}" +
+                $"{(columnPlan.InjectUnique ? " UNIQUE" : string.Empty)}" +
+                $"{(columnPlan.InlinePrimaryKey ? " PRIMARY KEY" : string.Empty)}" +
+                $"{(columnPlan.InlineNotNull ? " NOT NULL" : string.Empty)}" +
                 $"{(isUnique ? " UNIQUE" : string.Empty)}" +
-                $"{((nullable || (isPrimaryKey && !compositePk)) ? string.Empty : " NOT NULL")}" +
+                $"{(columnPlan.NotNull ? " NOT NULL" : string.Empty)}" +
                 $"{defaultClause}");
 
             // Additive-migration (EnsureSchema) column fragment. SQLite's ALTER TABLE ADD COLUMN
@@ -1175,7 +1218,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         // identity, so its by-key Update/Delete match nothing ("1 = 0") instead of emitting the
         // invalid " = $" predicate.
         string pkWhereClause = compositePk
-            ? string.Join(" AND ", pkCols.Select(c => $"{quoteIdent(c.name)} = ${c.name}"))
+            ? string.Join(" AND ", pkCols.Select(c => $"{quoteIdent(c.Name)} = ${c.Name}"))
             : (pkColName == null
                 ? "1 = 0"
                 : $"{quoteIdent(pkColName)} = ${pkColName}");
@@ -1185,7 +1228,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         // models omit the throwOnZeroRowsAffected opt-out entirely (the knob would be a permanent
         // no-op). Keyed models expose it (default true) so a stale/already-gone key throws
         // LdgCommandFailedException unless the caller opts out per call.
-        bool isKeyless = (pkColName == null) && !compositePk;
+        bool isKeyless = schemaPlan.IsKeyless;
         string throwOnZeroParam = isKeyless ? string.Empty : ", bool throwOnZeroRowsAffected = true";
 
         // UPDATE ... SET assignments cover every non-primary-key column. A primary-key-only model
@@ -1202,7 +1245,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         List<string> createTableLines = [.. createColLines, .. createFKLines];
         if (compositePk)
         {
-            createTableLines.Add($"PRIMARY KEY ({string.Join(", ", pkCols.Select(c => quoteIdent(c.name)))})");
+            createTableLines.Add($"PRIMARY KEY ({string.Join(", ", pkCols.Select(c => quoteIdent(c.Name)))})");
         }
 
         // class-level [LdgSQLiteUnique(cols...)] declares a multi-column UNIQUE table constraint.
@@ -1219,7 +1262,7 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
         bool upsertHasDefaultConflict = compositePk || ((pkColName != null) && !pkIsIdentity);
         string upsertDefaultConflictAssign = upsertHasDefaultConflict
             ? (compositePk
-                ? $"conflictColumns = new string[] {{ {string.Join(", ", pkCols.Select(c => $"\"{c.name}\""))} }};"
+                ? $"conflictColumns = new string[] {{ {string.Join(", ", pkCols.Select(c => $"\"{c.Name}\""))} }};"
                 : $"conflictColumns = new string[] {{ \"{pkColName}\" }};")
             : "throw new System.ArgumentException(\"Upsert requires explicit conflictColumns for a model without a natural (non-identity) primary key.\", nameof(conflictColumns));";
 

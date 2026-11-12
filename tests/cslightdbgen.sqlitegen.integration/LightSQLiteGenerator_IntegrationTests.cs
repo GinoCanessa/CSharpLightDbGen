@@ -1658,6 +1658,357 @@ public class LightSQLiteGenerator_IntegrationTests
         Widget.DropTable(db).ShouldBeTrue();
     }
 
+    [Theory]
+    [InlineData("key_default_int", "Id:INTEGER:1:1,Label:TEXT:1:0", "1:u:0:Id")]
+    [InlineData("key_no_unique_int", "Id:INTEGER:0:1,Label:TEXT:1:0", "")]
+    [InlineData("key_no_unique_supplied", "Id:INTEGER:0:1,Label:TEXT:1:0", "")]
+    [InlineData("key_default_text", "Id:TEXT:1:1,Label:TEXT:1:0", "1:pk:0:Id")]
+    [InlineData("key_no_unique_text", "Id:TEXT:0:1,Label:TEXT:1:0", "1:pk:0:Id")]
+    [InlineData("key_default_composite", "Tenant:INTEGER:1:1,Code:TEXT:1:2,Label:TEXT:1:0", "1:pk:0:Tenant,Code")]
+    [InlineData("key_no_unique_composite", "Tenant:INTEGER:0:1,Code:TEXT:0:2,Label:TEXT:1:0", "1:pk:0:Tenant,Code")]
+    [InlineData("key_default_nullable", "Tenant:INTEGER:0:1,Code:TEXT:0:2,Label:TEXT:1:0", "1:pk:0:Tenant,Code")]
+    [InlineData("key_mixed_composite", "Tenant:INTEGER:1:1,Code:TEXT:0:2,Optional:TEXT:0:3,Label:TEXT:1:0", "1:pk:0:Tenant,Code,Optional")]
+    [InlineData("key_explicit_unique", "Id:INTEGER:0:1,Group:INTEGER:1:0,Tag:TEXT:1:0,Label:TEXT:1:0,Active:INTEGER:1:0",
+        "1:c:1:Label,Group|1:u:0:Group,Tag|1:u:0:Id")]
+    public void KeyNoUnique_MetadataAndEffectiveConstraints_MatchSelectedPolicy(
+        string table, string expectedColumns, string expectedIndexes)
+    {
+        using SqliteConnection db = OpenInMemory();
+        CreateKeyPolicyTable(db, table).ShouldBeTrue();
+        List<(string Name, string Type, int NotNull, string? Default, int Pk)> columns = ReadKeyPolicyColumns(db, table);
+        string.Join(",", columns.Select(column => $"{column.Name}:{column.Type}:{column.NotNull}:{column.Pk}"))
+            .ShouldBe(expectedColumns);
+        columns.ShouldAllBe(column => column.Default == (column.Name == "Label" && table != "key_explicit_unique" ? "'seed'" : null));
+        string.Join("|", ReadKeyPolicyIndexes(db, table)).ShouldBe(expectedIndexes);
+
+        if (table == "key_explicit_unique")
+        {
+            ExecuteSql(db, """
+                INSERT INTO key_explicit_unique VALUES (1, 10, 'a', 'label', 1);
+                """);
+            // Independent property UNIQUE remains a real index even on an INTEGER rowid key.
+            Should.Throw<SqliteException>(() => ExecuteSql(db,
+                "INSERT INTO key_explicit_unique VALUES (1, 11, 'b', 'other', 0);")).SqliteErrorCode.ShouldBe(19);
+            Should.Throw<SqliteException>(() => ExecuteSql(db,
+                "INSERT INTO key_explicit_unique VALUES (2, 10, 'a', 'other', 0);")).SqliteErrorCode.ShouldBe(19);
+            Should.Throw<SqliteException>(() => ExecuteSql(db,
+                "INSERT INTO key_explicit_unique VALUES (2, 10, 'b', 'label', 1);")).SqliteErrorCode.ShouldBe(19);
+            ExecuteSql(db, "INSERT INTO key_explicit_unique VALUES (2, 10, 'b', 'label', 0);");
+            return;
+        }
+
+        List<(string Name, string Type, int NotNull, string? Default, int Pk)> keys = columns.Where(column => column.Pk > 0).ToList();
+        string keyNames = string.Join(", ", keys.Select(column => QuoteKeyPolicyIdentifier(column.Name)));
+        string[] values = keys.Select(column => column.Type == "INTEGER" ? "7" : "'key'").ToArray();
+        string insert = $"INSERT INTO {QuoteKeyPolicyIdentifier(table)} ({keyNames}) VALUES ({string.Join(", ", values)})";
+        ExecuteSql(db, insert);
+        Should.Throw<SqliteException>(() => ExecuteSql(db, insert)).SqliteErrorCode.ShouldBe(19);
+
+        // Raw SQL characterizes nullable keys without asking unchanged non-nullable CLR readers
+        // or SelectDict to consume them. Repeat NULL combinations to prove SQLite's effective rule.
+        for (int index = 0; index < keys.Count; index++)
+        {
+            string[] nullValues = (string[])values.Clone();
+            nullValues[index] = "NULL";
+            string nullInsert = $"INSERT INTO {QuoteKeyPolicyIdentifier(table)} ({keyNames}) VALUES ({string.Join(", ", nullValues)})";
+            bool rowidKey = keys.Count == 1 && keys[0].Type == "INTEGER";
+            if (keys[index].NotNull == 1 && !rowidKey)
+            {
+                Should.Throw<SqliteException>(() => ExecuteSql(db, nullInsert)).SqliteErrorCode.ShouldBe(19);
+            }
+            else
+            {
+                ExecuteSql(db, nullInsert);
+                ExecuteSql(db, nullInsert);
+                using IDbCommand count = db.CreateCommand();
+                count.CommandText = rowidKey
+                    ? $"SELECT COUNT(DISTINCT \"Id\") FROM {QuoteKeyPolicyIdentifier(table)} WHERE \"Id\" <> 7"
+                    : $"SELECT COUNT(*) FROM {QuoteKeyPolicyIdentifier(table)} WHERE {QuoteKeyPolicyIdentifier(keys[index].Name)} IS NULL";
+                Convert.ToInt64(count.ExecuteScalar()).ShouldBe(2L);
+            }
+        }
+    }
+
+    [Fact]
+    public void KeyNoUnique_IdentityAndSuppliedKeyCrud_RemainShared()
+    {
+        using SqliteConnection db = OpenInMemory();
+        NoUniqueIntIdentity.CreateTable(db).ShouldBeTrue();
+        NoUniqueIntIdentity.LoadMaxKey(db);
+        NoUniqueIntIdentity.SelectMaxKey(db).ShouldBeNull();
+        NoUniqueIntIdentity.GetIndex().ShouldBeGreaterThan(0);
+        NoUniqueIntIdentity first = new NoUniqueIntIdentity { Label = "first" };
+        NoUniqueIntIdentity.Insert(db, first).ShouldBe(first.Id);
+        first.Id.ShouldBeGreaterThan(0);
+        List<NoUniqueIntIdentity> batch =
+        [
+            new NoUniqueIntIdentity { Label = "list-a" },
+            new NoUniqueIntIdentity { Label = "list-b" },
+        ];
+        NoUniqueIntIdentity.Insert(db, batch);
+        List<NoUniqueIntIdentity> streamed =
+        [
+            new NoUniqueIntIdentity { Label = "enum-a" },
+            new NoUniqueIntIdentity { Label = "enum-b" },
+        ];
+        ((IEnumerable<NoUniqueIntIdentity>)streamed).Insert(db);
+        batch.Concat(streamed).ShouldAllBe(value => value.Id > 0);
+        batch.Concat(streamed).Append(first).Select(value => value.Id).Distinct().Count().ShouldBe(5);
+        NoUniqueIntIdentity.SelectMaxKey(db).ShouldBe(streamed.Max(value => value.Id));
+        NoUniqueIntIdentity.LoadMaxKey(db);
+        NoUniqueIntIdentity.GetIndex().ShouldBeGreaterThan(streamed.Max(value => value.Id));
+        db.SelectSingle<NoUniqueIntIdentity>(Id: first.Id)!.Label.ShouldBe("first");
+        NoUniqueIntIdentity.SelectDict(db).Count.ShouldBe(5);
+        NoUniqueIntIdentity.SelectList(db, IdValues: batch.Select(value => value.Id)).Count.ShouldBe(2);
+        first.Label = "updated";
+        first.Update(db);
+        NoUniqueIntIdentity.SelectSingle(db, Id: first.Id)!.Label.ShouldBe("updated");
+        NoUniqueIntIdentity explicitKey = new NoUniqueIntIdentity { Id = 900, Label = "explicit" };
+        db.Insert(explicitKey, insertPrimaryKey: true);
+        NoUniqueIntIdentity.SelectSingle(db, Id: 900).ShouldNotBeNull();
+        NoUniqueIntIdentity returning = new NoUniqueIntIdentity { Label = "returning" };
+        NoUniqueIntIdentity.InsertReturning(db, returning);
+        returning.Id.ShouldBeGreaterThan(900);
+        returning.Delete(db);
+        first.Delete(db);
+        NoUniqueIntIdentity.SelectSingle(db, Id: first.Id).ShouldBeNull();
+
+        NoUniqueIntSupplied.CreateTable(db).ShouldBeTrue();
+        NoUniqueIntSupplied supplied = new NoUniqueIntSupplied { Id = 401, Label = "supplied" };
+        db.Insert(supplied);
+        supplied.Id.ShouldBe(401);
+        NoUniqueIntSupplied.Insert(db, new List<NoUniqueIntSupplied>
+        {
+            new NoUniqueIntSupplied { Id = 402, Label = "list" },
+        });
+        ((IEnumerable<NoUniqueIntSupplied>)new[] { new NoUniqueIntSupplied { Id = 403, Label = "enum" } }).Insert(db);
+        supplied.Label = "upsert";
+        NoUniqueIntSupplied.Upsert(db, supplied);
+        NoUniqueIntSupplied.SelectSingle(db, Id: 401)!.Label.ShouldBe("upsert");
+        supplied.Label = "update";
+        db.Update(supplied);
+        NoUniqueIntSupplied.SelectDict(db)[401].Label.ShouldBe("update");
+        db.Delete(supplied);
+        NoUniqueIntSupplied.SelectCount(db).ShouldBe(2);
+
+        NoUniqueTextKey.CreateTable(db).ShouldBeTrue();
+        NoUniqueTextKey text = new NoUniqueTextKey { Id = "natural", Label = "original" };
+        text.Insert(db);
+        text.Label = "text-upsert";
+        NoUniqueTextKey.Upsert(db, text);
+        NoUniqueTextKey.SelectDict(db)["natural"].Label.ShouldBe("text-upsert");
+        text.Label = "text-update";
+        text.Update(db);
+        NoUniqueTextKey.SelectSingle(db, Id: "natural")!.Label.ShouldBe("text-update");
+        text.Delete(db);
+        NoUniqueTextKey.SelectCount(db).ShouldBe(0);
+
+        NoUniqueComposite.CreateTable(db).ShouldBeTrue();
+        List<NoUniqueComposite> composites =
+        [
+            new NoUniqueComposite { Tenant = 1, Code = "a", Label = "target" },
+            new NoUniqueComposite { Tenant = 1, Code = "b", Label = "same-tenant" },
+            new NoUniqueComposite { Tenant = 2, Code = "a", Label = "same-code" },
+        ];
+        NoUniqueComposite.Insert(db, composites);
+        composites.Select(value => $"{value.Tenant}/{value.Code}").ShouldBe(new[] { "1/a", "1/b", "2/a" });
+        NoUniqueComposite target = composites[0];
+        target.Label = "changed";
+        target.Update(db);
+        NoUniqueComposite.SelectSingle(db, Tenant: 1, Code: "a")!.Label.ShouldBe("changed");
+        NoUniqueComposite.SelectCount(db, Label: "changed").ShouldBe(1);
+        target.Label = "upsert-composite";
+        NoUniqueComposite.Upsert(db, target);
+        NoUniqueComposite.SelectCount(db).ShouldBe(3);
+        NoUniqueComposite.SelectSingle(db, Tenant: 1, Code: "a")!.Label.ShouldBe("upsert-composite");
+        NoUniqueComposite.SelectSingle(db, Tenant: 1, Code: "b")!.Label.ShouldBe("same-tenant");
+        NoUniqueComposite.SelectSingle(db, Tenant: 2, Code: "a")!.Label.ShouldBe("same-code");
+        target.Delete(db);
+        NoUniqueComposite.SelectCount(db).ShouldBe(2);
+        NoUniqueComposite.SelectList(db, TenantValues: new[] { 1 }, CodeValues: new[] { "b" }).Count.ShouldBe(1);
+        Should.Throw<LdgCommandFailedException>(() => target.Delete(db));
+
+        MixedConstraintComposite.CreateTable(db).ShouldBeTrue();
+        MixedConstraintComposite mixed = new MixedConstraintComposite { Tenant = 1, Code = "a", Optional = "x", Label = "target" };
+        ((IEnumerable<MixedConstraintComposite>)new[]
+        {
+            mixed,
+            new MixedConstraintComposite { Tenant = 1, Code = "a", Optional = "y", Label = "same-pair" },
+            new MixedConstraintComposite { Tenant = 1, Code = "b", Optional = "x", Label = "same-tenant" },
+            new MixedConstraintComposite { Tenant = 2, Code = "a", Optional = "x", Label = "same-code" },
+        }).Insert(db);
+        mixed.Tenant.ShouldBe(1);
+        mixed.Code.ShouldBe("a");
+        mixed.Optional.ShouldBe("x");
+        mixed.Label = "mixed-update";
+        db.Update(mixed);
+        MixedConstraintComposite.SelectCount(db, Label: "mixed-update").ShouldBe(1);
+        mixed.Label = "mixed-upsert";
+        MixedConstraintComposite.Upsert(db, mixed);
+        MixedConstraintComposite.SelectCount(db).ShouldBe(4);
+        MixedConstraintComposite.SelectSingle(db, Tenant: 1, Code: "a", Optional: "x")!.Label.ShouldBe("mixed-upsert");
+        mixed.Delete(db);
+        MixedConstraintComposite.SelectCount(db).ShouldBe(3);
+        MixedConstraintComposite.SelectSingle(db, Tenant: 1, Code: "a", Optional: "y")!.Label.ShouldBe("same-pair");
+    }
+
+    [Theory]
+    [InlineData("key_default_text", true)]
+    [InlineData("key_no_unique_text", false)]
+    [InlineData("key_no_unique_text", true)]
+    [InlineData("key_no_unique_composite", false)]
+    [InlineData("key_no_unique_composite", true)]
+    [InlineData("key_mixed_composite", false)]
+    public void KeyNoUnique_CreateAndEnsureSchema_DoNotReconcileExistingConstraints(string table, bool stronger)
+    {
+        string connectionString = $"Data Source=key-policy-{Guid.NewGuid():N};Mode=Memory;Cache=Shared;Pooling=False";
+        using SqliteConnection keeper = new SqliteConnection(connectionString);
+        keeper.Open();
+        bool composite = table.EndsWith("composite", StringComparison.Ordinal);
+        bool mixed = table == "key_mixed_composite";
+        string required = stronger ? " NOT NULL" : string.Empty;
+        string ddl = composite
+            ? $"""
+                "Tenant" INTEGER{(mixed ? " NOT NULL" : required)}, "Code" TEXT{required},
+                {(mixed ? "\"Optional\" TEXT," : string.Empty)}
+                "Label" TEXT NOT NULL DEFAULT 'seed',
+                PRIMARY KEY ("Tenant", "Code"{(mixed ? ", \"Optional\"" : string.Empty)})
+                """
+            : $"""
+                "Id" TEXT{(stronger ? " UNIQUE PRIMARY KEY NOT NULL" : " PRIMARY KEY")},
+                "Label" TEXT NOT NULL DEFAULT 'seed'
+                """;
+        string insert = composite
+            ? $"INSERT INTO {QuoteKeyPolicyIdentifier(table)} VALUES (7, 'key', {(mixed ? "'optional'," : string.Empty)} 'kept')"
+            : $"INSERT INTO {QuoteKeyPolicyIdentifier(table)} VALUES ('key', 'kept')";
+        List<(string Name, string Type, int NotNull, string? Default, int Pk)> beforeColumns;
+        List<string> beforeIndexes;
+        using (SqliteConnection initial = new SqliteConnection(connectionString))
+        {
+            initial.Open();
+            ExecuteSql(initial, $"CREATE TABLE {QuoteKeyPolicyIdentifier(table)} ({ddl})");
+            ExecuteSql(initial, insert);
+            beforeColumns = ReadKeyPolicyColumns(initial, table);
+            beforeIndexes = ReadKeyPolicyIndexes(initial, table);
+        }
+
+        using SqliteConnection reopened = new SqliteConnection(connectionString);
+        reopened.Open();
+        CreateKeyPolicyTable(reopened, table).ShouldBeTrue();
+        EnsureKeyPolicyTable(reopened, table).ShouldBeTrue();
+        EnsureKeyPolicyTable(reopened, table).ShouldBeTrue();
+        ReadKeyPolicyColumns(reopened, table).ShouldBe(beforeColumns);
+        ReadKeyPolicyIndexes(reopened, table).ShouldBe(beforeIndexes);
+        using (IDbCommand rows = reopened.CreateCommand())
+        {
+            rows.CommandText = $"SELECT * FROM {QuoteKeyPolicyIdentifier(table)}";
+            using IDataReader reader = rows.ExecuteReader();
+            reader.Read().ShouldBeTrue();
+            reader.GetValue(0).ToString().ShouldBe(composite ? "7" : "key");
+            if (composite)
+            {
+                reader.GetString(1).ShouldBe("key");
+                if (mixed)
+                {
+                    reader.GetString(2).ShouldBe("optional");
+                }
+            }
+            reader.GetString(reader.FieldCount - 1).ShouldBe("kept");
+            reader.Read().ShouldBeFalse();
+        }
+        Should.Throw<SqliteException>(() => ExecuteSql(reopened, insert)).SqliteErrorCode.ShouldBe(19);
+        string nullInsert = composite
+            ? $"INSERT INTO {QuoteKeyPolicyIdentifier(table)} VALUES (NULL, 'nullable', 'null-row')"
+            : $"INSERT INTO {QuoteKeyPolicyIdentifier(table)} VALUES (NULL, 'null-row')";
+        if (mixed)
+        {
+            nullInsert = $"INSERT INTO {QuoteKeyPolicyIdentifier(table)} VALUES (NULL, 'nullable', 'optional', 'null-row')";
+        }
+        if (stronger || mixed)
+        {
+            Should.Throw<SqliteException>(() => ExecuteSql(reopened, nullInsert)).SqliteErrorCode.ShouldBe(19);
+        }
+        else
+        {
+            ExecuteSql(reopened, nullInsert);
+        }
+
+        // Even a missing key is not added by EnsureSchema. Only a genuinely new, default-backed
+        // non-key column may be added; this incomplete table is deliberately not read through CLR.
+        ExecuteSql(reopened, "CREATE TABLE missing_key (Label TEXT NOT NULL DEFAULT 'seed')");
+        NoUniqueTextKey.EnsureSchema(reopened, "missing_key").ShouldBeTrue();
+        ReadKeyPolicyColumns(reopened, "missing_key").Select(column => column.Name).ShouldBe(new[] { "Label" });
+    }
+
+    private static bool CreateKeyPolicyTable(IDbConnection db, string table) => table switch
+    {
+        "key_default_int" => DefaultIntIdentity.CreateTable(db),
+        "key_no_unique_int" => NoUniqueIntIdentity.CreateTable(db),
+        "key_no_unique_supplied" => NoUniqueIntSupplied.CreateTable(db),
+        "key_default_text" => DefaultTextKey.CreateTable(db),
+        "key_no_unique_text" => NoUniqueTextKey.CreateTable(db),
+        "key_default_composite" => DefaultConstraintComposite.CreateTable(db),
+        "key_no_unique_composite" => NoUniqueComposite.CreateTable(db),
+        "key_default_nullable" => DefaultNullableComposite.CreateTable(db),
+        "key_mixed_composite" => MixedConstraintComposite.CreateTable(db),
+        "key_explicit_unique" => NoUniqueExplicitUnique.CreateTable(db),
+        _ => throw new ArgumentOutOfRangeException(nameof(table)),
+    };
+
+    private static bool EnsureKeyPolicyTable(IDbConnection db, string table) => table switch
+    {
+        "key_default_text" => DefaultTextKey.EnsureSchema(db),
+        "key_no_unique_text" => NoUniqueTextKey.EnsureSchema(db),
+        "key_no_unique_composite" => NoUniqueComposite.EnsureSchema(db),
+        "key_mixed_composite" => MixedConstraintComposite.EnsureSchema(db),
+        _ => throw new ArgumentOutOfRangeException(nameof(table)),
+    };
+
+    private static string QuoteKeyPolicyIdentifier(string identifier) => "\"" + identifier.Replace("\"", "\"\"") + "\"";
+
+    private static List<(string Name, string Type, int NotNull, string? Default, int Pk)> ReadKeyPolicyColumns(IDbConnection db, string table)
+    {
+        List<(string Name, string Type, int NotNull, string? Default, int Pk)> columns = [];
+        using IDbCommand command = db.CreateCommand();
+        command.CommandText = $"PRAGMA table_info({QuoteKeyPolicyIdentifier(table)})";
+        using IDataReader reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            columns.Add((reader.GetString(1), reader.GetString(2), reader.GetInt32(3),
+                reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetInt32(5)));
+        }
+        return columns;
+    }
+
+    private static List<string> ReadKeyPolicyIndexes(IDbConnection db, string table)
+    {
+        List<(string Name, int Unique, string Origin, int Partial)> indexes = [];
+        using (IDbCommand command = db.CreateCommand())
+        {
+            command.CommandText = $"PRAGMA index_list({QuoteKeyPolicyIdentifier(table)})";
+            using IDataReader reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                indexes.Add((reader.GetString(1), reader.GetInt32(2), reader.GetString(3), reader.GetInt32(4)));
+            }
+        }
+        List<string> results = [];
+        foreach ((string name, int unique, string origin, int partial) in indexes)
+        {
+            List<string> columns = [];
+            using IDbCommand command = db.CreateCommand();
+            command.CommandText = $"PRAGMA index_info({QuoteKeyPolicyIdentifier(name)})";
+            using IDataReader reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                reader.GetInt32(0).ShouldBe(columns.Count);
+                columns.Add(reader.GetString(2));
+            }
+            results.Add($"{unique}:{origin}:{partial}:{string.Join(",", columns)}");
+        }
+        return results.OrderBy(value => value, StringComparer.Ordinal).ToList();
+    }
+
     private static void EnableForeignKeys(IDbConnection db)
     {
         using IDbCommand pragma = db.CreateCommand();

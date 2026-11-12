@@ -427,3 +427,125 @@ public partial class ReservedTableEntity
 
     public string ReservedLabel { get; set; } = string.Empty;
 }
+
+[LdgSQLiteTable("key_default_int")]
+public partial class DefaultIntIdentity
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+
+    [LdgSQLiteDefault("seed")]
+    public string Label { get; set; } = string.Empty;
+}
+
+[LdgSQLiteTable("key_no_unique_int")]
+public partial class NoUniqueIntIdentity
+{
+    [LdgSQLiteKeyNoUnique]
+    public int Id { get; set; }
+
+    [LdgSQLiteDefault("seed")]
+    public string Label { get; set; } = string.Empty;
+}
+
+[LdgSQLiteTable("key_no_unique_supplied")]
+public partial class NoUniqueIntSupplied
+{
+    [LdgSQLiteKeyNoUnique(AutoIncrement = false)]
+    public int Id { get; set; }
+
+    [LdgSQLiteDefault("seed")]
+    public string Label { get; set; } = string.Empty;
+}
+
+[LdgSQLiteTable("key_default_text")]
+public partial class DefaultTextKey
+{
+    [LdgSQLiteKey]
+    public string Id { get; set; } = string.Empty;
+
+    [LdgSQLiteDefault("seed")]
+    public string Label { get; set; } = string.Empty;
+}
+
+[LdgSQLiteTable("key_no_unique_text")]
+public partial class NoUniqueTextKey
+{
+    [LdgSQLiteKeyNoUnique]
+    public string Id { get; set; } = string.Empty;
+
+    [LdgSQLiteDefault("seed")]
+    public string Label { get; set; } = string.Empty;
+}
+
+[LdgSQLiteTable("key_default_composite")]
+public partial class DefaultConstraintComposite
+{
+    [LdgSQLiteKey]
+    public int Tenant { get; set; }
+
+    [LdgSQLiteKey]
+    public string Code { get; set; } = string.Empty;
+
+    [LdgSQLiteDefault("seed")]
+    public string Label { get; set; } = string.Empty;
+}
+
+[LdgSQLiteTable("key_no_unique_composite")]
+public partial class NoUniqueComposite
+{
+    [LdgSQLiteKeyNoUnique]
+    public int Tenant { get; set; }
+
+    [LdgSQLiteKeyNoUnique]
+    public string Code { get; set; } = string.Empty;
+
+    [LdgSQLiteDefault("seed")]
+    public string Label { get; set; } = string.Empty;
+}
+
+[LdgSQLiteTable("key_default_nullable")]
+public partial class DefaultNullableComposite
+{
+    [LdgSQLiteKey]
+    public int? Tenant { get; set; }
+
+    [LdgSQLiteKey]
+    public string? Code { get; set; }
+
+    [LdgSQLiteDefault("seed")]
+    public string Label { get; set; } = string.Empty;
+}
+
+[LdgSQLiteTable("key_mixed_composite")]
+public partial class MixedConstraintComposite
+{
+    [LdgSQLiteKey]
+    public int Tenant { get; set; }
+
+    [LdgSQLiteKeyNoUnique]
+    public string Code { get; set; } = string.Empty;
+
+    [LdgSQLiteKey]
+    public string? Optional { get; set; }
+
+    [LdgSQLiteDefault("seed")]
+    public string Label { get; set; } = string.Empty;
+}
+
+[LdgSQLiteTable("key_explicit_unique")]
+[LdgSQLiteUnique("Group", "Tag")]
+[LdgSQLiteIndex("Label", "Group", Unique = true, Where = "Active = 1")]
+public partial class NoUniqueExplicitUnique
+{
+    [LdgSQLiteKeyNoUnique(false), LdgSQLiteUnique]
+    public int Id { get; set; }
+
+    public int Group { get; set; }
+
+    public string Tag { get; set; } = string.Empty;
+
+    public string Label { get; set; } = string.Empty;
+
+    public int Active { get; set; }
+}

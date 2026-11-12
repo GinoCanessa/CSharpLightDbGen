@@ -399,7 +399,7 @@ public class LightSQLiteGenerator_CrossProjectTests
         for (int index = 0; index < referenceCount; index++)
         {
             run.DriverRunResult.Diagnostics.ShouldContain(diagnostic =>
-                diagnostic.GetMessage().Contains("CollisionImage" + index, StringComparison.Ordinal));
+                diagnostic.GetMessage(null).Contains("CollisionImage" + index, StringComparison.Ordinal));
         }
     }
 

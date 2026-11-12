@@ -10,6 +10,7 @@ public class GeneratorAttributes
     internal const string _ldgSQLiteTable = "LdgSQLiteTable";
     internal const string _ldgSQLiteIndex = "LdgSQLiteIndex";
     internal const string _ldgSQLiteKey = "LdgSQLiteKey";
+    internal const string _ldgSQLiteKeyNoUnique = "LdgSQLiteKeyNoUnique";
     internal const string _ldgSQLiteForeignKey = "LdgSQLiteForeignKey";
     internal const string _ldgSQLiteForeignKeyComposite = "LdgSQLiteForeignKeyComposite";
     internal const string _ldgSQLiteFkAction = "LdgSQLiteFkAction";
@@ -29,6 +30,7 @@ public class GeneratorAttributes
         _ldgSQLiteTable,
         _ldgSQLiteIndex,
         _ldgSQLiteKey,
+        _ldgSQLiteKeyNoUnique,
         _ldgSQLiteForeignKey,
         _ldgSQLiteForeignKeyComposite,
         _ldgSQLiteIgnore,
@@ -121,6 +123,20 @@ public class GeneratorAttributes
             {
                 public bool AutoIncrement { get; set; }
                 public {{{_ldgSQLiteKey}}}(bool autoIncrement = true)
+                {
+                    AutoIncrement = autoIncrement;
+                }
+            }
+
+            [System.AttributeUsage(System.AttributeTargets.Property, Inherited = false, AllowMultiple = false)]
+        #if CSLIGHTDBGEN_MULTI_HOST
+            internal class {{{_ldgSQLiteKeyNoUnique}}} : System.Attribute
+        #else
+            public class {{{_ldgSQLiteKeyNoUnique}}} : System.Attribute
+        #endif
+            {
+                public bool AutoIncrement { get; set; }
+                public {{{_ldgSQLiteKeyNoUnique}}}(bool autoIncrement = true)
                 {
                     AutoIncrement = autoIncrement;
                 }

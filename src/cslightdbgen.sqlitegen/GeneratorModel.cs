@@ -147,11 +147,19 @@ internal record struct LocationInfo(string FilePath, TextSpan TextSpan, LinePosi
 /// declaration syntax during the incremental pipeline's transform step. Emission consumes only these
 /// fields, so it never touches a <see cref="ISymbol"/> or <see cref="Compilation"/>.
 /// </summary>
+internal enum KeyConstraintStyle
+{
+    None,
+    Default,
+    PrimaryKeyOnly,
+}
+
 internal record struct ColumnInput(
     string Name,
     string TypeName,
     bool Nullable,
-    bool IsKey,
+    KeyConstraintStyle KeyStyle,
+    bool HasConflictingKeyAttributes,
     bool KeyAutoIncrement,
     bool KeyAutoIncrementExplicit,
     bool IsUnique,
@@ -169,7 +177,30 @@ internal record struct ColumnInput(
     string? ForeignColumn,
     string? ForeignModelType,
     string FkActions,
-    LocationInfo? Location);
+    LocationInfo? Location)
+{
+    public bool IsKey => KeyStyle != KeyConstraintStyle.None;
+}
+
+/// <summary>Logical membership and DDL flags; SQL rendering remains in the emitter.</summary>
+internal record struct ColumnSchemaPlan(
+    ColumnInput Column,
+    bool IsKey,
+    bool IsIdentity,
+    bool InlinePrimaryKey,
+    bool InjectUnique,
+    bool InlineNotNull,
+    bool NotNull);
+
+internal record struct TableSchemaPlan(
+    EquatableArray<ColumnSchemaPlan> Columns,
+    EquatableArray<ColumnInput> Keys,
+    ColumnInput? SingleKey,
+    bool IsIdentity)
+{
+    public bool IsComposite => Keys.Count > 1;
+    public bool IsKeyless => Keys.Count == 0;
+}
 
 /// <summary>A value-equatable description of a class-level <c>[LdgSQLiteIndex]</c>.</summary>
 internal record struct IndexInfo(EquatableArray<string> Columns, bool Unique, string? Where);
