@@ -110,14 +110,14 @@ Scoped to a single project:
 dotnet build src\cslightdbgen.sqlitegen\cslightdbgen.sqlitegen.csproj
 ```
 
-The expected baseline is **0 errors and roughly 166 warnings** (observed during
-Release qualification on 2026-11-12). The warnings
-are *pre-existing* and come almost entirely from generated `*.g.cs` in the
-integration test project (`CS8602`, dereference of a possibly null reference),
-multiplied across the three target frameworks. Do not treat them as a
-regression you introduced without first confirming the count against a clean
-`HEAD` — but **a change that raises the count is a finding**, because it means
-the generator started emitting less-safe code.
+The expected baseline is **0 errors and 0 warnings**. The 166 `CS8602`
+warnings observed during Release qualification on 2026-11-12 came from a
+redundant null check in every generated table's `Upsert` method, multiplied
+across the target frameworks. The generator now preserves the non-null flow
+of its resolved update columns without suppressing warnings. Confirm any
+suspected regression against a clean `HEAD` — **a change that raises the
+warning count is a finding**, because it can mean the generator started
+emitting less-safe code.
 
 CI additionally builds in Release across ubuntu/windows/macOS:
 

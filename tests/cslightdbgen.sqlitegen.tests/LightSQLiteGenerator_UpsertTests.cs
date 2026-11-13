@@ -71,4 +71,33 @@ public class LightSQLiteGenerator_UpsertTests
 
         run.Errors.ShouldBeEmpty();
     }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("[LdgSQLiteKey] public int Id { get; set; }")]
+    [InlineData("[LdgSQLiteKey] public string Code { get; set; } = string.Empty;")]
+    [InlineData("[LdgSQLiteKey] public int PartA { get; set; } [LdgSQLiteKey] public int PartB { get; set; }")]
+    public void Upsert_AllKeyShapes_CompileWithoutNullableDereferenceWarnings(string keyProperties)
+    {
+        string source = $$"""
+            using CsLightDbGen.SQLiteGenerator;
+
+            namespace NullableContract;
+
+            [LdgSQLiteTable("upsert_rows")]
+            public partial class UpsertRow
+            {
+                {{keyProperties}}
+                public string Name { get; set; } = string.Empty;
+            }
+            """;
+        GeneratorRunResult run = GeneratorTestHost.Run(source);
+
+        GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "UpsertRow.Table.g.cs")
+            .ShouldContain("public static void Upsert(");
+        run.Errors.ShouldBeEmpty();
+        run.CompilationErrors.ShouldBeEmpty();
+        run.OutputCompilation.GetDiagnostics().Where(static diagnostic => diagnostic.Id == "CS8602")
+            .ShouldBeEmpty();
+    }
 }

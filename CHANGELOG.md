@@ -18,6 +18,12 @@ collects user-visible changes newer than the latest published version.
   publication uses NuGet trusted publishing rather than a long-lived API key,
   and CI uses current Node 24 actions with .NET 8/9/10 hosted runners.
 
+### Fixed
+
+- **Generated Upsert nullable flow.** Removed a redundant null check after
+  resolving default update columns, eliminating consumer `CS8602` warnings
+  without suppressions or changes to the API, column validation, or SQL behavior.
+
 ## [2026.1112.1759] - 2026-11-12
 
 ### Added

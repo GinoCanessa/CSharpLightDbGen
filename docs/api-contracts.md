@@ -336,7 +336,7 @@ return `null`. Use them to observe server-computed values in one round-trip:
 `Upsert` issues a single SQLite `INSERT … ON CONFLICT(<target>) DO UPDATE/NOTHING` (requires SQLite ≥ 3.24) and returns `void`.
 
 - `conflictColumns`: the conflict target. Defaults to the model's key columns for a composite or natural (non-identity) primary key. An **identity** (auto-increment) or keyless model has no natural conflict target, so this argument is required — omitting it throws `ArgumentException`.
-- `updateColumns`: columns assigned on conflict. Defaults to every non-identity column except the conflict target. Passing an empty array (`[]`) turns the statement into `DO NOTHING` (existing row untouched; may affect zero rows).
+- `updateColumns`: columns assigned on conflict. When omitted or `null`, resolves to every non-identity column except the conflict target before column validation and SQL construction. Passing an empty array (`[]`) turns the statement into `DO NOTHING` (existing row untouched; may affect zero rows).
 - `incrementColumns`: a subset of `updateColumns` that accumulates rather than overwrites — `col = col + excluded.col`.
 
 ### Degenerate Model Shapes
