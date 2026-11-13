@@ -1,23 +1,42 @@
 # Release Checklist
 
-This is the **post-publish bookkeeping** checklist for `cslightdbgen.sqlitegen`.
-It starts *after* a package has been pushed to nuget.org: the repository
-documents no pack or push command, and `AGENTS.md` forbids inventing one, so
-this page deliberately covers only the record-keeping that must follow a
-publish. If pack and push commands are ever standardized, they belong in
-[Commands and Options](./commands.md) first and should be referenced from here.
+This covers local package qualification, the existing publication automation,
+and **post-publish bookkeeping** for `cslightdbgen.sqlitegen`. The local pack
+command is documented in [Commands and Options](./commands.md#build-a-local-analyzer-package).
+The [2026.1112.1700 candidate plan](./release-2026.1112.1700.md) records the
+November 12 qualification and remaining release gates.
 
 ## Before Publishing
 
 Confirm the solution is green before producing a package.
 
 ```powershell
-dotnet build db-gen.slnx
+dotnet build db-gen.slnx --configuration Release
 ```
 
 ```powershell
-dotnet test db-gen.slnx
+dotnet test db-gen.slnx --configuration Release
 ```
+
+Then pack and inspect the archive and run package-based consumer checks.
+Passing tests that reference the generator project alone does not qualify its
+NuGet packaging.
+
+## Publication Is Not Tag-Driven
+
+`.github/workflows/nuget-generator.yaml` publishes automatically after a
+successful `Tests` workflow on `main`, or on manual `workflow_dispatch`.
+A tag push does not invoke it. Merging code into `main` can therefore publish
+before a tag or GitHub release is created; do not also dispatch a second
+publish for the same release.
+
+The publisher currently packs on an Ubuntu runner with its own clock, then
+pushes the newly built archive to nuget.org. It does not publish an already
+qualified local archive, accept a version input, or derive a version from a
+tag. Its checkout is not explicitly pinned to the triggering test run's
+`head_sha`. Confirm source identity and version before relying on this path
+for an exact-tag release. The `Tests` workflow filters on `.cs` and `.csproj`
+changes; a documentation-only or tag-only push is not a fresh CI qualification.
 
 ## The Version Is Not Chosen, It Is Observed
 
@@ -27,6 +46,16 @@ hand-edit a version number.
 
 Read the exact version string off the produced package and use that same
 string, unchanged, in both bookkeeping steps below.
+
+If a release must use a predetermined **NuGet version**, stop until an approved
+versioning and publication path can produce and qualify that exact artifact.
+Do not rename a `.nupkg`, change the machine clock, or claim that a different
+timestamped package has the requested version.
+
+A Git tag is a separate label: creating `2026.1112.1700` does not force that
+NuGet version. If the requested tag differs from the published package version,
+record their mapping explicitly in the tag annotation and GitHub release
+notes. The changelog and analyzer ledgers still use the actual package version.
 
 ## Roll `CHANGELOG.md`
 

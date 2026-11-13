@@ -96,7 +96,8 @@ Scoped to a single project:
 dotnet build src\cslightdbgen.sqlitegen\cslightdbgen.sqlitegen.csproj
 ```
 
-The expected baseline is **0 errors and roughly 91 warnings**. The warnings
+The expected baseline is **0 errors and roughly 166 warnings** (observed during
+Release qualification on 2026-11-12). The warnings
 are *pre-existing* and come almost entirely from generated `*.g.cs` in the
 integration test project (`CS8602`, dereference of a possibly null reference),
 multiplied across the three target frameworks. Do not treat them as a

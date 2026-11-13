@@ -87,6 +87,26 @@ Results are generated in:
 
 ## Package Inspection Commands
 
+### Build a local analyzer package
+
+After the Release build and tests pass:
+
+```powershell
+dotnet pack -c Release .\src\cslightdbgen.sqlitegen\cslightdbgen.sqlitegen.csproj -o .\nupkg --no-restore
+```
+
+This is the pack operation used by `.github/workflows/nuget-generator.yaml`,
+with restore skipped because qualification has already built the solution.
+It builds the generator and writes a timestamp-versioned `.nupkg`; it does
+not publish. Read the actual version from the package's `.nuspec`, not a
+proposed Git tag. A later pack can produce a different version.
+
+Inspect the archive for `analyzers/dotnet/cs/cslightdbgen.sqlitegen.dll`,
+`README.md`, and `LICENSE`, with no runtime `lib/` assets or package
+dependencies. Qualify consumption through a `PackageReference`, not only the
+solution's analyzer `ProjectReference`. See the [release checklist](./releasing.md)
+for publication behavior and post-publish steps.
+
 ### List direct + transitive packages
 
 ```powershell
