@@ -4,7 +4,8 @@ This is the contributor command reference for build, test, and benchmark workflo
 
 ## Environment Prerequisites
 
-- .NET SDK installed (must support all project target frameworks, including `net10.0` for benchmark project).
+- .NET 11 SDK installed for Roslyn 5.9.0, with .NET 11 and .NET 10 runtimes
+  available for tests. The benchmark project targets `net10.0`.
 - Windows PowerShell examples below assume the repository root as current directory.
 
 ## Build Commands
@@ -32,13 +33,13 @@ dotnet build .\tests\cslightdbgen.performance\cslightdbgen.performance.csproj -c
 ### Unit tests (generator contracts)
 
 ```powershell
-dotnet test .\tests\cslightdbgen.sqlitegen.tests\cslightdbgen.sqlitegen.tests.csproj -c Release
+dotnet test .\tests\cslightdbgen.sqlitegen.tests\cslightdbgen.sqlitegen.tests.csproj -c Release -f net11.0
 ```
 
 ### Integration tests (runtime SQLite)
 
 ```powershell
-dotnet test .\tests\cslightdbgen.sqlitegen.integration\cslightdbgen.sqlitegen.integration.csproj -c Release
+dotnet test .\tests\cslightdbgen.sqlitegen.integration\cslightdbgen.sqlitegen.integration.csproj -c Release -f net11.0
 ```
 
 ### Run all test projects in solution
@@ -56,7 +57,7 @@ dotnet test .\db-gen.slnx -c Release
 Example:
 
 ```powershell
-dotnet test .\tests\cslightdbgen.sqlitegen.tests\cslightdbgen.sqlitegen.tests.csproj -c Release --filter "FullyQualifiedName~Fts"
+dotnet test .\tests\cslightdbgen.sqlitegen.tests\cslightdbgen.sqlitegen.tests.csproj -c Release -f net11.0 --filter "FullyQualifiedName~Fts"
 ```
 
 ## Benchmark Commands
@@ -124,8 +125,8 @@ dotnet list .\db-gen.slnx package --vulnerable --include-transitive
 ### Quick change validation (generator logic change)
 
 1. `dotnet build .\src\cslightdbgen.sqlitegen\cslightdbgen.sqlitegen.csproj -c Release`
-2. `dotnet test .\tests\cslightdbgen.sqlitegen.tests\cslightdbgen.sqlitegen.tests.csproj -c Release`
-3. `dotnet test .\tests\cslightdbgen.sqlitegen.integration\cslightdbgen.sqlitegen.integration.csproj -c Release`
+2. `dotnet test .\tests\cslightdbgen.sqlitegen.tests\cslightdbgen.sqlitegen.tests.csproj -c Release -f net11.0`
+3. `dotnet test .\tests\cslightdbgen.sqlitegen.integration\cslightdbgen.sqlitegen.integration.csproj -c Release -f net11.0`
 
 ### Performance regression check
 

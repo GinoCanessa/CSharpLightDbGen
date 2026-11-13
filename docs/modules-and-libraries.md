@@ -93,7 +93,7 @@ Confirms generated source compiles and executes correctly with actual SQL runtim
 ### Real Analyzer-Host Fixtures
 
 `tests/cslightdbgen.sqlitegen.integration.host-a` and `.host-b` are non-test,
-non-packable libraries targeting net10.0/net9.0/net8.0 with no packages. Both run the
+non-packable libraries targeting net11.0/net10.0 with no packages. Both run the
 generator as an analyzer in local mode, using distinct public runtime namespaces.
 B references A ordinarily and inherits its internally annotated base/key metadata;
 B uses local annotations/FK enum and an FTS projection of A's known table.

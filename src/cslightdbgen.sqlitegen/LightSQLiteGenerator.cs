@@ -1940,14 +1940,11 @@ public sealed class LightSQLiteGenerator : IIncrementalGenerator
                                     throw new System.ArgumentException($"Upsert conflict column '{_validateCol}' is not a known column of '{dbTableName}'.", nameof(conflictColumns));
                                 }
                             }
-                            if (updateColumns != null)
+                            foreach (string _validateCol in updateColumns)
                             {
-                                foreach (string _validateCol in updateColumns)
+                                if (!_sqliteColumnNames.Contains(_validateCol))
                                 {
-                                    if (!_sqliteColumnNames.Contains(_validateCol))
-                                    {
-                                        throw new System.ArgumentException($"Upsert update column '{_validateCol}' is not a known column of '{dbTableName}'.", nameof(updateColumns));
-                                    }
+                                    throw new System.ArgumentException($"Upsert update column '{_validateCol}' is not a known column of '{dbTableName}'.", nameof(updateColumns));
                                 }
                             }
                             if (incrementColumns != null)

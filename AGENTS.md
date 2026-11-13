@@ -61,16 +61,16 @@ file to edit; it is build output.
 ## Toolchain pins
 
 - **No `global.json`.** There is no SDK pin. CI
-  (`.github/workflows/build-and-test.yaml`) installs the **10.0, 9.0, and
-  8.0** SDKs, so a local SDK must be able to build and test all three.
+  (`.github/workflows/build-and-test.yaml`) installs the **11.0 and 10.0**
+  SDKs. Use .NET 11 to compile and have both runtimes available for tests.
 - **Generator target framework: `netstandard2.0`**, set in `src/common.props`.
   This is a Roslyn requirement, not a preference — see invariants.
 - **Language version: C# `14.0`**, with `Nullable` and `ImplicitUsings`
   enabled, all set in `src/common.props`.
-- **Test target frameworks: `net10.0;net9.0;net8.0`** (both test projects).
+- **Test target frameworks: `net11.0;net10.0`** (both test projects).
   `tests/cslightdbgen.performance` is `net10.0` only and is an `Exe`.
-- **Roslyn: `Microsoft.CodeAnalysis.Common` / `.CSharp` 5.6.0**, referenced
-  with `PrivateAssets="all"`. The same 5.6.0 version is referenced by the unit
+- **Roslyn: `Microsoft.CodeAnalysis.Common` / `.CSharp` 5.9.0**, referenced
+  with `PrivateAssets="all"`. The same 5.9.0 version is referenced by the unit
   test project so the driver matches the generator.
 - **Versioning is date-based**, not SemVer: local builds compute
   `yyyy.MMdd.HHmm` in `src/common.props`. Releases use canonical numeric
@@ -86,9 +86,9 @@ file to edit; it is build output.
   workflow or publish packages locally; see `docs/releasing.md`.
 - **CI actions use Node 24** (`checkout@v6`, `setup-dotnet@v5`,
   `upload-artifact@v7`, `download-artifact@v8`) on current `ubuntu-latest`,
-  `windows-latest`, and `macos-latest` images, with .NET `10.0.x`, `9.0.x`,
-  and `8.0.x` SDKs. Release qualification tests the exact NuGet artifact
-  on all nine OS/framework combinations.
+  `windows-latest`, and `macos-latest` images, with .NET `11.0.x` and `10.0.x`
+  SDKs. Release qualification tests the exact NuGet artifact on all six
+  OS/framework combinations, with the compiler host pinned to .NET 11.
 - Dependency versions are declared per-`csproj`; there is no central package
   management and no lock file. `docs/dependencies.md` mirrors the `csproj`
   versions and must be regenerated when they change.
@@ -110,14 +110,14 @@ Scoped to a single project:
 dotnet build src\cslightdbgen.sqlitegen\cslightdbgen.sqlitegen.csproj
 ```
 
-The expected baseline is **0 errors and roughly 166 warnings** (observed during
-Release qualification on 2026-11-12). The warnings
-are *pre-existing* and come almost entirely from generated `*.g.cs` in the
-integration test project (`CS8602`, dereference of a possibly null reference),
-multiplied across the three target frameworks. Do not treat them as a
-regression you introduced without first confirming the count against a clean
-`HEAD` — but **a change that raises the count is a finding**, because it means
-the generator started emitting less-safe code.
+The expected baseline is **0 errors and 0 warnings**. The 166 `CS8602`
+warnings observed during Release qualification on 2026-11-12 came from a
+redundant null check in every generated table's `Upsert` method, multiplied
+across the target frameworks. The generator now preserves the non-null flow
+of its resolved update columns without suppressing warnings. Confirm any
+suspected regression against a clean `HEAD` — **a change that raises the
+warning count is a finding**, because it can mean the generator started
+emitting less-safe code.
 
 CI additionally builds in Release across ubuntu/windows/macOS:
 
@@ -130,13 +130,13 @@ dotnet build --configuration Release --no-restore
 ## Test
 
 Both test projects use **xUnit 2.9.3 on VSTest** (`Microsoft.NET.Test.Sdk`
-18.8.1 + `xunit.runner.visualstudio` 3.1.5), with `Shouldly` for assertions.
+18.12.0 + `xunit.runner.visualstudio` 4.0.1), with `Shouldly` for assertions.
 VSTest means **`--filter FullyQualifiedName~<substring>` is the valid filter
 syntax** — this is *not* a Microsoft.Testing.Platform repo, so do not use
 `-class` / `-method` executable flags.
 
-Because the test projects multi-target, **always pass `-f net10.0`** for
-scoped and focused runs. Without it every command runs three times.
+Because the test projects multi-target, **always pass `-f net11.0`** for
+scoped and focused runs. Without it every command runs twice.
 
 ### Full suite
 
@@ -147,13 +147,13 @@ dotnet test db-gen.slnx
 ### Scoped — one project, one framework
 
 ```powershell
-dotnet test tests\cslightdbgen.sqlitegen.tests\cslightdbgen.sqlitegen.tests.csproj -f net10.0
+dotnet test tests\cslightdbgen.sqlitegen.tests\cslightdbgen.sqlitegen.tests.csproj -f net11.0
 ```
 
 ### Focused — one class or one test
 
 ```powershell
-dotnet test tests\cslightdbgen.sqlitegen.tests\cslightdbgen.sqlitegen.tests.csproj -f net10.0 --filter "FullyQualifiedName~EnumRoundTrip"
+dotnet test tests\cslightdbgen.sqlitegen.tests\cslightdbgen.sqlitegen.tests.csproj -f net11.0 --filter "FullyQualifiedName~EnumRoundTrip"
 ```
 
 **Prefer the smallest command that covers the change.** Escalate to the full
@@ -191,7 +191,7 @@ fetches the existing tag and `origin/main`; it never creates or pushes a tag.
 ```powershell
 pwsh -File .github\scripts\Test-ReleaseIdentity.ps1 -Version <version> -Tag v<version>
 pwsh -File .github\scripts\Test-ReleasePackage.ps1 -CandidateDirectory <directory> -Version <version> -Commit <full-sha>
-pwsh -File .github\scripts\Test-PackageConsumer.ps1 -CandidateDirectory <directory> -Version <version> -Framework net10.0 -WorkingDirectory <fresh-directory>
+pwsh -File .github\scripts\Test-PackageConsumer.ps1 -CandidateDirectory <directory> -Version <version> -Framework net11.0 -WorkingDirectory <fresh-directory>
 ```
 
 For package qualification, build and pack the generator with the same
