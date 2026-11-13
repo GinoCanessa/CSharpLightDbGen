@@ -10,6 +10,8 @@ collects user-visible changes newer than the latest published version.
 
 ## [Unreleased]
 
+## [2026.1112.1759] - 2026-11-12
+
 ### Added
 
 - **Model-local JSON options.** `[LdgSQLiteJsonOptions]` selects a validated
