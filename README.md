@@ -1,7 +1,7 @@
 # CSharpLightDbGen
 
 [![Tests](https://github.com/GinoCanessa/CSharpLightDbGen/actions/workflows/build-and-test.yaml/badge.svg)](https://github.com/GinoCanessa/CSharpLightDbGen/actions/workflows/build-and-test.yaml)
-[![Publish dotnet generator](https://img.shields.io/nuget/v/cslightdbgen.sqlitegen.svg)](https://github.com/GinoCanessa/CSharpLightDbGen/actions/workflows/nuget-generator.yaml)
+[![NuGet](https://img.shields.io/nuget/v/cslightdbgen.sqlitegen.svg)](https://github.com/GinoCanessa/CSharpLightDbGen/actions/workflows/nuget-generator.yaml)
 
 A **Roslyn incremental source generator** that emits strongly-typed SQLite data-access code at compile time for attributed C# models. Zero runtime reflection, zero runtime dependencies from the generator itself — just fast, predictable ADO.NET calls.
 
@@ -476,6 +476,11 @@ Detailed developer docs are in the [docs/](docs/) directory:
 ## Release History
 
 See [CHANGELOG.md](CHANGELOG.md) for the curated, user-visible change history.
+
+Packages publish only when a GitHub Release for `v<version>` is published,
+after exact-source tests and cross-platform qualification of the same NuGet
+artifact. Merges and tag pushes alone do not publish. See the
+[release process](docs/releasing.md) for preparation and validation-only runs.
 
 ## License
 

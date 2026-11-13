@@ -95,17 +95,17 @@ After the Release build and tests pass:
 dotnet pack -c Release .\src\cslightdbgen.sqlitegen\cslightdbgen.sqlitegen.csproj -o .\nupkg --no-restore
 ```
 
-This is the pack operation used by `.github/workflows/nuget-generator.yaml`,
-with restore skipped because qualification has already built the solution.
-It builds the generator and writes a timestamp-versioned `.nupkg`; it does
-not publish. Read the actual version from the package's `.nuspec`, not a
-proposed Git tag. A later pack can produce a different version.
+This local command builds the generator and writes a clock-versioned `.nupkg`;
+it does not publish. Read its actual normalized version from the `.nuspec`.
+A later local pack can produce a different version. Release automation instead
+builds with an explicit version from `v<version>`, packs once with `--no-build`,
+and publishes only that qualified artifact.
 
 Inspect the archive for `analyzers/dotnet/cs/cslightdbgen.sqlitegen.dll`,
 `README.md`, and `LICENSE`, with no runtime `lib/` assets or package
 dependencies. Qualify consumption through a `PackageReference`, not only the
 solution's analyzer `ProjectReference`. See the [release checklist](./releasing.md)
-for publication behavior and post-publish steps.
+for publication, validation-only dispatch, and pre-tag bookkeeping.
 
 ### List direct + transitive packages
 

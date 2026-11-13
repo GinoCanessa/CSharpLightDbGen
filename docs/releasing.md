@@ -1,105 +1,187 @@
-# Release Checklist
+# Release Process
 
-This covers local package qualification, the existing publication automation,
-and **post-publish bookkeeping** for `cslightdbgen.sqlitegen`. The local pack
-command is documented in [Commands and Options](./commands.md#build-a-local-analyzer-package).
-The [2026.1112.1700 candidate plan](./release-2026.1112.1700.md) records the
-November 12 qualification and remaining release gates.
+`cslightdbgen.sqlitegen` is published only by the **Publish SQLite generator**
+workflow after a GitHub Release for **`v<version>`** is published. Merging to
+`main`, pushing a tag, or creating a draft release does not publish to NuGet.
+This follows the tagged-release mechanism in `dotnet-fhir-packages`, adapted
+to a single analyzer package without its fixture or paired-package recovery
+machinery.
 
-## Before Publishing
+Manual `workflow_dispatch` requires an existing tag and matching version and
+is **validation-only**: it runs source tests, packs, and qualifies the package,
+but cannot enter the publishing job. Maintainers dispatch and publish;
+agents must not dispatch the release workflow or push packages locally.
 
-Confirm the solution is green before producing a package.
+## Administrator Preflight
 
-```powershell
-dotnet build db-gen.slnx --configuration Release
-```
+Before the first release using this workflow:
 
-```powershell
-dotnet test db-gen.slnx --configuration Release
-```
+1. Configure the protected GitHub environment **`nuget.org`** with required
+   reviewers or equivalent deployment protection.
+2. Set **`NUGET_PUBLISH_ENVIRONMENT_READY=true`** in that environment after
+   configuring protection.
+3. Store **`NUGET_USER`** as an environment secret. Its value is the nuget.org
+   profile username, not an email address.
+4. Configure a [NuGet trusted-publishing policy](https://learn.microsoft.com/en-us/nuget/nuget-org/trusted-publishing)
+   with repository owner **`GinoCanessa`**, repository **`CSharpLightDbGen`**,
+   workflow filename **`nuget-generator.yaml`** (without the directory), and
+   environment **`nuget.org`**. The policy's selected user or organization
+   must own and permit publishing new versions of **`cslightdbgen.sqlitegen`**.
+5. Allow `v*` release tags in the environment's deployment rules.
 
-Then pack and inspect the archive and run package-based consumer checks.
-Passing tests that reference the generator project alone does not qualify its
-NuGet packaging.
+Only the publishing job has **`id-token: write`**. After revalidating the
+qualified package, it uses **`NuGet/login@v1`** to exchange a GitHub OIDC token
+for a temporary NuGet API key immediately before the push. New releases need
+no long-lived API-key secret. The job fails closed without the readiness
+variable, matching policy, username, or successful token exchange.
+Neither source tests nor package qualification has OIDC publishing permission
+or uses the publishing secret. No repository or NuGet settings are configured
+by committing the workflow.
 
-## Publication Is Not Tag-Driven
+## Version and Source Identity
 
-`.github/workflows/nuget-generator.yaml` publishes automatically after a
-successful `Tests` workflow on `main`, or on manual `workflow_dispatch`.
-A tag push does not invoke it. Merging code into `main` can therefore publish
-before a tag or GitHub release is created; do not also dispatch a second
-publish for the same release.
+Keep the date-based three-component version convention, with canonical
+numeric components and **no leading zeros**. For example, `yyyy.MMdd.HHmm`
+at 09:00 on November 13, 2026 normalizes to `2026.1113.900`; its tag is
+exactly `v2026.1113.900`. Components must be in `0-65534` for .NET assembly
+metadata. Prerelease suffixes and unprefixed tags are not accepted.
 
-The publisher currently packs on an Ubuntu runner with its own clock, then
-pushes the newly built archive to nuget.org. It does not publish an already
-qualified local archive, accept a version input, or derive a version from a
-tag. Its checkout is not explicitly pinned to the triggering test run's
-`head_sha`. Confirm source identity and version before relying on this path
-for an exact-tag release. The `Tests` workflow filters on `.cs` and `.csproj`
-changes; a documentation-only or tag-only push is not a fresh CI qualification.
+Ordinary local builds still derive their version from the clock in
+`src/common.props`. Release builds instead pass the approved version through
+MSBuild's `VersionPrefix`, `Version`, and `PackageVersion`, and pass
+`0.<version>` as both `AssemblyVersion` and `FileVersion`. The tag, NuGet
+version, and analyzer version therefore agree regardless of the runner's
+clock. Do not edit version numbers in the project, rename archives, or
+backdate the machine.
 
-## The Version Is Not Chosen, It Is Observed
+The workflow freshly fetches the tag and `origin/main`, requires the tag
+commit to be contained in `main`, and checks that the version is not already
+published and is newer than existing canonical versions on NuGet. Release
+events must match their original event SHA. Every source-test job checks out
+that exact commit; the publisher rechecks the tag, ancestry, checkout, and
+published GitHub Release before pushing.
 
-`VersionPrefix` is computed as `yyyy.MMdd.HHmm` in `src/common.props` at build
-time, so the version is whatever the packing build's clock said. Never
-hand-edit a version number.
+## Prepare Release Records Before Tagging
 
-Read the exact version string off the produced package and use that same
-string, unchanged, in both bookkeeping steps below.
+Choose the release version, then prepare both records in the release commit.
+These edits describe the candidate; they are not proof that publication has
+succeeded. Merge the records to `main` before creating its tag.
 
-If a release must use a predetermined **NuGet version**, stop until an approved
-versioning and publication path can produce and qualify that exact artifact.
-Do not rename a `.nupkg`, change the machine clock, or claim that a different
-timestamped package has the requested version.
-
-A Git tag is a separate label: creating `2026.1112.1700` does not force that
-NuGet version. If the requested tag differs from the published package version,
-record their mapping explicitly in the tag annotation and GitHub release
-notes. The changelog and analyzer ledgers still use the actual package version.
-
-## Roll `CHANGELOG.md`
+### Roll `CHANGELOG.md`
 
 1. Insert `## [<version>] - <yyyy-MM-dd>` immediately beneath
-   `## [Unreleased]`, using the observed version string and the date it
-   encodes.
-2. Move the entire accumulated `[Unreleased]` body under the new header. Do not
-   reword entries.
-3. Leave `[Unreleased]` empty — header line, blank line, then the version
-   header. Do not seed empty `### Added` / `### Changed` / `### Fixed`
-   subheadings; an empty subheading reads as "nothing landed under Added",
-   which is a weaker signal than an empty section.
+   `## [Unreleased]`, using the release version and date.
+2. Move the entire accumulated `[Unreleased]` body under the new header,
+   preserving entries.
+3. Leave `[Unreleased]` empty: header, blank line, then the version header.
+   Do not seed empty `### Added` / `### Changed` / `### Fixed` subheadings.
 
-## Roll the Analyzer Ledgers
+The validator requires exactly one matching release header at the tag commit.
+Never reuse or relabel a historical published-version section.
 
-1. Move every rule from `src/cslightdbgen.sqlitegen/AnalyzerReleases.Unshipped.md`
-   into `src/cslightdbgen.sqlitegen/AnalyzerReleases.Shipped.md` under a new
-   `## Release <version>` section.
-2. Preserve each rule's Category, Severity, and Notes **verbatim**. A row that
-   disagrees with the descriptor in `GeneratorDiagnostics.cs` trips RS2001.
-3. Reduce `AnalyzerReleases.Unshipped.md` to its two `;` comment lines. That
-   header-only shape is the unambiguous "nothing pending" state.
+### Roll the Analyzer Ledgers
 
-## Verify
+1. Move all pending rules from
+   `src/cslightdbgen.sqlitegen/AnalyzerReleases.Unshipped.md` into
+   `src/cslightdbgen.sqlitegen/AnalyzerReleases.Shipped.md` under a new
+   `## Release <version>` section, if there are pending rules.
+2. Preserve each rule's Category, Severity, and Notes verbatim.
+3. Leave only the two `;` comment lines in `AnalyzerReleases.Unshipped.md`.
+
+The release validator rejects non-comment content in the unshipped ledger.
+Releases without new diagnostics do not need an empty shipped section.
+
+Verify the ledger edits:
 
 ```powershell
 dotnet build src\cslightdbgen.sqlitegen\cslightdbgen.sqlitegen.csproj
 ```
 
-Then confirm no `RS20` diagnostic appears in that build's output.
+Inspect output for **any `RS20xx` warnings**, not merely a successful exit
+code. Release-tracking diagnostics are warnings; an empty unshipped ledger
+alone cannot prove that rules were transferred correctly.
 
-**A green build alone proves nothing here.** The release-tracking rules
-RS2000–RS2008 ship at severity `warning`, and this repository sets no
-`TreatWarningsAsErrors`, so a malformed release header, a duplicate rule, or a
-category/severity mismatch produces a warning and still reports
-`Build succeeded`. Inspect the output, not just the exit code.
+## Qualify and Publish
 
-## Why This Is a Checklist and Not a CI Gate
+1. Review the release commit and require the normal `Tests` matrix on `main`
+   to pass. It uses current Ubuntu, Windows, and macOS hosted images and
+   .NET 10/9/8 SDKs. Workflow, script, props, ledger, and test changes are
+   included in its path filters.
+2. Create an annotated **`v<version>`** tag on the release commit in `main`,
+   then push that tag with explicit publishing authorization.
+3. Optionally run the non-publishing validation first. For maintainers:
 
-The release-tracking analyzer is structurally blind to a skipped roll: a rule
-left in `AnalyzerReleases.Unshipped.md` forever is a perfectly valid state to
-it. That blindness is exactly how `2026.716.1308` shipped with its rules still
-unshipped and its changelog entries still under `[Unreleased]`.
+   ```powershell
+   gh workflow run nuget-generator.yaml --ref main -f version=<version> -f tag=v<version>
+   ```
 
-Enforcement — failing a build when a published version has no matching
-`CHANGELOG.md` header — was considered and deliberately deferred in favor of
-this written checklist. Revisit it if the drift recurs.
+   Wait for exact-source CI and all package-consumer jobs to pass. This does
+   not reserve a version or publish an archive; the real release run makes
+   and qualifies its own candidate.
+4. Create and publish a GitHub Release for that existing tag. Publishing the
+   GitHub Release starts the release workflow; a tag push alone does not.
+   Prefer notes that link to the matching changelog section and describe
+   NuGet publication as pending until the workflow succeeds.
+5. Review the candidate's full commit and SHA-512 in the pack job summary
+   and the nine package-consumer results before approving `publish-nuget`
+   in the protected environment.
+6. Confirm the workflow succeeds and the exact version appears on NuGet.
+   Record the source SHA and candidate hash in the release notes. The
+   artifact is retained for 90 days; archive it for longer-term evidence
+   if needed.
+
+The workflow serializes runs for the same tag without cancelling an active
+release. Manual validation can never publish, even if dispatched at a tag.
+
+## One Qualified Artifact
+
+After reusable exact-source CI passes on all three operating systems, the
+pack job restores, builds once with the release identity, and packs once
+with `--no-build`. It uploads an immutable artifact containing:
+
+```text
+cslightdbgen.sqlitegen.<version>.nupkg
+package.sha512
+```
+
+Package validation checks the nuspec ID, version, repository URL and commit;
+the required analyzer DLL, README and license; absence of runtime assets,
+dependency assemblies and NuGet dependencies; and assembly/file versions.
+
+The package-consumer matrix downloads that artifact by ID and verifies its
+SHA-512 before running all existing SQLite integration tests on .NET 8/9/10
+on Ubuntu, Windows, and macOS. The script copies the integration and A/B host
+projects into a fresh runner-temporary directory and substitutes an exact
+`PackageReference` in all three projects. Source mappings admit the analyzer
+only from the local candidate directory, with a separate package cache.
+This exercises actual NuGet consumption, independently hosted analyzers,
+and generated runtime behavior rather than only project references.
+
+The publisher downloads the same artifact and checks its hash and identity
+again. **It never rebuilds or repacks.** There is no duplicate-skipping push
+that could hide a conflicting published version.
+
+## Failure and Retry
+
+If source tests, packing, or consumer qualification fail, nothing is pushed.
+Investigate the error; never move a published release tag to different source.
+A source fix needs a new release commit, version, and tag.
+
+If environment configuration or NuGet publication fails before the package is
+accepted, correct the external problem and **re-run failed jobs** in the
+original release run. This reuses the already qualified artifact. Do not
+re-run all jobs to rebuild it or dispatch a second publishing run.
+
+If NuGet already contains the version, stop and inspect the published package.
+Do not overwrite it, delete/recreate the tag, or treat a duplicate as success.
+The workflow deliberately rejects that state; it has no automatic
+already-published recovery path.
+
+Reruns use the workflow at the original release tag. Retain `GINOC_NUGET`
+only while outstanding releases tagged with the old API-key workflow still
+need it, then revoke that key and delete the secret. Never move an existing
+release tag to adopt trusted publishing.
+
+The November 12 [local qualification record](./release-2026.1112.1700.md)
+describes the earlier clock-based process and is historical evidence only.
+This document supersedes its publication instructions.

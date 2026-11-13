@@ -1,5 +1,10 @@
 # Release qualification and plan: 2026.1112.1700
 
+**Historical record:** the publication instructions below describe the
+November 12 clock-based workflow. They are superseded by the
+[tagged release process](./releasing.md); do not follow them for a new release.
+The local qualification results and artifact identity remain unchanged.
+
 Qualified locally on **2026-11-12**, from branch `dev`, commit
 `73c5d34c1c68de860818579eaa091f950c7b814c`. The worktree was clean before
 qualification; this preparation changes documentation only. Nothing has been

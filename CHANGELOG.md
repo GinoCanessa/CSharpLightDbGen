@@ -3,12 +3,20 @@
 All notable changes to `cslightdbgen.sqlitegen` are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-This project versions releases by build date (`yyyy.MMdd.HHmm`) rather than
-SemVer, so entries are grouped by the version actually published to
+This project versions releases by date (`yyyy.MMdd.HHmm`, normalized numeric
+components) rather than SemVer, so entries are grouped by the version actually published to
 [nuget.org](https://www.nuget.org/packages/cslightdbgen.sqlitegen). `[Unreleased]`
 collects user-visible changes newer than the latest published version.
 
 ## [Unreleased]
+
+### Changed
+
+- **Tagged release publication.** Publishing a GitHub Release for `v<version>`
+  now qualifies and publishes one exact-version analyzer package; merges and
+  tag pushes no longer publish automatically. Manual runs are validation-only,
+  publication uses NuGet trusted publishing rather than a long-lived API key,
+  and CI uses current Node 24 actions with .NET 8/9/10 hosted runners.
 
 ## [2026.1112.1759] - 2026-11-12
 
