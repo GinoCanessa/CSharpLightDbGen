@@ -105,7 +105,7 @@ alone cannot prove that rules were transferred correctly.
 
 1. Review the release commit and require the normal `Tests` matrix on `main`
    to pass. It uses current Ubuntu, Windows, and macOS hosted images and
-   .NET 10/9/8 SDKs. Workflow, script, props, ledger, and test changes are
+   .NET 11/10 SDKs. Workflow, script, props, ledger, and test changes are
    included in its path filters.
 2. Create an annotated **`v<version>`** tag on the release commit in `main`,
    then push that tag with explicit publishing authorization.
@@ -123,7 +123,7 @@ alone cannot prove that rules were transferred correctly.
    Prefer notes that link to the matching changelog section and describe
    NuGet publication as pending until the workflow succeeds.
 5. Review the candidate's full commit and SHA-512 in the pack job summary
-   and the nine package-consumer results before approving `publish-nuget`
+   and the six package-consumer results before approving `publish-nuget`
    in the protected environment.
 6. Confirm the workflow succeeds and the exact version appears on NuGet.
    Record the source SHA and candidate hash in the release notes. The
@@ -149,9 +149,10 @@ the required analyzer DLL, README and license; absence of runtime assets,
 dependency assemblies and NuGet dependencies; and assembly/file versions.
 
 The package-consumer matrix downloads that artifact by ID and verifies its
-SHA-512 before running all existing SQLite integration tests on .NET 8/9/10
-on Ubuntu, Windows, and macOS. The script copies the integration and A/B host
-projects into a fresh runner-temporary directory and substitutes an exact
+SHA-512 before running all existing SQLite integration tests on .NET 11/10
+on Ubuntu, Windows, and macOS. The script pins the compiler host to .NET 11
+for Roslyn 5.9.0, including when targeting the .NET 10 runtime. It copies the
+integration and A/B host projects into a fresh runner-temporary directory and substitutes an exact
 `PackageReference` in all three projects. Source mappings admit the analyzer
 only from the local candidate directory, with a separate package cache.
 This exercises actual NuGet consumption, independently hosted analyzers,

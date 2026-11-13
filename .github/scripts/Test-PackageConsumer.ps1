@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory)][string] $CandidateDirectory,
     [Parameter(Mandatory)][string] $Version,
-    [Parameter(Mandatory)][ValidateSet('net10.0', 'net9.0', 'net8.0')][string] $Framework,
+    [Parameter(Mandatory)][ValidateSet('net11.0', 'net10.0')][string] $Framework,
     [Parameter(Mandatory)][string] $WorkingDirectory
 )
 
@@ -43,8 +43,8 @@ foreach ($project in $projects)
     $projectXml.Save($projectPath)
 }
 
-# Pin the compiler host to .NET 10 even when a runner also has newer SDKs.
-@{ sdk = @{ version = '10.0.100'; rollForward = 'latestFeature' } } |
+# Pin the compiler host to .NET 11 for Roslyn 5.9, including .NET 10 consumers.
+@{ sdk = @{ version = '11.0.100'; rollForward = 'latestFeature' } } |
     ConvertTo-Json | Set-Content (Join-Path $WorkingDirectory 'global.json')
 [xml] $configuration = @'
 <configuration>

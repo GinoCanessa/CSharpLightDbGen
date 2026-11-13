@@ -18,8 +18,8 @@ packed as a NuGet analyzer (`analyzers/dotnet/cs`, `IsRoslynComponent=true`, `In
 
 ### NuGet Packages
 
-- `Microsoft.CodeAnalysis.Common` `5.6.0` (`PrivateAssets=all`)
-- `Microsoft.CodeAnalysis.CSharp` `5.6.0` (`PrivateAssets=all`)
+- `Microsoft.CodeAnalysis.Common` `5.9.0` (`PrivateAssets=all`)
+- `Microsoft.CodeAnalysis.CSharp` `5.9.0` (`PrivateAssets=all`)
 
 ### Purpose
 
@@ -33,11 +33,11 @@ Unit tests (generator contract verification). Multi-targets `net11.0;net10.0`.
 
 ### NuGet Packages
 
-- `Microsoft.NET.Test.Sdk` `18.8.1`
+- `Microsoft.NET.Test.Sdk` `18.12.0`
 - `xunit` `2.9.3`
-- `xunit.runner.visualstudio` `3.1.5` (`PrivateAssets=all`)
+- `xunit.runner.visualstudio` `4.0.1` (`PrivateAssets=all`)
 - `Shouldly` `4.3.0`
-- `Microsoft.CodeAnalysis.CSharp` `5.6.0`
+- `Microsoft.CodeAnalysis.CSharp` `5.9.0`
 
 ### Purpose
 
@@ -51,13 +51,13 @@ Integration tests (runtime SQLite behavior). Multi-targets `net11.0;net10.0`.
 
 ### NuGet Packages
 
-- `Microsoft.Data.Sqlite.Core` `10.0.10`
-- `SQLitePCLRaw.provider.e_sqlite3` `2.1.11`
-- `SourceGear.sqlite3` `3.53.3`
+- `Microsoft.Data.Sqlite.Core` `11.0.0`
+- `SQLitePCLRaw.provider.e_sqlite3` `3.0.5`
+- `SourceGear.sqlite3` `3.53.4`
 - `Shouldly` `4.3.0`
-- `Microsoft.NET.Test.Sdk` `18.8.1`
+- `Microsoft.NET.Test.Sdk` `18.12.0`
 - `xunit` `2.9.3`
-- `xunit.runner.visualstudio` `3.1.5` (`PrivateAssets=all`)
+- `xunit.runner.visualstudio` `4.0.1` (`PrivateAssets=all`)
 
 ### Purpose
 
@@ -72,13 +72,13 @@ BenchmarkDotNet comparisons. Targets `net10.0` (`OutputType=Exe`).
 ### NuGet Packages
 
 - `BenchmarkDotNet` `0.15.8`
-- `Dapper` `2.1.79`
-- `Dapper.SqlBuilder` `2.1.66`
-- `Microsoft.Data.Sqlite.Core` `10.0.10`
-- `Microsoft.EntityFrameworkCore` `10.0.10`
-- `Microsoft.EntityFrameworkCore.Sqlite.Core` `10.0.10`
-- `SQLitePCLRaw.provider.e_sqlite3` `2.1.11`
-- `SourceGear.sqlite3` `3.53.3`
+- `Dapper` `2.1.89`
+- `Dapper.SqlBuilder` `2.1.89`
+- `Microsoft.Data.Sqlite.Core` `11.0.0`
+- `Microsoft.EntityFrameworkCore` `10.0.15`
+- `Microsoft.EntityFrameworkCore.Sqlite.Core` `10.0.15`
+- `SQLitePCLRaw.provider.e_sqlite3` `3.0.5`
+- `SourceGear.sqlite3` `3.53.4`
 
 ### Purpose
 
@@ -113,8 +113,9 @@ native library so the `SourceGear.sqlite3` build is used instead.
 
 ## Operational Dependency Notes
 
-- Use an SDK that can build every target framework in the solution (`net10.0`, plus `net9.0` and
-  `net8.0` for the multi-targeted test projects).
+- Use the .NET 11 SDK (a compiler host compatible with Roslyn 5.9.0) to build
+  every target framework in the solution, with .NET 11 and .NET 10 runtimes
+  available for the multi-targeted tests. Benchmarks remain on .NET 10.
 - SQLite runtime behavior in the integration/performance tests depends on the provider composition
   documented above; keep `Microsoft.Data.Sqlite.Core`, the SQLitePCLRaw provider, and
   `SourceGear.sqlite3` versions mutually compatible.

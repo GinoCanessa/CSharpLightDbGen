@@ -10,6 +10,8 @@ collects user-visible changes newer than the latest published version.
 
 ## [Unreleased]
 
+## [2026.1113.1020] - 2026-11-13
+
 ### Changed
 
 - **Test target frameworks.** Unit and integration tests, including the
@@ -28,7 +30,7 @@ collects user-visible changes newer than the latest published version.
   now qualifies and publishes one exact-version analyzer package; merges and
   tag pushes no longer publish automatically. Manual runs are validation-only,
   publication uses NuGet trusted publishing rather than a long-lived API key,
-  and CI uses current Node 24 actions with .NET 8/9/10 hosted runners.
+  and CI uses current Node 24 actions with .NET 11/10 hosted runners.
 
 ### Fixed
 
