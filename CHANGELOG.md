@@ -10,8 +10,26 @@ collects user-visible changes newer than the latest published version.
 
 ## [Unreleased]
 
-<!-- Maintainer note: when this batch is published to nuget.org, move CSLDG001/003/005/006
-     from AnalyzerReleases.Unshipped.md into AnalyzerReleases.Shipped.md under that release header. -->
+### Added
+
+- **Model-local JSON options.** `[LdgSQLiteJsonOptions]` selects a validated
+  consumer factory for table and FTS JSON columns, with a lazy, once-per-model
+  options snapshot. Invalid bindings report CSLDG007; factory and serialization
+  failures propagate without fallback. Unannotated models retain their existing
+  JSON behavior, without a codec or runtime generator dependency.
+- **Primary keys without extra constraints.** `[LdgSQLiteKeyNoUnique]` retains
+  logical key and identity behavior while omitting injected UNIQUE/NOT NULL
+  decoration, including on mixed composite keys; explicit uniqueness and SQLite's
+  primary-key uniqueness still apply. Existing key annotations are unchanged, and
+  changing annotations does not migrate constraints on existing tables.
+- **Independent analyzer hosts.** Project-wide `CSLIGHTDBGEN_MULTI_HOST` and
+  `[assembly: LdgSQLiteRuntimeNamespace(...)]` provide internal annotations and
+  distinct public host-owned exceptions for one-way A/B/C composition; invalid
+  host configuration reports CSLDG008. This is opt-in: default hosts retain
+  public annotations and the historical exception namespace, and downstream
+  hosts do not automatically discover models from referenced assemblies.
+
+## [2026.716.1308] - 2026-07-16
 
 ### Added
 

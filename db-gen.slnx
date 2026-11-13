@@ -13,5 +13,7 @@
   <Project Path="src/cslightdbgen.sqlitegen/cslightdbgen.sqlitegen.csproj" Id="d264b869-0bad-4213-855c-e85c09347fe1" />
   <Project Path="tests/cslightdbgen.performance/cslightdbgen.performance.csproj" />
   <Project Path="tests/cslightdbgen.sqlitegen.integration/cslightdbgen.sqlitegen.integration.csproj" />
+  <Project Path="tests/cslightdbgen.sqlitegen.integration.host-a/cslightdbgen.sqlitegen.integration.host-a.csproj" />
+  <Project Path="tests/cslightdbgen.sqlitegen.integration.host-b/cslightdbgen.sqlitegen.integration.host-b.csproj" />
   <Project Path="tests/cslightdbgen.sqlitegen.tests/cslightdbgen.sqlitegen.tests.csproj" />
 </Solution>

@@ -83,12 +83,15 @@ customer.Delete(db);
 | `LdgSQLiteTable(tableName?, dynamicTableNames)` | Class | Generates full CRUD/query API for a SQLite table |
 | `LdgSQLiteBaseClass` | Class | Marks a base class whose properties are inherited by table models |
 | `LdgSQLiteKey(autoIncrement)` | Property | Designates a primary key column. Applying it to two or more properties declares a **composite** primary key (emitted as a table-level `PRIMARY KEY (...)` constraint). |
+| `LdgSQLiteKeyNoUnique(autoIncrement = true)` | Property | Same logical key/identity behavior, without injected `UNIQUE` or `NOT NULL` decoration (including the CLR-nullability path). Explicit uniqueness still applies. |
+| `LdgSQLiteJsonOptions(Type factoryType, string factoryMethod)` | Class/record class | Direct, noninherited selection of a consumer `JsonSerializerOptions` factory for that table or FTS model's JSON columns. |
+| `LdgSQLiteRuntimeNamespace(string value)` | Assembly | Chooses the public exception namespace when the project-wide `CSLIGHTDBGEN_MULTI_HOST` symbol is enabled. |
 | `LdgSQLiteForeignKey(refTable?, refColumn?, modelTypeName?, onDelete?, onUpdate?)` | Property | Declares a single-column foreign key. `onDelete`/`onUpdate` accept `LdgSQLiteFkAction` (`NoAction`, `Restrict`, `SetNull`, `SetDefault`, `Cascade`) and emit `ON DELETE`/`ON UPDATE` clauses when non-default. |
 | `LdgSQLiteForeignKeyComposite(columns, refTable, refColumns, onDelete?, onUpdate?)` | Class | Declares a multi-column (composite) foreign key. `AllowMultiple = true`. Same `LdgSQLiteFkAction` referential actions as `LdgSQLiteForeignKey`. |
 | `LdgSQLiteIndex(columns..., Unique?, Where?)` | Class | Emits a composite index on the specified columns. Set `Unique = true` for a `CREATE UNIQUE INDEX`; set `Where = "<predicate>"` for a partial index (`... WHERE <predicate>`). Unique/partial indexes get a deterministic name suffix so migrations stay idempotent. |
 | `LdgSQLiteUnique(columns...)` | Property or Class | On a property, adds an inline `UNIQUE` column constraint. On a class, declares a multi-column `UNIQUE (...)` table constraint (`AllowMultiple = true`). |
 | `LdgSQLiteDefault(value?, raw?)` | Property | Emits a column `DEFAULT` clause. String values are SQL-quoted (embedded `'` doubled); `bool` maps to `1`/`0`; numeric values render as-is. Set `raw: true` to emit an unquoted SQL expression such as `CURRENT_TIMESTAMP`. |
-| `LdgSQLiteMultiSelect` | Property | Emits `IEnumerable<T>? {Name}Values` (SQL `IN (...)`) and `IEnumerable<T>? {Name}NotInValues` (SQL `NOT IN (...)`) parameters on filter/delete helpers. Implicitly applied to `[LdgSQLiteKey]` primary keys and to any non-array property whose name ends in `Key`. Non-scalar / JSON / collection properties are not eligible. |
+| `LdgSQLiteMultiSelect` | Property | Emits `IEnumerable<T>? {Name}Values` (SQL `IN (...)`) and `IEnumerable<T>? {Name}NotInValues` (SQL `NOT IN (...)`) parameters on filter/delete helpers. Implicitly applied to primary keys of either style and to any non-array property whose name ends in `Key`. Non-scalar / JSON / collection properties are not eligible. |
 | `LdgSQLiteIgnore` | Property | Excludes the property from generation |
 | `LdgSQLiteFtsTable(sourceTable, tableName?, tokenizer?)` | Class | Generates an FTS5 full-text search table. `tokenizer?` sets the FTS5 `tokenize=` option (e.g. `porter`, `unicode61`, `trigram`) when supplied. |
 | `LdgSQLiteFtsUnindexed` | Property | Marks an FTS column as `UNINDEXED` |
@@ -99,7 +102,7 @@ customer.Delete(db);
 
 **Schema:** `CreateTable`, `DropTable`, `EnsureSchema`
 
-> **Additive migration (`EnsureSchema`):** `EnsureSchema(dbConnection, dbTableName?, transaction?)` brings an existing table up to the current model without dropping data: it runs `CREATE TABLE IF NOT EXISTS`, reads `PRAGMA table_info`, adds any missing columns with `ALTER TABLE … ADD COLUMN`, and (re)creates missing indexes (`IF NOT EXISTS`). Because `CREATE TABLE IF NOT EXISTS` is a no-op on a pre-existing table, any class-level composite `[LdgSQLiteUnique(cols)]` (a table-level `UNIQUE` constraint that a plain re-run cannot restore) is additionally re-asserted as an equivalent `CREATE UNIQUE INDEX IF NOT EXISTS` so it is enforced after migration. It is **additive only** — it never drops columns, changes column types, or backfills beyond SQLite's own `ADD COLUMN` default fill. Added columns cannot carry `PRIMARY KEY`/`UNIQUE` constraints or non-constant defaults; a `NOT NULL` model column lacking a constant default is added as nullable (SQLite forbids adding a `NOT NULL` column with no default to a populated table). Running it repeatedly is idempotent. Available as an extension too: `dbConnection.EnsureSchema<MyModel>()`.
+> **Additive migration (`EnsureSchema`):** `EnsureSchema(dbConnection, dbTableName?, transaction?)` brings an existing table up to the current model without dropping data: it runs `CREATE TABLE IF NOT EXISTS`, reads `PRAGMA table_info`, adds any missing columns with `ALTER TABLE … ADD COLUMN`, and (re)creates missing indexes (`IF NOT EXISTS`). Because `CREATE TABLE IF NOT EXISTS` is a no-op on a pre-existing table, any class-level composite `[LdgSQLiteUnique(cols)]` (a table-level `UNIQUE` constraint that a plain re-run cannot restore) is additionally re-asserted as an equivalent `CREATE UNIQUE INDEX IF NOT EXISTS` so it is enforced after migration. It is **additive only** — it never drops columns, changes column types, rebuilds tables, removes/repairs key constraints, or backfills beyond SQLite's own `ADD COLUMN` default fill. Primary-key columns are never added; other added columns cannot carry `UNIQUE` constraints or non-constant defaults. Missing non-nullable columns without a constant default, or raw-default columns, fail fast on populated tables when readers could not hydrate the added values; a manual migration is required. Running it repeatedly is idempotent. Available as an extension too: `dbConnection.EnsureSchema<MyModel>()`.
 
 > **Foreign-key enforcement:** SQLite requires `PRAGMA foreign_keys = ON` **per connection** for foreign-key constraints (including `ON DELETE`/`ON UPDATE` actions) to be enforced. `CreateTable` does **not** emit this PRAGMA — it is connection-scoped and therefore the caller's responsibility. Enable it on each connection before relying on referential actions.
 
@@ -128,7 +131,11 @@ customer.Delete(db);
 
 **Extensions:** convenience methods on `IDbConnection`, model instances, and collections
 
-> **Composite primary keys:** declaring two or more `[LdgSQLiteKey]` properties emits a table-level `PRIMARY KEY (col, ...)` constraint (each key column is `NOT NULL`) instead of an inline single-column directive. Composite-key columns are never auto-incremented, so `Insert` returns `void`, includes every key column in the `INSERT`, and emits no `RETURNING` clause — supply all key values before inserting. `Update`/`Delete`-by-key match on the full key (`col1 = $col1 AND col2 = $col2`). `SelectDict` (which keys the result by a single primary key) is omitted for composite-key tables.
+> **Composite primary keys:** two or more key properties, using either annotation or a mixture, emit one table-level `PRIMARY KEY (col, ...)` in property order. Old-style members retain their CLR-nullability-based `NOT NULL` behavior; nullable old members are not strengthened. New-style members omit injected `NOT NULL` even when CLR-nonnullable. Composite keys are never identity keys: `Insert` returns `void`, includes every key member, and emits no `RETURNING` clause — supply all keys. `Update`/`Delete`-by-key match the full key; `SelectDict` is omitted.
+
+By-key stale-row exceptions remain public: default hosts use
+`CsLightDbGen.SQLiteGenerator.LdgCommandFailedException`; opt-in hosts use their chosen
+namespace below. The type still carries `ModelName`, `Sql`, and the same message/guards.
 
 ### FTS Table (`[LdgSQLiteFtsTable]`)
 
@@ -136,6 +143,109 @@ customer.Delete(db);
 - Optional HTML stripping during `Populate(..., sanitizeText: true)`
 - Generated FTS models also expose `SQLiteColumnNames`, and invalid `orderByProperties` values are ignored. FTS `Select` supports the same multi-column `orderByDirections` (per-column direction) as regular reads
 - `Populate`, `Select`, and `SelectCount` accept the same optional trailing `transaction` (`IDbTransaction?`) for transactional composition
+
+### Primary Keys Without Extra Constraints
+
+`[LdgSQLiteKey]` retains its existing single-column `UNIQUE PRIMARY KEY NOT NULL`
+decoration. `[LdgSQLiteKeyNoUnique]` instead emits inline `PRIMARY KEY` for a single
+key, suppressing injected `UNIQUE` and `NOT NULL`, including the normal CLR-nullability
+branch. Both expose settable `AutoIncrement` and accept `autoIncrement: false`.
+Property/class `[LdgSQLiteUnique]` and unique indexes remain independently effective.
+
+SQLite primary keys are still inherently unique; `INTEGER PRIMARY KEY` retains rowid
+behavior. Text/composite keys without `NOT NULL` can admit raw SQL NULLs. This does
+**not** add NULL-safe CLR readers, predicates, or dictionaries. Identity hydration,
+counters, and key-based APIs are unchanged. Changing annotations does not migrate
+existing constraints: `EnsureSchema` is additive only.
+
+Both key annotations on one property report `CSLDG005`; mixed styles on different
+members are valid. Explicit composite auto-increment reports `CSLDG003`. For the new
+annotation in referenced metadata, bare usage and an explicit default-valued `true`
+constructor argument cannot be distinguished; named `AutoIncrement = true` remains
+observable. See the [key contract](docs/api-contracts.md#primary-key-constraint-policy).
+
+## Consumer JSON Options
+
+Select System.Text.Json options directly on each table or FTS model:
+
+```csharp
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using CsLightDbGen.SQLiteGenerator;
+
+namespace Example.Data;
+
+internal static class PersistenceJsonOptions
+{
+    public static JsonSerializerOptions Create()
+    {
+        JsonSerializerOptions options = new()
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        };
+        options.Converters.Add(new JsonStringEnumConverter());
+        return options;
+    }
+}
+
+public enum DocumentState { Draft, Ready }
+
+public sealed class DocumentContent
+{
+    public DocumentState State { get; set; }
+}
+
+[LdgSQLiteTable("saved_documents")]
+[LdgSQLiteJsonOptions(typeof(PersistenceJsonOptions), nameof(PersistenceJsonOptions.Create))]
+public partial class SavedDocument
+{
+    [LdgSQLiteKey]
+    public int Id { get; set; }
+    public DocumentContent Content { get; set; } = new();
+}
+```
+
+Inserting `Content = new DocumentContent { State = DocumentState.Ready }` stores
+`{"state":"Ready"}`. This is options selection, **not** a codec or global mutable registry.
+`FactoryType` and `FactoryMethod` are read-only attribute properties. Validation requires
+a closed, accessible named type and exactly one declared ordinary static, nongeneric,
+zero-parameter method of the exact name returning the compilation's
+`System.Text.Json.JsonSerializerOptions`. Public and assembly-accessible internal
+factories work, including accessible referenced/closed-generic types. Parameterized
+overloads are harmless; optional parameters are not zero parameters. Inaccessible,
+file-local/open-generic types, private/protected-only methods, wrong returns, ambiguous
+methods, explicit interface implementations and interface-only static abstract/virtual
+methods are rejected with `CSLDG007`. Calls use resolved fully qualified/escaped names.
+
+Each configured model has one execution-and-publication `Lazy<JsonSerializerOptions>`:
+the factory runs only on real JSON use, then `new JsonSerializerOptions(returnedOptions)`
+captures a shallow snapshot. Schema, counters, metadata and null/empty/whitespace guards
+do not execute it. A valid scalar-only annotation is validated but emits no JSON helper
+and never calls the factory. Null returns and factory exceptions remain visible and
+cached (no fallback or retry), without poisoning model static initialization.
+Converter and malformed-JSON failures also propagate.
+
+The original options remain independently mutable; the snapshot becomes read-only on
+serializer use. Converter instances are shared: converters must be thread-safe, and the
+returned options must not be concurrently mutated while copied. Policies do not inherit
+from bases or FTS source tables: annotate each derived/FTS model explicitly, even when
+reusing the same factory for inherited JSON properties.
+
+Existing sentinels are unchanged:
+
+| Input/storage | Behavior |
+|---|---|
+| Null object/collection, empty `List<T>` write | SQL NULL if nullable; empty text otherwise |
+| Empty array/enumerable write | Generic serializer path (normally `[]`), not the empty-list guard |
+| SQL NULL read | Null for nullable properties; no new non-nullable SQL NULL support |
+| Empty/whitespace text read | Object null (nonnullable: new instance); collections empty |
+| JSON `null` text read | Deserializer runs; null results become null/fallback objects or empty collections |
+
+Null equality filters omit the condition; use nullable `PropertyIsNull` filters for
+SQL NULL. Array/enumerable writes use the generic serializer overload, while collection
+reads deserialize `List<T>` (arrays then call `ToArray()`). Use converters compatible
+with those shapes, such as element converters; symmetric array-specific converters are
+not promised. See the [full JSON contract](docs/api-contracts.md#json-persistence-options).
 
 ## Full-Text Search Example
 
@@ -175,10 +285,9 @@ public partial record class Order
 
 ## Multi-Project Setup
 
-The generator's attribute types (`LdgSQLiteTable`, `LdgSQLiteKey`, …) are emitted as **public**
-types into whichever project runs the analyzer, and the generated DAL (`CreateTable`, `Insert`,
-`SelectList`, `SQLiteColumnNames`, …) is public and `static`. Both are therefore usable across
-project boundaries — as long as the analyzer runs in **exactly one** project.
+By default, annotations and `LdgSQLiteFkAction` are **public**, and the helper is public
+`CsLightDbGen.SQLiteGenerator.LdgCommandFailedException`. Generated DAL methods and
+model-namespace extension methods are public in both modes.
 
 **Recommended topology — host the analyzer once:**
 
@@ -205,18 +314,49 @@ project boundaries — as long as the analyzer runs in **exactly one** project.
 Because only the data project runs the analyzer, the attribute types are declared once and imported
 everywhere else as metadata — there is **no duplicate-type conflict**.
 
-**If two mutually-referencing projects both run the analyzer**, each emits its own copy of the public
-attribute types. Where one such project references the other, the compiler sees the attribute type
-both in source (locally generated) and in metadata (from the reference) and reports **`CS0436`**. This
-is a **warning, not an error** — the build still succeeds and uses the local copy — but the clean fix
-is to host the analyzer in only one project. If you deliberately keep the analyzer in both, silence
-the warning in the consuming project:
+**Multiple independent analyzer hosts — explicit opt-in:** both A and B append this
+project-wide symbol (a source-file `#define` is not sufficient):
 
 ```xml
 <PropertyGroup>
-  <NoWarn>$(NoWarn);CS0436</NoWarn>
+  <DefineConstants>$(DefineConstants);CSLIGHTDBGEN_MULTI_HOST</DefineConstants>
 </PropertyGroup>
 ```
+
+Each host must also choose a distinct public helper namespace in its own source:
+
+```csharp
+// Host A
+[assembly: CsLightDbGen.SQLiteGenerator.LdgSQLiteRuntimeNamespace("CsLightDbGen.Integration.HostA.Runtime")]
+```
+
+```csharp
+// Host B
+[assembly: CsLightDbGen.SQLiteGenerator.LdgSQLiteRuntimeNamespace("CsLightDbGen.Integration.HostB.Runtime")]
+```
+
+Keep the analyzer reference in both. B ordinarily references A; C ordinarily references
+both and can call both public DALs and catch each host's distinct public
+`LdgCommandFailedException`. Annotations and the FK enum are internal to each host
+(constructors/properties remain public members). Referenced annotated base/key/table
+metadata still participates in generation, including B's FTS projection of A's table.
+No shared runtime library, consolidation, `extern alias`, warning suppression, generator
+runtime dependency, or `InternalsVisibleTo` is required. The real integration fixtures
+also exercise C as a third, default-mode analyzer host.
+
+There is **no default-name helper alias** in local mode. Adopting/changing a runtime
+namespace changes public type identity: rebuild consumers and review explicit type
+references and catches. `CSLDG008` rejects a missing annotation, an annotation without
+the symbol, invalid namespaces, the default helper namespace in local mode, or helper
+name collisions in source or any referenced assembly. Names must be nonempty dot-separated
+ordinary C# identifiers, not keywords, escaped identifiers, `global::` names or fragments.
+
+When a default-mode host references another default-mode host, it still intentionally
+produces duplicate-public-type warnings (`CS0436`); a third consumer naming ambiguous
+public types can encounter `CS0433`. Use a single default host or the local A/B/C setup.
+Mixed default/local hosts and friend-assembly exposure are not guaranteed warning-free
+(the tested C topology consumes two internal-annotation hosts; it does not import
+another default host's public annotations).
 
 ## Performance
 

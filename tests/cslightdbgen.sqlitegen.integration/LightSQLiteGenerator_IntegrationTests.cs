@@ -1,11 +1,146 @@
 using System.Data;
+using System.Reflection;
+using System.Text.Json;
+using System.Threading;
 using cslightdbgen.sqlitegen.integration.Models;
+using CsLightDbGen.Integration.HostA.Models;
+using CsLightDbGen.Integration.HostB.Models;
 using CsLightDbGen.SQLiteGenerator;
+using HostACommandFailedException = CsLightDbGen.Integration.HostA.Runtime.LdgCommandFailedException;
+using HostBCommandFailedException = CsLightDbGen.Integration.HostB.Runtime.LdgCommandFailedException;
 
 namespace cslightdbgen.sqlitegen.integration;
 
 public class LightSQLiteGenerator_IntegrationTests
 {
+    [Fact]
+    public void MultiHost_RealProjects_ExecuteBothDalsAndExposeDistinctPublicExceptions()
+    {
+        using SqliteConnection db = OpenInMemory();
+        ExecuteSql(db, "PRAGMA foreign_keys = ON");
+        HostAItem.CreateTable(db).ShouldBeTrue();
+        HostBItem.CreateTable(db).ShouldBeTrue();
+
+        HostAItem parent = new() { ItemKey = 11, Label = "parent" };
+        HostAItem.Insert(db, parent);
+        HostBItem child = new() { ItemKey = 21, LocalKey = "first", HostAItemKey = 11, Label = "child" };
+        HostBItem sibling = new() { ItemKey = 21, LocalKey = "second", HostAItemKey = 11, Label = "sibling" };
+        HostBItem.Insert(db, child);
+        HostBItem.Insert(db, sibling);
+
+        parent.Label = "searchable";
+        HostAItem.Update(db, parent);
+        child.Label = "updated";
+        HostBItem.Update(db, child);
+        HostAItem.SelectSingle(db, ItemKey: 11)!.Label.ShouldBe("searchable");
+        HostBItem.SelectSingle(db, ItemKey: 21, LocalKey: "first")!.Label.ShouldBe("updated");
+        HostBItem.SelectSingle(db, ItemKey: 21, LocalKey: "second")!.Label.ShouldBe("sibling");
+
+        HostASearch.CreateTable(db).ShouldBeTrue();
+        HostASearch.Populate(db).ShouldBe(1);
+        HostASearch.Select(db, ["searchable"]).Single().ItemKey.ShouldBe(11);
+
+        HostAItem ghostA = new() { ItemKey = -1, Label = "missing" };
+        HostBItem ghostB = new() { ItemKey = 21, LocalKey = "missing", HostAItemKey = 11, Label = "missing" };
+        HostACommandFailedException updateA = Should.Throw<HostACommandFailedException>(
+            () => HostAItem.Update(db, ghostA, null, null, true));
+        HostACommandFailedException deleteA = Should.Throw<HostACommandFailedException>(
+            () => HostAItem.Delete(db, ghostA, null, null, true));
+        HostBCommandFailedException updateB = Should.Throw<HostBCommandFailedException>(
+            () => HostBItem.Update(db, ghostB, null, null, true));
+        HostBCommandFailedException deleteB = Should.Throw<HostBCommandFailedException>(
+            () => HostBItem.Delete(db, ghostB, null, null, true));
+
+        foreach (HostACommandFailedException exception in new[] { updateA, deleteA })
+        {
+            exception.GetType().ShouldBe(typeof(HostACommandFailedException));
+            exception.ModelName.ShouldBe(nameof(HostAItem));
+            exception.Sql.ShouldContain("multi_host_a");
+            exception.Message.ShouldBe(
+                $"The command for model 'HostAItem' affected no rows (expected at least one). SQL: {exception.Sql}");
+        }
+        foreach (HostBCommandFailedException exception in new[] { updateB, deleteB })
+        {
+            exception.GetType().ShouldBe(typeof(HostBCommandFailedException));
+            exception.ModelName.ShouldBe(nameof(HostBItem));
+            exception.Sql.ShouldContain("multi_host_b");
+            exception.Sql.ShouldContain("\"ItemKey\" = $ItemKey");
+            exception.Sql.ShouldContain("\"LocalKey\" = $LocalKey");
+            exception.Message.ShouldBe(
+                $"The command for model 'HostBItem' affected no rows (expected at least one). SQL: {exception.Sql}");
+        }
+        updateA.Sql.ShouldContain("UPDATE");
+        deleteA.Sql.ShouldContain("DELETE");
+        updateB.Sql.ShouldContain("UPDATE");
+        deleteB.Sql.ShouldContain("DELETE");
+        HostBItem.SelectCount(db).ShouldBe(2);
+        HostBItem.Delete(db, child);
+        HostBItem.SelectCount(db).ShouldBe(1);
+        HostAItem.Delete(db, parent);
+        HostAItem.SelectCount(db).ShouldBe(0);
+        HostBItem.SelectCount(db).ShouldBe(0); // B's local FK action cascades.
+    }
+
+    [Fact]
+    public void MultiHost_RealProjects_HaveInternalAnnotationsAndNoRuntimeGeneratorReference()
+    {
+        Assembly hostA = typeof(HostAItem).Assembly;
+        Assembly hostB = typeof(HostBItem).Assembly;
+        const string attributesNamespace = "CsLightDbGen.SQLiteGenerator.";
+        // Actual AssemblyName from cslightdbgen.sqlitegen.csproj (not its RootNamespace).
+        const string generatorAssemblyName = "cslightdbgen.sqlitegen";
+        foreach (Assembly host in new[] { hostA, hostB })
+        {
+            Type[] annotations = host.GetTypes().Where(type =>
+                type.Namespace == "CsLightDbGen.SQLiteGenerator" &&
+                (typeof(Attribute).IsAssignableFrom(type) || type.IsEnum)).ToArray();
+            annotations.ShouldNotBeEmpty();
+            annotations.ShouldContain(type => type.Name == "LdgSQLiteRuntimeNamespace");
+            annotations.ShouldContain(type => type.Name == "LdgSQLiteJsonOptions");
+            annotations.ShouldContain(type => type.Name == "LdgSQLiteKeyNoUnique");
+            annotations.ShouldContain(type => type.Name == "LdgSQLiteFkAction" && type.IsEnum);
+            foreach (Type annotation in annotations)
+            {
+                annotation.IsNotPublic.ShouldBeTrue();
+                host.GetExportedTypes().ShouldNotContain(annotation);
+            }
+            host.GetType(attributesNamespace + "LdgCommandFailedException").ShouldBeNull();
+        }
+
+        typeof(HostAItemBase).GetCustomAttributesData().ShouldContain(attribute =>
+            attribute.AttributeType.FullName == attributesNamespace + "LdgSQLiteBaseClass" &&
+            attribute.AttributeType.Assembly == hostA && attribute.AttributeType.IsNotPublic);
+        typeof(HostBItem).BaseType.ShouldBe(typeof(HostAItemBase));
+        typeof(HostBItem).GetProperty("ItemKey")!.GetCustomAttributesData().ShouldContain(attribute =>
+            attribute.AttributeType.FullName == attributesNamespace + "LdgSQLiteKey" &&
+            attribute.AttributeType.Assembly == hostA && attribute.AttributeType.IsNotPublic);
+        typeof(HostBItem).GetProperty("LocalKey")!.GetCustomAttributesData().ShouldContain(attribute =>
+            attribute.AttributeType.FullName == attributesNamespace + "LdgSQLiteKeyNoUnique" &&
+            attribute.AttributeType.Assembly == hostB && attribute.AttributeType.IsNotPublic);
+        CustomAttributeData foreignKey = typeof(HostBItem).GetProperty("HostAItemKey")!
+            .GetCustomAttributesData().Single(attribute =>
+                attribute.AttributeType.FullName == attributesNamespace + "LdgSQLiteForeignKey");
+        foreignKey.AttributeType.Assembly.ShouldBe(hostB);
+        foreignKey.ConstructorArguments[3].ArgumentType.ShouldBe(hostB.GetType(attributesNamespace + "LdgSQLiteFkAction"));
+        Convert.ToInt32(foreignKey.ConstructorArguments[3].Value).ShouldBe(4); // Cascade.
+
+        typeof(HostACommandFailedException).IsPublic.ShouldBeTrue();
+        typeof(HostBCommandFailedException).IsPublic.ShouldBeTrue();
+        typeof(HostACommandFailedException).Assembly.ShouldBe(hostA);
+        typeof(HostBCommandFailedException).Assembly.ShouldBe(hostB);
+        typeof(HostACommandFailedException).FullName.ShouldBe("CsLightDbGen.Integration.HostA.Runtime.LdgCommandFailedException");
+        typeof(HostBCommandFailedException).FullName.ShouldBe("CsLightDbGen.Integration.HostB.Runtime.LdgCommandFailedException");
+        typeof(HostACommandFailedException).ShouldNotBe(typeof(HostBCommandFailedException));
+        typeof(LdgCommandFailedException).IsPublic.ShouldBeTrue();
+        typeof(LdgCommandFailedException).Assembly.ShouldBe(typeof(LightSQLiteGenerator_IntegrationTests).Assembly);
+        foreach (Assembly consumer in new[] { hostA, hostB, typeof(LightSQLiteGenerator_IntegrationTests).Assembly })
+        {
+            consumer.GetReferencedAssemblies().ShouldNotContain(reference => reference.Name == generatorAssemblyName);
+        }
+        AppDomain.CurrentDomain.GetAssemblies().ShouldNotContain(assembly =>
+            assembly.GetName().Name == generatorAssemblyName);
+    }
+
     [Fact]
     public void Customer_TableGeneratedApis_Work_EndToEnd()
     {
@@ -1656,6 +1791,720 @@ public class LightSQLiteGenerator_IntegrationTests
         Widget.SelectEnumerable(db).Count().ShouldBe(5);
 
         Widget.DropTable(db).ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData("key_default_int", "Id:INTEGER:1:1,Label:TEXT:1:0", "1:u:0:Id")]
+    [InlineData("key_no_unique_int", "Id:INTEGER:0:1,Label:TEXT:1:0", "")]
+    [InlineData("key_no_unique_supplied", "Id:INTEGER:0:1,Label:TEXT:1:0", "")]
+    [InlineData("key_default_text", "Id:TEXT:1:1,Label:TEXT:1:0", "1:pk:0:Id")]
+    [InlineData("key_no_unique_text", "Id:TEXT:0:1,Label:TEXT:1:0", "1:pk:0:Id")]
+    [InlineData("key_default_composite", "Tenant:INTEGER:1:1,Code:TEXT:1:2,Label:TEXT:1:0", "1:pk:0:Tenant,Code")]
+    [InlineData("key_no_unique_composite", "Tenant:INTEGER:0:1,Code:TEXT:0:2,Label:TEXT:1:0", "1:pk:0:Tenant,Code")]
+    [InlineData("key_default_nullable", "Tenant:INTEGER:0:1,Code:TEXT:0:2,Label:TEXT:1:0", "1:pk:0:Tenant,Code")]
+    [InlineData("key_mixed_composite", "Tenant:INTEGER:1:1,Code:TEXT:0:2,Optional:TEXT:0:3,Label:TEXT:1:0", "1:pk:0:Tenant,Code,Optional")]
+    [InlineData("key_explicit_unique", "Id:INTEGER:0:1,Group:INTEGER:1:0,Tag:TEXT:1:0,Label:TEXT:1:0,Active:INTEGER:1:0",
+        "1:c:1:Label,Group|1:u:0:Group,Tag|1:u:0:Id")]
+    public void KeyNoUnique_MetadataAndEffectiveConstraints_MatchSelectedPolicy(
+        string table, string expectedColumns, string expectedIndexes)
+    {
+        using SqliteConnection db = OpenInMemory();
+        CreateKeyPolicyTable(db, table).ShouldBeTrue();
+        List<(string Name, string Type, int NotNull, string? Default, int Pk)> columns = ReadKeyPolicyColumns(db, table);
+        string.Join(",", columns.Select(column => $"{column.Name}:{column.Type}:{column.NotNull}:{column.Pk}"))
+            .ShouldBe(expectedColumns);
+        columns.ShouldAllBe(column => column.Default == (column.Name == "Label" && table != "key_explicit_unique" ? "'seed'" : null));
+        string.Join("|", ReadKeyPolicyIndexes(db, table)).ShouldBe(expectedIndexes);
+
+        if (table == "key_explicit_unique")
+        {
+            ExecuteSql(db, """
+                INSERT INTO key_explicit_unique VALUES (1, 10, 'a', 'label', 1);
+                """);
+            // Independent property UNIQUE remains a real index even on an INTEGER rowid key.
+            Should.Throw<SqliteException>(() => ExecuteSql(db,
+                "INSERT INTO key_explicit_unique VALUES (1, 11, 'b', 'other', 0);")).SqliteErrorCode.ShouldBe(19);
+            Should.Throw<SqliteException>(() => ExecuteSql(db,
+                "INSERT INTO key_explicit_unique VALUES (2, 10, 'a', 'other', 0);")).SqliteErrorCode.ShouldBe(19);
+            Should.Throw<SqliteException>(() => ExecuteSql(db,
+                "INSERT INTO key_explicit_unique VALUES (2, 10, 'b', 'label', 1);")).SqliteErrorCode.ShouldBe(19);
+            ExecuteSql(db, "INSERT INTO key_explicit_unique VALUES (2, 10, 'b', 'label', 0);");
+            return;
+        }
+
+        List<(string Name, string Type, int NotNull, string? Default, int Pk)> keys = columns.Where(column => column.Pk > 0).ToList();
+        string keyNames = string.Join(", ", keys.Select(column => QuoteKeyPolicyIdentifier(column.Name)));
+        string[] values = keys.Select(column => column.Type == "INTEGER" ? "7" : "'key'").ToArray();
+        string insert = $"INSERT INTO {QuoteKeyPolicyIdentifier(table)} ({keyNames}) VALUES ({string.Join(", ", values)})";
+        ExecuteSql(db, insert);
+        Should.Throw<SqliteException>(() => ExecuteSql(db, insert)).SqliteErrorCode.ShouldBe(19);
+
+        // Raw SQL characterizes nullable keys without asking unchanged non-nullable CLR readers
+        // or SelectDict to consume them. Repeat NULL combinations to prove SQLite's effective rule.
+        for (int index = 0; index < keys.Count; index++)
+        {
+            string[] nullValues = (string[])values.Clone();
+            nullValues[index] = "NULL";
+            string nullInsert = $"INSERT INTO {QuoteKeyPolicyIdentifier(table)} ({keyNames}) VALUES ({string.Join(", ", nullValues)})";
+            bool rowidKey = keys.Count == 1 && keys[0].Type == "INTEGER";
+            if (keys[index].NotNull == 1 && !rowidKey)
+            {
+                Should.Throw<SqliteException>(() => ExecuteSql(db, nullInsert)).SqliteErrorCode.ShouldBe(19);
+            }
+            else
+            {
+                ExecuteSql(db, nullInsert);
+                ExecuteSql(db, nullInsert);
+                using IDbCommand count = db.CreateCommand();
+                count.CommandText = rowidKey
+                    ? $"SELECT COUNT(DISTINCT \"Id\") FROM {QuoteKeyPolicyIdentifier(table)} WHERE \"Id\" <> 7"
+                    : $"SELECT COUNT(*) FROM {QuoteKeyPolicyIdentifier(table)} WHERE {QuoteKeyPolicyIdentifier(keys[index].Name)} IS NULL";
+                Convert.ToInt64(count.ExecuteScalar()).ShouldBe(2L);
+            }
+        }
+    }
+
+    [Fact]
+    public void KeyNoUnique_IdentityAndSuppliedKeyCrud_RemainShared()
+    {
+        using SqliteConnection db = OpenInMemory();
+        NoUniqueIntIdentity.CreateTable(db).ShouldBeTrue();
+        NoUniqueIntIdentity.LoadMaxKey(db);
+        NoUniqueIntIdentity.SelectMaxKey(db).ShouldBeNull();
+        NoUniqueIntIdentity.GetIndex().ShouldBeGreaterThan(0);
+        NoUniqueIntIdentity first = new NoUniqueIntIdentity { Label = "first" };
+        NoUniqueIntIdentity.Insert(db, first).ShouldBe(first.Id);
+        first.Id.ShouldBeGreaterThan(0);
+        List<NoUniqueIntIdentity> batch =
+        [
+            new NoUniqueIntIdentity { Label = "list-a" },
+            new NoUniqueIntIdentity { Label = "list-b" },
+        ];
+        NoUniqueIntIdentity.Insert(db, batch);
+        List<NoUniqueIntIdentity> streamed =
+        [
+            new NoUniqueIntIdentity { Label = "enum-a" },
+            new NoUniqueIntIdentity { Label = "enum-b" },
+        ];
+        ((IEnumerable<NoUniqueIntIdentity>)streamed).Insert(db);
+        batch.Concat(streamed).ShouldAllBe(value => value.Id > 0);
+        batch.Concat(streamed).Append(first).Select(value => value.Id).Distinct().Count().ShouldBe(5);
+        NoUniqueIntIdentity.SelectMaxKey(db).ShouldBe(streamed.Max(value => value.Id));
+        NoUniqueIntIdentity.LoadMaxKey(db);
+        NoUniqueIntIdentity.GetIndex().ShouldBeGreaterThan(streamed.Max(value => value.Id));
+        db.SelectSingle<NoUniqueIntIdentity>(Id: first.Id)!.Label.ShouldBe("first");
+        NoUniqueIntIdentity.SelectDict(db).Count.ShouldBe(5);
+        NoUniqueIntIdentity.SelectList(db, IdValues: batch.Select(value => value.Id)).Count.ShouldBe(2);
+        first.Label = "updated";
+        first.Update(db);
+        NoUniqueIntIdentity.SelectSingle(db, Id: first.Id)!.Label.ShouldBe("updated");
+        NoUniqueIntIdentity explicitKey = new NoUniqueIntIdentity { Id = 900, Label = "explicit" };
+        db.Insert(explicitKey, insertPrimaryKey: true);
+        NoUniqueIntIdentity.SelectSingle(db, Id: 900).ShouldNotBeNull();
+        NoUniqueIntIdentity returning = new NoUniqueIntIdentity { Label = "returning" };
+        NoUniqueIntIdentity.InsertReturning(db, returning);
+        returning.Id.ShouldBeGreaterThan(900);
+        returning.Delete(db);
+        first.Delete(db);
+        NoUniqueIntIdentity.SelectSingle(db, Id: first.Id).ShouldBeNull();
+
+        NoUniqueIntSupplied.CreateTable(db).ShouldBeTrue();
+        NoUniqueIntSupplied supplied = new NoUniqueIntSupplied { Id = 401, Label = "supplied" };
+        db.Insert(supplied);
+        supplied.Id.ShouldBe(401);
+        NoUniqueIntSupplied.Insert(db, new List<NoUniqueIntSupplied>
+        {
+            new NoUniqueIntSupplied { Id = 402, Label = "list" },
+        });
+        ((IEnumerable<NoUniqueIntSupplied>)new[] { new NoUniqueIntSupplied { Id = 403, Label = "enum" } }).Insert(db);
+        supplied.Label = "upsert";
+        NoUniqueIntSupplied.Upsert(db, supplied);
+        NoUniqueIntSupplied.SelectSingle(db, Id: 401)!.Label.ShouldBe("upsert");
+        supplied.Label = "update";
+        db.Update(supplied);
+        NoUniqueIntSupplied.SelectDict(db)[401].Label.ShouldBe("update");
+        db.Delete(supplied);
+        NoUniqueIntSupplied.SelectCount(db).ShouldBe(2);
+
+        NoUniqueTextKey.CreateTable(db).ShouldBeTrue();
+        NoUniqueTextKey text = new NoUniqueTextKey { Id = "natural", Label = "original" };
+        text.Insert(db);
+        text.Label = "text-upsert";
+        NoUniqueTextKey.Upsert(db, text);
+        NoUniqueTextKey.SelectDict(db)["natural"].Label.ShouldBe("text-upsert");
+        text.Label = "text-update";
+        text.Update(db);
+        NoUniqueTextKey.SelectSingle(db, Id: "natural")!.Label.ShouldBe("text-update");
+        text.Delete(db);
+        NoUniqueTextKey.SelectCount(db).ShouldBe(0);
+
+        NoUniqueComposite.CreateTable(db).ShouldBeTrue();
+        List<NoUniqueComposite> composites =
+        [
+            new NoUniqueComposite { Tenant = 1, Code = "a", Label = "target" },
+            new NoUniqueComposite { Tenant = 1, Code = "b", Label = "same-tenant" },
+            new NoUniqueComposite { Tenant = 2, Code = "a", Label = "same-code" },
+        ];
+        NoUniqueComposite.Insert(db, composites);
+        composites.Select(value => $"{value.Tenant}/{value.Code}").ShouldBe(new[] { "1/a", "1/b", "2/a" });
+        NoUniqueComposite target = composites[0];
+        target.Label = "changed";
+        target.Update(db);
+        NoUniqueComposite.SelectSingle(db, Tenant: 1, Code: "a")!.Label.ShouldBe("changed");
+        NoUniqueComposite.SelectCount(db, Label: "changed").ShouldBe(1);
+        target.Label = "upsert-composite";
+        NoUniqueComposite.Upsert(db, target);
+        NoUniqueComposite.SelectCount(db).ShouldBe(3);
+        NoUniqueComposite.SelectSingle(db, Tenant: 1, Code: "a")!.Label.ShouldBe("upsert-composite");
+        NoUniqueComposite.SelectSingle(db, Tenant: 1, Code: "b")!.Label.ShouldBe("same-tenant");
+        NoUniqueComposite.SelectSingle(db, Tenant: 2, Code: "a")!.Label.ShouldBe("same-code");
+        target.Delete(db);
+        NoUniqueComposite.SelectCount(db).ShouldBe(2);
+        NoUniqueComposite.SelectList(db, TenantValues: new[] { 1 }, CodeValues: new[] { "b" }).Count.ShouldBe(1);
+        Should.Throw<LdgCommandFailedException>(() => target.Delete(db));
+
+        MixedConstraintComposite.CreateTable(db).ShouldBeTrue();
+        MixedConstraintComposite mixed = new MixedConstraintComposite { Tenant = 1, Code = "a", Optional = "x", Label = "target" };
+        ((IEnumerable<MixedConstraintComposite>)new[]
+        {
+            mixed,
+            new MixedConstraintComposite { Tenant = 1, Code = "a", Optional = "y", Label = "same-pair" },
+            new MixedConstraintComposite { Tenant = 1, Code = "b", Optional = "x", Label = "same-tenant" },
+            new MixedConstraintComposite { Tenant = 2, Code = "a", Optional = "x", Label = "same-code" },
+        }).Insert(db);
+        mixed.Tenant.ShouldBe(1);
+        mixed.Code.ShouldBe("a");
+        mixed.Optional.ShouldBe("x");
+        mixed.Label = "mixed-update";
+        db.Update(mixed);
+        MixedConstraintComposite.SelectCount(db, Label: "mixed-update").ShouldBe(1);
+        mixed.Label = "mixed-upsert";
+        MixedConstraintComposite.Upsert(db, mixed);
+        MixedConstraintComposite.SelectCount(db).ShouldBe(4);
+        MixedConstraintComposite.SelectSingle(db, Tenant: 1, Code: "a", Optional: "x")!.Label.ShouldBe("mixed-upsert");
+        mixed.Delete(db);
+        MixedConstraintComposite.SelectCount(db).ShouldBe(3);
+        MixedConstraintComposite.SelectSingle(db, Tenant: 1, Code: "a", Optional: "y")!.Label.ShouldBe("same-pair");
+    }
+
+    [Theory]
+    [InlineData("key_default_text", true)]
+    [InlineData("key_no_unique_text", false)]
+    [InlineData("key_no_unique_text", true)]
+    [InlineData("key_no_unique_composite", false)]
+    [InlineData("key_no_unique_composite", true)]
+    [InlineData("key_mixed_composite", false)]
+    public void KeyNoUnique_CreateAndEnsureSchema_DoNotReconcileExistingConstraints(string table, bool stronger)
+    {
+        string connectionString = $"Data Source=key-policy-{Guid.NewGuid():N};Mode=Memory;Cache=Shared;Pooling=False";
+        using SqliteConnection keeper = new SqliteConnection(connectionString);
+        keeper.Open();
+        bool composite = table.EndsWith("composite", StringComparison.Ordinal);
+        bool mixed = table == "key_mixed_composite";
+        string required = stronger ? " NOT NULL" : string.Empty;
+        string ddl = composite
+            ? $"""
+                "Tenant" INTEGER{(mixed ? " NOT NULL" : required)}, "Code" TEXT{required},
+                {(mixed ? "\"Optional\" TEXT," : string.Empty)}
+                "Label" TEXT NOT NULL DEFAULT 'seed',
+                PRIMARY KEY ("Tenant", "Code"{(mixed ? ", \"Optional\"" : string.Empty)})
+                """
+            : $"""
+                "Id" TEXT{(stronger ? " UNIQUE PRIMARY KEY NOT NULL" : " PRIMARY KEY")},
+                "Label" TEXT NOT NULL DEFAULT 'seed'
+                """;
+        string insert = composite
+            ? $"INSERT INTO {QuoteKeyPolicyIdentifier(table)} VALUES (7, 'key', {(mixed ? "'optional'," : string.Empty)} 'kept')"
+            : $"INSERT INTO {QuoteKeyPolicyIdentifier(table)} VALUES ('key', 'kept')";
+        List<(string Name, string Type, int NotNull, string? Default, int Pk)> beforeColumns;
+        List<string> beforeIndexes;
+        using (SqliteConnection initial = new SqliteConnection(connectionString))
+        {
+            initial.Open();
+            ExecuteSql(initial, $"CREATE TABLE {QuoteKeyPolicyIdentifier(table)} ({ddl})");
+            ExecuteSql(initial, insert);
+            beforeColumns = ReadKeyPolicyColumns(initial, table);
+            beforeIndexes = ReadKeyPolicyIndexes(initial, table);
+        }
+
+        using SqliteConnection reopened = new SqliteConnection(connectionString);
+        reopened.Open();
+        CreateKeyPolicyTable(reopened, table).ShouldBeTrue();
+        EnsureKeyPolicyTable(reopened, table).ShouldBeTrue();
+        EnsureKeyPolicyTable(reopened, table).ShouldBeTrue();
+        ReadKeyPolicyColumns(reopened, table).ShouldBe(beforeColumns);
+        ReadKeyPolicyIndexes(reopened, table).ShouldBe(beforeIndexes);
+        using (IDbCommand rows = reopened.CreateCommand())
+        {
+            rows.CommandText = $"SELECT * FROM {QuoteKeyPolicyIdentifier(table)}";
+            using IDataReader reader = rows.ExecuteReader();
+            reader.Read().ShouldBeTrue();
+            reader.GetValue(0).ToString().ShouldBe(composite ? "7" : "key");
+            if (composite)
+            {
+                reader.GetString(1).ShouldBe("key");
+                if (mixed)
+                {
+                    reader.GetString(2).ShouldBe("optional");
+                }
+            }
+            reader.GetString(reader.FieldCount - 1).ShouldBe("kept");
+            reader.Read().ShouldBeFalse();
+        }
+        Should.Throw<SqliteException>(() => ExecuteSql(reopened, insert)).SqliteErrorCode.ShouldBe(19);
+        string nullInsert = composite
+            ? $"INSERT INTO {QuoteKeyPolicyIdentifier(table)} VALUES (NULL, 'nullable', 'null-row')"
+            : $"INSERT INTO {QuoteKeyPolicyIdentifier(table)} VALUES (NULL, 'null-row')";
+        if (mixed)
+        {
+            nullInsert = $"INSERT INTO {QuoteKeyPolicyIdentifier(table)} VALUES (NULL, 'nullable', 'optional', 'null-row')";
+        }
+        if (stronger || mixed)
+        {
+            Should.Throw<SqliteException>(() => ExecuteSql(reopened, nullInsert)).SqliteErrorCode.ShouldBe(19);
+        }
+        else
+        {
+            ExecuteSql(reopened, nullInsert);
+        }
+
+        // Even a missing key is not added by EnsureSchema. Only a genuinely new, default-backed
+        // non-key column may be added; this incomplete table is deliberately not read through CLR.
+        ExecuteSql(reopened, "CREATE TABLE missing_key (Label TEXT NOT NULL DEFAULT 'seed')");
+        NoUniqueTextKey.EnsureSchema(reopened, "missing_key").ShouldBeTrue();
+        ReadKeyPolicyColumns(reopened, "missing_key").Select(column => column.Name).ShouldBe(new[] { "Label" });
+    }
+
+    [Fact]
+    public void JsonOptions_WritesReadsAndJsonFilters_UseConsumerConverters()
+    {
+        using SqliteConnection db = OpenInMemory();
+        ConfiguredJsonDocument.CreateTable(db).ShouldBeTrue();
+        AlternateJsonDocument.CreateTable(db).ShouldBeTrue();
+        ConfiguredJsonDocument first = NewConfiguredJson(1, "alpha");
+        ConfiguredJsonDocument.Insert(db, first).ShouldBe(1);
+        ConfiguredJsonDocument.Insert(db, new List<ConfiguredJsonDocument> { NewConfiguredJson(2, "beta") });
+        ConfiguredJsonDocument.Insert(db, (IEnumerable<ConfiguredJsonDocument>)new[] { NewConfiguredJson(3, "gamma") });
+        db.Insert(NewConfiguredJson(4, "delta"));
+        NewConfiguredJson(5, "epsilon").Insert(db);
+        new List<ConfiguredJsonDocument> { NewConfiguredJson(6, "zeta") }.Insert(db);
+        ((IEnumerable<ConfiguredJsonDocument>)new[] { NewConfiguredJson(7, "eta") }).Insert(db);
+        db.Insert(new List<ConfiguredJsonDocument> { NewConfiguredJson(8, "theta") });
+        db.Insert((IEnumerable<ConfiguredJsonDocument>)new[] { NewConfiguredJson(9, "iota") });
+        ConfiguredJsonDocument.SelectCount(db).ShouldBe(9);
+
+        JsonCell(db, "configured_json", "Value", 1).ShouldBe("\"wire:alpha\"");
+        JsonCell(db, "configured_json", "Nested", 1).ShouldBe("{\"Inner\":\"wire:alpha-nested\"}");
+        JsonCell(db, "configured_json", "Items", 1).ShouldBe("{\"batch\":[\"wire:alpha-list\"]}");
+        ConfiguredJsonDocument loaded = ConfiguredJsonDocument.SelectSingle(db, Value: new JsonPayload { Text = "alpha" })!;
+        loaded.Id.ShouldBe(1);
+        loaded.Nested.Inner.Text.ShouldBe("alpha-nested");
+        loaded.Items.Single().Text.ShouldBe("alpha-list");
+        ConfiguredJsonDocument.SelectList(db, Items: first.Items).Single().Id.ShouldBe(1);
+        ConfiguredJsonDocument.SelectEnumerable(db, Nested: first.Nested).Single().Id.ShouldBe(1);
+        ConfiguredJsonDocument.SelectCount(db, Value: first.Value).ShouldBe(1);
+        db.SelectSingle<ConfiguredJsonDocument>(Items: first.Items)!.Id.ShouldBe(1);
+        db.SelectList<ConfiguredJsonDocument>(Value: first.Value).Count.ShouldBe(1);
+        db.SelectEnumerable<ConfiguredJsonDocument>(Nested: first.Nested).Single().Id.ShouldBe(1);
+        db.SelectCount<ConfiguredJsonDocument>(Items: first.Items).ShouldBe(1);
+
+        first.Value.Text = "updated";
+        first.Nested.Inner.Text = "updated-nested";
+        first.Items[0].Text = "updated-list";
+        ConfiguredJsonDocument.Update(db, first);
+        JsonCell(db, "configured_json", "Value", 1).ShouldBe("\"wire:updated\"");
+        ConfiguredJsonDocument.Update(db, new List<ConfiguredJsonDocument> { first });
+        db.Update((IEnumerable<ConfiguredJsonDocument>)new[] { first });
+        first.Update(db);
+
+        ConfiguredJsonDocument upserted = NewConfiguredJson(1, "upserted");
+        ConfiguredJsonDocument.Upsert(db, upserted);
+        ConfiguredJsonDocument.SelectCount(db).ShouldBe(9);
+        ConfiguredJsonDocument.SelectSingle(db, Id: 1)!.Value.Text.ShouldBe("upserted");
+        db.Upsert(NewConfiguredJson(10, "newupsert"));
+        ConfiguredJsonDocument returned = ConfiguredJsonDocument.InsertReturning(db, NewConfiguredJson(11, "returning"))!;
+        returned.Value.Text.ShouldBe("returning");
+        returned.Items[0].Text.ShouldBe("returning-list");
+        returned.Value.Text = "returnupdated";
+        ConfiguredJsonDocument.UpdateReturning(db, returned)!.Value.Text.ShouldBe("returnupdated");
+        ConfiguredJsonDocument extensionReturned = db.InsertReturning(NewConfiguredJson(12, "extension"))!;
+        extensionReturned.Value.Text = "extensionupdated";
+        extensionReturned.UpdateReturning(db)!.Value.Text.ShouldBe("extensionupdated");
+
+        AlternateJsonDocument.Insert(db, new AlternateJsonDocument { Id = 1, Value = new JsonPayload { Text = "upserted" } });
+        JsonCell(db, "alternate_json", "Value", 1).ShouldBe("\"alternate:upserted\"");
+        AlternateJsonDocument.SelectSingle(db)!.Value.Text.ShouldBe("upserted");
+        AlternateJsonDocument.SelectCount(db, Value: upserted.Value).ShouldBe(1);
+        JsonCell(db, "configured_json", "Value", 1).ShouldBe("\"wire:upserted\"");
+
+        ConfiguredJsonDocument.Delete(db, Value: upserted.Value);
+        ConfiguredJsonDocument.SelectSingle(db, Id: 1).ShouldBeNull();
+        ConfiguredJsonDocumentExtensions.Delete(db, Items: NewConfiguredJson(2, "beta").Items);
+        ConfiguredJsonDocument.SelectCount(db, Id: 2).ShouldBe(0);
+        ConfiguredJsonDocument.Delete(db, Nested: NewConfiguredJson(3, "gamma").Nested);
+        ConfiguredJsonDocument.SelectCount(db, Id: 3).ShouldBe(0);
+        ConfiguredJsonDocument.SelectCount(db).ShouldBe(9);
+    }
+
+    [Fact]
+    public void JsonOptions_ArrayElementsAndConfiguredFts_ReadWithSelectedPolicy()
+    {
+        using SqliteConnection db = OpenInMemory();
+        ConfiguredJsonDocument.CreateTable(db);
+        ConfiguredJsonDocument.Insert(db, NewConfiguredJson(1, "searchable"));
+        ConfiguredJsonSearch.CreateTable(db);
+        ConfiguredJsonSearch.Populate(db).ShouldBe(1);
+        ConfiguredJsonSearch result = ConfiguredJsonSearch.Select(db, ["searchable"]).Single();
+        result.Value.Text.ShouldBe("searchable");
+        result.Nested.Inner.Text.ShouldBe("searchable-nested");
+        result.Items.Single().Text.ShouldBe("searchable-list");
+        ConfiguredJsonSearch.SelectCount(db, ["searchable"]).ShouldBe(1);
+        db.Select<ConfiguredJsonSearch>(["searchable"]).Single().Value.Text.ShouldBe("searchable");
+
+        JsonArrayDocument.CreateTable(db);
+        JsonArrayDocument value = new()
+        {
+            Id = 1,
+            Items = [new JsonPayload { Text = "arraytoken" }],
+            Sequence = new List<JsonPayload> { new JsonPayload { Text = "sequence" } },
+        };
+        JsonArrayDocument.Insert(db, value);
+        JsonCell(db, "json_arrays", "Items", 1).ShouldBe("[\"element:arraytoken\"]");
+        JsonCell(db, "json_arrays", "Sequence", 1).ShouldBe("[\"element:sequence\"]");
+        JsonArrayDocument read = JsonArrayDocument.SelectSingle(db, Items: value.Items)!;
+        read.Items.ShouldBeOfType<JsonPayload[]>();
+        read.Items.Single().Text.ShouldBe("arraytoken");
+        read.Sequence.ShouldBeOfType<List<JsonPayload>>();
+        read.Sequence.Single().Text.ShouldBe("sequence");
+        JsonArrayDocument.SelectCount(db, Sequence: value.Sequence).ShouldBe(1);
+        JsonArraySearch.CreateTable(db);
+        JsonArraySearch.Populate(db).ShouldBe(1);
+        JsonArraySearch search = JsonArraySearch.Select(db, ["arraytoken"]).Single();
+        search.Items.Single().Text.ShouldBe("arraytoken");
+        search.Sequence.Single().Text.ShouldBe("sequence");
+        JsonArrayDocument.Delete(db, Items: value.Items);
+        JsonArrayDocument.SelectCount(db).ShouldBe(0);
+    }
+
+    [Fact]
+    public void JsonOptions_NullEmptyWhitespaceAndSqlNull_RetainDefaultWrappers()
+    {
+        using SqliteConnection db = OpenInMemory();
+        SentinelJsonDocument.CreateTable(db);
+        SentinelJsonDocument sentinels = new()
+        {
+            Object = null!,
+            NullableObject = null,
+            Items = [],
+            NullableItems = [],
+            Array = null!,
+            NullableArray = null,
+            Sequence = null!,
+            NullableSequence = null,
+        };
+        int id = SentinelJsonDocument.Insert(db, sentinels);
+        foreach (string column in new[] { "Object", "Items", "Array", "Sequence" })
+        {
+            JsonCell(db, "json_sentinels", column, id).ShouldBe(string.Empty);
+        }
+        foreach (string column in new[] { "NullableObject", "NullableItems", "NullableArray", "NullableSequence" })
+        {
+            JsonCell(db, "json_sentinels", column, id).ShouldBe(DBNull.Value);
+        }
+        SentinelJsonDocument initial = SentinelJsonDocument.SelectSingle(db, Id: id)!;
+        initial.Object.Text.ShouldBeEmpty();
+        initial.Items.ShouldBeEmpty();
+        initial.Array.ShouldBeEmpty();
+        initial.Sequence.ShouldBeEmpty();
+        initial.NullableObject.ShouldBeNull();
+        initial.NullableItems.ShouldBeNull();
+        initial.NullableArray.ShouldBeNull();
+        initial.NullableSequence.ShouldBeNull();
+
+        SentinelJsonDocument arrays = new()
+        {
+            Object = new JsonPayload { Text = "nonnull" },
+            NullableObject = new JsonPayload { Text = "nullable" },
+            Items = [new JsonPayload { Text = "list" }],
+            NullableItems = [new JsonPayload { Text = "nullable-list" }],
+            Array = [],
+            NullableArray = [],
+            Sequence = Enumerable.Empty<JsonPayload>(),
+            NullableSequence = Enumerable.Empty<JsonPayload>(),
+        };
+        int other = SentinelJsonDocument.Insert(db, arrays);
+        foreach (string column in new[] { "Array", "NullableArray", "Sequence", "NullableSequence" })
+        {
+            JsonCell(db, "json_sentinels", column, other).ShouldBe("[]");
+        }
+        SentinelJsonDocument.SelectSingle(db, Id: other)!.NullableItems!.Single().Text.ShouldBe("nullable-list");
+        SentinelJsonDocument.SelectCount(db, NullableObject: null).ShouldBe(2);
+        SentinelJsonDocument.SelectCount(db, NullableObjectIsNull: true).ShouldBe(1);
+        SentinelJsonDocument.SelectCount(db, NullableObjectIsNull: false).ShouldBe(1);
+        SentinelJsonDocument.SelectCount(db, Items: []).ShouldBe(1);
+
+        foreach (string sentinel in new[] { "   ", "null" })
+        {
+            using SqliteCommand update = db.CreateCommand();
+            update.CommandText = """
+                UPDATE json_sentinels SET "Object"=$text, NullableObject=$text,
+                    Items=$text, NullableItems=$text, "Array"=$text, NullableArray=$text,
+                    Sequence=$text, NullableSequence=$text
+                """;
+            update.Parameters.AddWithValue("$text", sentinel);
+            update.ExecuteNonQuery();
+            SentinelJsonDocument read = SentinelJsonDocument.SelectSingle(db, Id: id)!;
+            read.Object.Text.ShouldBeEmpty();
+            read.NullableObject.ShouldBeNull();
+            read.Items.ShouldBeEmpty();
+            read.NullableItems.ShouldNotBeNull().ShouldBeEmpty();
+            read.Array.ShouldBeEmpty();
+            read.NullableArray.ShouldNotBeNull().ShouldBeEmpty();
+            read.Sequence.ShouldBeEmpty();
+            read.NullableSequence.ShouldNotBeNull().ShouldBeEmpty();
+        }
+        SentinelJsonDocument.Delete(db, NullableObjectIsNull: true);
+        SentinelJsonDocument.SelectCount(db).ShouldBe(2); // JSON null text is not SQL NULL.
+        SentinelJsonDocument.Delete(db, NullableObject: null); // Null equality omits the predicate.
+        SentinelJsonDocument.SelectCount(db).ShouldBe(0);
+    }
+
+    [Fact]
+    public void JsonOptions_GuardsDoNotInitializeFactory()
+    {
+        using SqliteConnection db = OpenInMemory();
+        GuardJsonFactory.Calls.ShouldBe(0);
+        GuardJsonDocument.DefaultTableName.ShouldBe("json_guards");
+        GuardJsonDocument.SQLiteColumnNames.ShouldContain("Object");
+        GuardJsonDocument.CreateTable(db);
+        GuardJsonDocument.EnsureSchema(db);
+        GuardJsonDocument.LoadMaxKey(db);
+        GuardJsonDocument.GetIndex().ShouldBeGreaterThan(0);
+        GuardJsonDocument.SelectMaxKey(db).ShouldBeNull();
+        GuardJsonDocument sentinel = new()
+        {
+            Object = null!, Items = [], Array = null!, Sequence = null!,
+        };
+        int id = GuardJsonDocument.Insert(db, sentinel);
+        GuardJsonDocument.Update(db, sentinel);
+        GuardJsonDocument.SelectSingle(db, Id: id)!.Object.Text.ShouldBeEmpty();
+        GuardJsonDocument.SelectCount(db, NullableObject: null, NullableObjectIsNull: true, Items: []).ShouldBe(1);
+        ExecuteSql(db, """
+            UPDATE json_guards SET "Object"=' ', Items=' ', "Array"=' ', Sequence=' '
+            """);
+        GuardJsonDocument.SelectList(db).Single().Array.ShouldBeEmpty();
+        GuardJsonDocument.SelectEnumerable(db).Single().NullableObject.ShouldBeNull();
+        GuardJsonDocument.Delete(db, Id: -1, Items: []);
+        GuardJsonFactory.Calls.ShouldBe(0);
+        sentinel.Object = new JsonPayload { Text = "first-real-use" };
+        GuardJsonDocument.Update(db, sentinel);
+        GuardJsonFactory.Calls.ShouldBe(1);
+        JsonCell(db, "json_guards", "Object", id).ShouldBe("\"guard:first-real-use\"");
+        GuardJsonDocument.SelectSingle(db)!.Object.Text.ShouldBe("first-real-use");
+        GuardJsonFactory.Calls.ShouldBe(1);
+
+        ScalarJsonDocument.CreateTable(db);
+        ScalarJsonDocument.EnsureSchema(db);
+        ScalarJsonDocument.Insert(db, new ScalarJsonDocument { Label = "scalar" });
+        ScalarJsonDocument.SelectSingle(db)!.Label.ShouldBe("scalar");
+        UnusedJsonFactory.Calls.ShouldBe(0);
+    }
+
+    [Fact]
+    public void JsonOptions_ConcurrentFirstUse_IsOncePerModelAndIsolated()
+    {
+        ConcurrentJsonFactory.FirstCalls.ShouldBe(0);
+        ConcurrentJsonFactory.SecondCalls.ShouldBe(0);
+        Parallel.For(0, 24, index =>
+        {
+            using SqliteConnection db = OpenInMemory();
+            ConcurrentJsonFirst.CreateTable(db);
+            ConcurrentJsonSecond.CreateTable(db);
+            ConcurrentJsonFirst.Insert(db, new ConcurrentJsonFirst { Id = index, Value = new JsonPayload { Text = "a" } });
+            ConcurrentJsonSecond.Insert(db, new ConcurrentJsonSecond { Id = index, Value = new JsonPayload { Text = "b" } });
+            ConcurrentJsonFirst.SelectSingle(db)!.Value!.Text.ShouldBe("a");
+            ConcurrentJsonSecond.SelectSingle(db)!.Value!.Text.ShouldBe("b");
+            JsonCell(db, "json_concurrent_a", "Value", index).ShouldBe("\"concurrent-a:a\"");
+            JsonCell(db, "json_concurrent_b", "Value", index).ShouldBe("\"concurrent-b:b\"");
+        });
+        ConcurrentJsonFactory.FirstCalls.ShouldBe(1);
+        ConcurrentJsonFactory.SecondCalls.ShouldBe(1);
+    }
+
+    [Fact]
+    public void JsonOptions_SnapshotIsIndependentOfReturnedOptions()
+    {
+        using SqliteConnection db = OpenInMemory();
+        SnapshotJsonDocument.CreateTable(db);
+        SnapshotJsonDocument.Insert(db, new SnapshotJsonDocument { Id = 1, Value = new JsonPayload { Text = "before" } });
+        JsonPayloadConverter sharedConverter = (JsonPayloadConverter)SnapshotJsonFactory.Original.Converters.Single();
+        Volatile.Read(ref sharedConverter.Writes).ShouldBe(1);
+        SnapshotJsonFactory.Original.IsReadOnly.ShouldBeFalse();
+        SnapshotJsonFactory.Original.WriteIndented = true;
+        SnapshotJsonFactory.Original.Converters.Clear();
+        SnapshotJsonFactory.Original.Converters.Add(new JsonPayloadConverter("mutated:"));
+        SnapshotJsonDocument.Insert(db, new SnapshotJsonDocument { Id = 2, Value = new JsonPayload { Text = "after" } });
+        JsonCell(db, "json_snapshot", "Value", 2).ShouldBe("\"snapshot:after\"");
+        SnapshotJsonDocument.SelectSingle(db, Id: 2)!.Value!.Text.ShouldBe("after");
+        Volatile.Read(ref sharedConverter.Writes).ShouldBe(2);
+        Volatile.Read(ref sharedConverter.Reads).ShouldBe(1);
+        JsonSerializer.Serialize(new JsonPayload { Text = "original" }, SnapshotJsonFactory.Original).ShouldBe("\"mutated:original\"");
+        SnapshotJsonFactory.Calls.ShouldBe(1);
+    }
+
+    [Fact]
+    public void JsonOptions_FactoryNullAndThrow_AreVisibleAndCached()
+    {
+        using SqliteConnection db = OpenInMemory();
+        NullFactoryJsonDocument.CreateTable(db);
+        ThrowFactoryJsonDocument.CreateTable(db);
+        FailedJsonFactory.NullCalls.ShouldBe(0);
+        FailedJsonFactory.ThrowCalls.ShouldBe(0);
+        NullFactoryJsonDocument.Insert(db, new NullFactoryJsonDocument { Id = 1 });
+        ThrowFactoryJsonDocument.Insert(db, new ThrowFactoryJsonDocument { Id = 1 });
+        NullFactoryJsonDocument.SelectSingle(db)!.Value.ShouldBeNull();
+        ThrowFactoryJsonDocument.SelectSingle(db)!.Value.ShouldBeNull();
+        FailedJsonFactory.NullCalls.ShouldBe(0);
+        FailedJsonFactory.ThrowCalls.ShouldBe(0);
+        JsonPayload payload = new() { Text = "trigger" };
+        InvalidOperationException nullFailure = Should.Throw<InvalidOperationException>(() =>
+            NullFactoryJsonDocument.Insert(db, new NullFactoryJsonDocument { Id = 2, Value = payload }));
+        nullFailure.GetType().ShouldBe(typeof(InvalidOperationException));
+        nullFailure.Message.ShouldContain(nameof(NullFactoryJsonDocument));
+        nullFailure.Message.ShouldContain("FailedJsonFactory.Null()");
+        nullFailure.Message.ShouldContain("returned null");
+        Should.Throw<InvalidOperationException>(() => NullFactoryJsonDocument.SelectCount(db, Value: payload)).ShouldBeSameAs(nullFailure);
+        InvalidOperationException throwFailure = Should.Throw<InvalidOperationException>(() =>
+            ThrowFactoryJsonDocument.Insert(db, new ThrowFactoryJsonDocument { Id = 2, Value = payload }));
+        throwFailure.GetType().ShouldBe(typeof(InvalidOperationException));
+        throwFailure.Message.ShouldBe("consumer factory failed");
+        Should.Throw<InvalidOperationException>(() => ThrowFactoryJsonDocument.Delete(db, Value: payload)).ShouldBeSameAs(throwFailure);
+        ExecuteSql(db, """UPDATE json_null_factory SET Value='"valid"'; UPDATE json_throw_factory SET Value='"valid"';""");
+        Should.Throw<InvalidOperationException>(() => NullFactoryJsonDocument.SelectList(db)).ShouldBeSameAs(nullFailure);
+        Should.Throw<InvalidOperationException>(() => ThrowFactoryJsonDocument.SelectSingle(db)).ShouldBeSameAs(throwFailure);
+        FailedJsonFactory.NullCalls.ShouldBe(1);
+        FailedJsonFactory.ThrowCalls.ShouldBe(1);
+        NullFactoryJsonDocument.Insert(db, new NullFactoryJsonDocument { Id = 3 });
+        ThrowFactoryJsonDocument.Insert(db, new ThrowFactoryJsonDocument { Id = 3 });
+        NullFactoryJsonDocument.SelectSingle(db, Id: 3)!.Value.ShouldBeNull();
+        ThrowFactoryJsonDocument.SelectSingle(db, Id: 3)!.Value.ShouldBeNull();
+    }
+
+    [Fact]
+    public void JsonOptions_MalformedJsonAndConverterFailures_Propagate()
+    {
+        using SqliteConnection db = OpenInMemory();
+        FailingConverterJsonDocument.CreateTable(db);
+        MalformedJsonDocument.CreateTable(db);
+        JsonPayload payload = new() { Text = "failure" };
+        Should.Throw<InvalidOperationException>(() => FailingConverterJsonDocument.Insert(db,
+            new FailingConverterJsonDocument { Id = 1, Value = payload })).Message.ShouldBe("consumer converter write failed");
+        FailingConverterJsonDocument.SelectCount(db).ShouldBe(0);
+        Should.Throw<InvalidOperationException>(() => FailingConverterJsonDocument.SelectCount(db, Value: payload))
+            .Message.ShouldBe("consumer converter write failed");
+        Should.Throw<InvalidOperationException>(() => FailingConverterJsonDocument.SelectSingle(db, Value: payload))
+            .Message.ShouldBe("consumer converter write failed");
+        Should.Throw<InvalidOperationException>(() => FailingConverterJsonDocument.Delete(db, Value: payload))
+            .Message.ShouldBe("consumer converter write failed");
+        ExecuteSql(db, """INSERT INTO json_converter_failure (Id, Value) VALUES (2, '"read"')""");
+        Should.Throw<InvalidOperationException>(() => FailingConverterJsonDocument.SelectSingle(db))
+            .Message.ShouldBe("consumer converter read failed");
+        Should.Throw<InvalidOperationException>(() => FailingConverterJsonDocument.SelectEnumerable(db).ToList())
+            .Message.ShouldBe("consumer converter read failed");
+        FailingConverterFactory.Calls.ShouldBe(1);
+
+        ExecuteSql(db, """INSERT INTO json_malformed (Id, Value) VALUES (1, '{not json')""");
+        Should.Throw<JsonException>(() => MalformedJsonDocument.SelectSingle(db));
+        Should.Throw<JsonException>(() => MalformedJsonDocument.SelectList(db));
+        Should.Throw<JsonException>(() => MalformedJsonDocument.SelectEnumerable(db).ToList());
+        ExecuteSql(db, """UPDATE json_malformed SET Value='"wrong-policy:payload"'""");
+        Should.Throw<JsonException>(() => MalformedJsonDocument.SelectSingle(db));
+    }
+
+    private static ConfiguredJsonDocument NewConfiguredJson(int id, string text) => new()
+    {
+        Id = id,
+        Label = text,
+        Value = new JsonPayload { Text = text },
+        Nested = new JsonEnvelope { Inner = new JsonPayload { Text = text + "-nested" } },
+        Items = [new JsonPayload { Text = text + "-list" }],
+    };
+
+    private static object? JsonCell(SqliteConnection db, string table, string column, int id)
+    {
+        using SqliteCommand command = db.CreateCommand();
+        command.CommandText = $"SELECT {QuoteKeyPolicyIdentifier(column)} FROM {QuoteKeyPolicyIdentifier(table)} WHERE Id = $id";
+        command.Parameters.AddWithValue("$id", id);
+        return command.ExecuteScalar();
+    }
+
+    private static bool CreateKeyPolicyTable(IDbConnection db, string table) => table switch
+    {
+        "key_default_int" => DefaultIntIdentity.CreateTable(db),
+        "key_no_unique_int" => NoUniqueIntIdentity.CreateTable(db),
+        "key_no_unique_supplied" => NoUniqueIntSupplied.CreateTable(db),
+        "key_default_text" => DefaultTextKey.CreateTable(db),
+        "key_no_unique_text" => NoUniqueTextKey.CreateTable(db),
+        "key_default_composite" => DefaultConstraintComposite.CreateTable(db),
+        "key_no_unique_composite" => NoUniqueComposite.CreateTable(db),
+        "key_default_nullable" => DefaultNullableComposite.CreateTable(db),
+        "key_mixed_composite" => MixedConstraintComposite.CreateTable(db),
+        "key_explicit_unique" => NoUniqueExplicitUnique.CreateTable(db),
+        _ => throw new ArgumentOutOfRangeException(nameof(table)),
+    };
+
+    private static bool EnsureKeyPolicyTable(IDbConnection db, string table) => table switch
+    {
+        "key_default_text" => DefaultTextKey.EnsureSchema(db),
+        "key_no_unique_text" => NoUniqueTextKey.EnsureSchema(db),
+        "key_no_unique_composite" => NoUniqueComposite.EnsureSchema(db),
+        "key_mixed_composite" => MixedConstraintComposite.EnsureSchema(db),
+        _ => throw new ArgumentOutOfRangeException(nameof(table)),
+    };
+
+    private static string QuoteKeyPolicyIdentifier(string identifier) => "\"" + identifier.Replace("\"", "\"\"") + "\"";
+
+    private static List<(string Name, string Type, int NotNull, string? Default, int Pk)> ReadKeyPolicyColumns(IDbConnection db, string table)
+    {
+        List<(string Name, string Type, int NotNull, string? Default, int Pk)> columns = [];
+        using IDbCommand command = db.CreateCommand();
+        command.CommandText = $"PRAGMA table_info({QuoteKeyPolicyIdentifier(table)})";
+        using IDataReader reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            columns.Add((reader.GetString(1), reader.GetString(2), reader.GetInt32(3),
+                reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetInt32(5)));
+        }
+        return columns;
+    }
+
+    private static List<string> ReadKeyPolicyIndexes(IDbConnection db, string table)
+    {
+        List<(string Name, int Unique, string Origin, int Partial)> indexes = [];
+        using (IDbCommand command = db.CreateCommand())
+        {
+            command.CommandText = $"PRAGMA index_list({QuoteKeyPolicyIdentifier(table)})";
+            using IDataReader reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                indexes.Add((reader.GetString(1), reader.GetInt32(2), reader.GetString(3), reader.GetInt32(4)));
+            }
+        }
+        List<string> results = [];
+        foreach ((string name, int unique, string origin, int partial) in indexes)
+        {
+            List<string> columns = [];
+            using IDbCommand command = db.CreateCommand();
+            command.CommandText = $"PRAGMA index_info({QuoteKeyPolicyIdentifier(name)})";
+            using IDataReader reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                reader.GetInt32(0).ShouldBe(columns.Count);
+                columns.Add(reader.GetString(2));
+            }
+            results.Add($"{unique}:{origin}:{partial}:{string.Join(",", columns)}");
+        }
+        return results.OrderBy(value => value, StringComparer.Ordinal).ToList();
     }
 
     private static void EnableForeignKeys(IDbConnection db)

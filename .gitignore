@@ -389,3 +389,8 @@ msbuild.wrn
 /scratch
 
 *.local.json
+
+# >>> dev-* skills (managed by dev-setup) >>>
+# Local scratch workspace for dev-* skills
+# Covered by the existing /scratch rule above.
+# <<< dev-* skills (managed by dev-setup) <<<

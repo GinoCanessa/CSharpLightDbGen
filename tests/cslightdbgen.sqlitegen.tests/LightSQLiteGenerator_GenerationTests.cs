@@ -2,36 +2,737 @@ using cslightdbgen.sqlitegen.tests.TestFixtures;
 using cslightdbgen.sqlitegen.tests.TestInfrastructure;
 using Shouldly;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using CsLightDbGen.SQLiteGenerator;
 using System.Reflection;
+using GeneratorRunResult = cslightdbgen.sqlitegen.tests.TestInfrastructure.GeneratorRunResult;
 
 namespace cslightdbgen.sqlitegen.tests;
 
 public class LightSQLiteGenerator_GenerationTests
 {
+    private const string DefaultContractSource = """
+        using System.Collections.Generic;
+        using CsLightDbGen.SQLiteGenerator;
+
+        namespace Defaults;
+
+        [LdgSQLiteTable("order")]
+        public partial class DefaultRow
+        {
+            [LdgSQLiteKey]
+            public int Id { get; set; }
+            public string Select { get; set; } = string.Empty;
+        }
+
+        [LdgSQLiteTable("default_composite")]
+        public partial class DefaultComposite
+        {
+            [LdgSQLiteKey]
+            public int PartA { get; set; }
+            [LdgSQLiteKey]
+            public string? PartB { get; set; }
+            public string Title { get; set; } = string.Empty;
+        }
+
+        [LdgSQLiteTable("default_keyless")]
+        public partial class DefaultKeyless
+        {
+            public string Title { get; set; } = string.Empty;
+        }
+
+        public class Payload
+        {
+            public string Text { get; set; } = string.Empty;
+        }
+
+        [LdgSQLiteTable("default_json")]
+        public partial class DefaultJson
+        {
+            [LdgSQLiteKey]
+            public int Id { get; set; }
+            public string Title { get; set; } = string.Empty;
+            public Payload Document { get; set; } = new Payload();
+            public Payload? OptionalDocument { get; set; }
+            public List<Payload> Items { get; set; } = [];
+            public List<Payload>? OptionalItems { get; set; }
+            public Payload[] Values { get; set; } = [];
+            public Payload[]? OptionalValues { get; set; }
+            public IEnumerable<Payload> Sequence { get; set; } = [];
+        }
+
+        [LdgSQLiteFtsTable("default_json")]
+        public partial class DefaultSearch
+        {
+            public string Title { get; set; } = string.Empty;
+            [LdgSQLiteFtsUnindexed]
+            public Payload? OptionalDocument { get; set; }
+            public List<Payload> Items { get; set; } = [];
+            public Payload[] Values { get; set; } = [];
+        }
+        """;
+
     [Fact]
     public void Initialize_Emits_PostInitialization_Sources()
     {
-        var run = GeneratorTestHost.Run("namespace T; public class Placeholder { }");
+        GeneratorRunResult run = GeneratorTestHost.Run("namespace T; public class Placeholder { }");
 
         run.GeneratedSources.Keys.ShouldContain("LdgSQLiteGeneratorAttributes.g.cs");
 
-        // The post-init source must carry real content, not just exist: the attribute definitions
-        // and the shared LdgCommandFailedException (with its ModelName/Sql surface) that the emitted
-        // DAL throws on zero-row keyed mutations.
-        var attributes = run.GeneratedSources["LdgSQLiteGeneratorAttributes.g.cs"];
+        // Annotations bootstrap semantic discovery; the public runtime contract is ordinary output.
+        string attributes = run.GeneratedSources["LdgSQLiteGeneratorAttributes.g.cs"];
         attributes.ShouldContain("class LdgSQLiteTable");
         attributes.ShouldContain("class LdgSQLiteKey");
         attributes.ShouldContain("class LdgSQLiteFtsTable");
-        attributes.ShouldContain("class LdgCommandFailedException");
-        attributes.ShouldContain("public string ModelName");
-        attributes.ShouldContain("public string Sql");
+        attributes.ShouldContain("public class LdgSQLiteTable : System.Attribute");
+        attributes.ShouldNotContain("LdgCommandFailedException");
+        run.GeneratedSources.Keys.ShouldContain("LdgSQLiteRuntimeHelpers.g.cs");
+        string runtime = run.GeneratedSources["LdgSQLiteRuntimeHelpers.g.cs"];
+        runtime.ShouldContain("public sealed class LdgCommandFailedException : System.Exception");
+        runtime.ShouldContain("public LdgCommandFailedException(string modelName, string sql)");
+        runtime.ShouldContain("""
+            : base($"The command for model '{modelName}' affected no rows (expected at least one). SQL: {sql}")
+            """);
+        runtime.ShouldContain("ModelName = modelName;");
+        runtime.ShouldContain("Sql = sql;");
+        runtime.ShouldContain("public string ModelName { get; }");
+        runtime.ShouldContain("public string Sql { get; }");
+
+        INamedTypeSymbol? exception = run.OutputCompilation.GetTypeByMetadataName(
+            "CsLightDbGen.SQLiteGenerator.LdgCommandFailedException");
+        exception.ShouldNotBeNull();
+        exception.DeclaredAccessibility.ShouldBe(Accessibility.Public);
+        exception.IsSealed.ShouldBeTrue();
+        exception.BaseType.ShouldNotBeNull();
+        exception.BaseType.ToDisplayString().ShouldBe("System.Exception");
+        exception.InstanceConstructors.ShouldHaveSingleItem();
+        exception.InstanceConstructors[0].DeclaredAccessibility.ShouldBe(Accessibility.Public);
+        exception.InstanceConstructors[0].Parameters.Select(static parameter => parameter.Type.SpecialType)
+            .ShouldBe([SpecialType.System_String, SpecialType.System_String]);
+        AssertSuccessfulRun(run);
     }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("namespace T; public class Placeholder { }")]
+    public void RuntimeHelpers_DefaultContract_EmitsWithoutModels(string source)
+    {
+        GeneratorRunResult run = GeneratorTestHost.Run(source);
+        AssertSuccessfulRun(run);
+        run.GeneratedSources.Keys.OrderBy(static hint => hint, StringComparer.Ordinal).ShouldBe(
+            ["LdgSQLiteGeneratorAttributes.g.cs", "LdgSQLiteRuntimeHelpers.g.cs"]);
+        run.GeneratedSources["LdgSQLiteGeneratorAttributes.g.cs"].ShouldNotContain("LdgCommandFailedException");
+        run.GeneratedSources["LdgSQLiteRuntimeHelpers.g.cs"].ShouldBe("""
+            #nullable enable
+            namespace CsLightDbGen.SQLiteGenerator
+            {
+                /// <summary>
+                /// Thrown by generated keyed by-key mutations (Update/Delete) when a command that was
+                /// expected to affect at least one row affected none (for example, a stale or
+                /// already-deleted key). Carries the originating model name and SQL text. Keyless
+                /// models never throw this because their by-key predicate matches nothing.
+                /// </summary>
+                public sealed class LdgCommandFailedException : System.Exception
+                {
+                    public LdgCommandFailedException(string modelName, string sql)
+                        : base($"The command for model '{modelName}' affected no rows (expected at least one). SQL: {sql}")
+                    {
+                        ModelName = modelName;
+                        Sql = sql;
+                    }
+
+                    public string ModelName { get; }
+
+                    public string Sql { get; }
+                }
+            }
+            #nullable restore
+            """);
+
+        INamedTypeSymbol? exception = run.OutputCompilation.GetTypeByMetadataName(
+            "CsLightDbGen.SQLiteGenerator.LdgCommandFailedException");
+        exception.ShouldNotBeNull();
+        exception.DeclaringSyntaxReferences.ShouldHaveSingleItem();
+        exception.DeclaringSyntaxReferences[0].SyntaxTree.FilePath.ShouldEndWith("LdgSQLiteRuntimeHelpers.g.cs");
+        exception.GetMembers().OfType<IPropertySymbol>().Select(static property => property.Name)
+            .ShouldBe(["ModelName", "Sql"]);
+        foreach (IPropertySymbol property in exception.GetMembers().OfType<IPropertySymbol>())
+        {
+            property.DeclaredAccessibility.ShouldBe(Accessibility.Public);
+            property.Type.SpecialType.ShouldBe(SpecialType.System_String);
+            property.SetMethod.ShouldBeNull();
+        }
+    }
+
+    [Fact]
+    public void RuntimeHelpers_AllTableAndFtsThrowBranchesUseResolvedName()
+    {
+        const string additionalModels = """
+            using CsLightDbGen.SQLiteGenerator;
+            namespace Defaults;
+
+            [LdgSQLiteTable("long_identity")]
+            public partial class LongIdentity
+            {
+                [LdgSQLiteKey]
+                public long Id { get; set; }
+                public string Title { get; set; } = string.Empty;
+            }
+
+            [LdgSQLiteTable("supplied_key")]
+            public partial class SuppliedKey
+            {
+                [LdgSQLiteKey(false)]
+                public int Id { get; set; }
+                public string Title { get; set; } = string.Empty;
+            }
+
+            [LdgSQLiteTable("text_key")]
+            public partial class TextKey
+            {
+                [LdgSQLiteKey]
+                public string Id { get; set; } = string.Empty;
+                public string Title { get; set; } = string.Empty;
+            }
+            """;
+        GeneratorRunResult run = GeneratorTestHost.Run(DefaultContractSource, additionalModels);
+        AssertSuccessfulRun(run);
+        const string resolvedName = "global::CsLightDbGen.SQLiteGenerator.LdgCommandFailedException";
+        INamedTypeSymbol? exception = run.OutputCompilation.GetTypeByMetadataName(resolvedName.Substring("global::".Length));
+        exception.ShouldNotBeNull();
+
+        (string Model, bool Identity, bool Keyless)[] tables =
+        [
+            ("DefaultRow", true, false),
+            ("LongIdentity", true, false),
+            ("SuppliedKey", false, false),
+            ("TextKey", false, false),
+            ("DefaultComposite", false, false),
+            ("DefaultKeyless", false, true),
+            ("DefaultJson", true, false),
+        ];
+        foreach ((string model, bool identity, bool keyless) in tables)
+        {
+            string hint = $"Defaults.{model}.Table.g.cs";
+            SyntaxTree tree = run.OutputCompilation.SyntaxTrees.Single(tree => tree.FilePath.EndsWith(hint, StringComparison.Ordinal));
+            SemanticModel semanticModel = run.OutputCompilation.GetSemanticModel(tree);
+            ThrowStatementSyntax[] throws = tree.GetRoot().DescendantNodes().OfType<ThrowStatementSyntax>()
+                .Where(static statement => statement.Expression is ObjectCreationExpressionSyntax creation &&
+                    creation.Type.ToString().EndsWith("LdgCommandFailedException", StringComparison.Ordinal))
+                .ToArray();
+            throws.Length.ShouldBe(keyless ? 6 : 10, model);
+            List<string> guards = [];
+            foreach (ThrowStatementSyntax statement in throws)
+            {
+                ObjectCreationExpressionSyntax creation = (ObjectCreationExpressionSyntax)statement.Expression!;
+                creation.Type.ToString().ShouldBe(resolvedName, hint);
+                SymbolEqualityComparer.Default.Equals(semanticModel.GetTypeInfo(creation).Type, exception).ShouldBeTrue(hint);
+                creation.ArgumentList.ShouldNotBeNull();
+                creation.ArgumentList.Arguments.Select(static argument => argument.ToString())
+                    .ShouldBe([$"\"{model}\"", "command.CommandText"]);
+                IfStatementSyntax? guard = statement.Parent as IfStatementSyntax;
+                guard.ShouldNotBeNull();
+                guards.Add(guard.Condition.ToString());
+                string? method = statement.FirstAncestorOrSelf<MethodDeclarationSyntax>()?.Identifier.ValueText;
+                method.ShouldBeOneOf("Insert", "Update", "Delete");
+            }
+
+            guards.Count(static guard => guard == "(rowsAffected == 0) && throwOnZeroRowsAffected").ShouldBe(keyless ? 0 : 4, model);
+            guards.Count(static guard => guard == "!ignoreDuplicates && (rowsAffected == 0)").ShouldBe(identity ? 3 : 6, model);
+            guards.Count(static guard => guard == "!ignoreDuplicates && (commandResult == null)").ShouldBe(identity ? 3 : 0, model);
+            string table = run.GeneratedSources[hint];
+            table.ShouldContain("using IDbCommand command = dbConnection.CreateCommand();");
+            table.ShouldContain("command.Transaction = _txn;");
+            table.ShouldContain("if (_ownTxn) _txn.Commit();");
+            table.ShouldContain("if (_ownTxn) _txn.Dispose();");
+            if (identity)
+            {
+                string conversion = model == "LongIdentity" ? "ToInt64" : "ToInt32";
+                table.ShouldContain($"if (commandResult != null) value.Id = Convert.{conversion}(commandResult);");
+            }
+            else
+            {
+                table.ShouldNotContain("value.Id = Convert.");
+            }
+            if (keyless)
+            {
+                table.ShouldContain("WHERE 1 = 0");
+                table.ShouldNotContain("throwOnZeroRowsAffected");
+            }
+        }
+
+        string fts = run.GeneratedSources["Defaults.DefaultSearch.Fts.g.cs"];
+        CompilationUnitSyntax ftsRoot = CSharpSyntaxTree.ParseText(fts).GetCompilationUnitRoot();
+        ThrowStatementSyntax ftsThrow = ftsRoot.DescendantNodes().OfType<ThrowStatementSyntax>().Single();
+        ftsThrow.Expression.ShouldBeOfType<ObjectCreationExpressionSyntax>().Type.ToString().ShouldBe(resolvedName);
+        ftsThrow.Parent.ShouldBeOfType<IfStatementSyntax>().Condition.ToString().ShouldBe("ra == 0");
+        ftsThrow.FirstAncestorOrSelf<MethodDeclarationSyntax>()?.Identifier.ValueText.ShouldBe("Populate");
+        fts.ShouldContain($"if (ra == 0) throw new {resolvedName}(\"DefaultSearch\", command.CommandText);");
+        fts.ShouldContain("if (sanitizeText == false)");
+        fts.ShouldContain("rowsAffected = popCommand.ExecuteNonQuery();");
+        fts.ShouldContain("using IDbCommand readCommand = dbConnection.CreateCommand();");
+        fts.ShouldContain("using (IDataReader reader = readCommand.ExecuteReader())");
+        fts.ShouldContain("using IDbCommand command = dbConnection.CreateCommand();");
+        fts.ShouldContain("command.Transaction = _txn;");
+        fts.ShouldContain("if (_ownTxn) _txn.Commit();");
+        fts.ShouldContain("if (_ownTxn) _txn.Dispose();");
+    }
+
+    [Theory]
+    [InlineData(true, false, null, null, "command.ExecuteNonQuery();", "(rowsAffected == 0) && throwOnZeroRowsAffected", null)]
+    [InlineData(false, false, null, null, "command.ExecuteNonQuery();", "rowsAffected == 0", null)]
+    [InlineData(false, false, null, "ignoreDuplicates", "command.ExecuteNonQuery();", "!ignoreDuplicates && (rowsAffected == 0)", null)]
+    [InlineData(false, false, "int", null, "command.ExecuteScalar();", "commandResult == null", "value.Id = Convert.ToInt32(commandResult);")]
+    [InlineData(false, false, "long", null, "command.ExecuteScalar();", "commandResult == null", "value.Id = Convert.ToInt64(commandResult);")]
+    [InlineData(false, false, "int", "ignoreDuplicates", "command.ExecuteScalar();", "!ignoreDuplicates && (commandResult == null)", "if (commandResult != null) value.Id = Convert.ToInt32(commandResult);")]
+    [InlineData(false, false, "long", "ignoreDuplicates", "command.ExecuteScalar();", "!ignoreDuplicates && (commandResult == null)", "if (commandResult != null) value.Id = Convert.ToInt64(commandResult);")]
+    [InlineData(true, true, null, null, "command.ExecuteNonQuery();", null, null)]
+    public void RuntimeHelpers_TableFailureIterator_RoutesEveryBranchWithoutChangingGuards(
+        bool byKeyMutation,
+        bool isKeyless,
+        string? identityType,
+        string? ignoreDupeProperty,
+        string execution,
+        string? guard,
+        string? hydration)
+    {
+        // Current emit callers always supply ignoreDuplicates for scalar inserts; cover the
+        // dormant unguarded scalar/non-query branches without adding a public generator seam.
+        MethodInfo iterator = typeof(LightSQLiteGenerator).GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+            .Concat(typeof(LightSQLiteGenerator).GetNestedTypes(BindingFlags.NonPublic)
+                .SelectMany(static type => type.GetMethods(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)))
+            .Single(static method => method.Name.Contains("g__getInsertCommandParamLines|", StringComparison.Ordinal));
+        ParameterInfo[] parameters = iterator.GetParameters();
+        Type scopeType = iterator.IsStatic
+            ? parameters.Single(static parameter => parameter.ParameterType.IsByRef).ParameterType.GetElementType()!
+            : iterator.DeclaringType!;
+        object? scope = Activator.CreateInstance(scopeType);
+        scope.ShouldNotBeNull();
+        const string resolvedName = "global::Routing.Probe.LdgCommandFailedException";
+        HashSet<string> rawDefaultColumnNames = [];
+        (string Name, object Value)[] scopeValues =
+        [
+            ("className", "IteratorModel"),
+            ("commandFailedExceptionName", resolvedName),
+            ("isKeyless", isKeyless),
+            ("rawDefaultColumnNames", rawDefaultColumnNames),
+        ];
+        foreach ((string name, object value) in scopeValues)
+        {
+            FieldInfo? field = scopeType.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            field.ShouldNotBeNull(name);
+            field.SetValue(scope, value);
+        }
+        FieldInfo? columns = scopeType.GetField("tableColInfo", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        columns.ShouldNotBeNull();
+        columns.SetValue(scope, Activator.CreateInstance(columns.FieldType));
+        object?[] arguments = parameters.Select(parameter => parameter.Name switch
+        {
+            "singleValue" => (object)true,
+            "identityColName" => identityType is null ? null : "Id",
+            "identityColType" => identityType,
+            "byKeyMutation" => byKeyMutation,
+            "ignoreDupeProperty" => ignoreDupeProperty,
+            _ => parameter.ParameterType.IsByRef ? scope : parameter.DefaultValue,
+        }).ToArray();
+        object? result = iterator.Invoke(iterator.IsStatic ? null : scope, arguments);
+        result.ShouldNotBeNull();
+        result.ShouldBeAssignableTo<IEnumerable<string>>();
+        IEnumerable<string> lines = (IEnumerable<string>)result;
+        string emitted = string.Join(Environment.NewLine, lines);
+        emitted.ShouldContain(execution);
+        if (guard is null)
+        {
+            emitted.ShouldNotContain("throw new");
+            emitted.ShouldNotContain("rowsAffected");
+        }
+        else
+        {
+            emitted.ShouldContain($"if ({guard}) throw new {resolvedName}(\"IteratorModel\", command.CommandText);");
+            emitted.ShouldNotContain("CsLightDbGen.SQLiteGenerator.LdgCommandFailedException");
+            emitted.Split(Environment.NewLine).Count(static line => line.Contains("throw new", StringComparison.Ordinal)).ShouldBe(1);
+        }
+        if (hydration is null)
+        {
+            emitted.ShouldNotContain("value.Id =");
+        }
+        else
+        {
+            emitted.ShouldContain(hydration);
+        }
+    }
+
+    [Fact]
+    public void Defaults_KeepGeneratedTableAndFtsContracts()
+    {
+        GeneratorRunResult run = GeneratorTestHost.Run(DefaultContractSource);
+        AssertSuccessfulRun(run);
+
+        string table = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "DefaultRow.Table.g.cs");
+        string signatures = NormalizeWhitespace(table);
+        signatures.ShouldContain("public static int Insert( IDbConnection dbConnection, DefaultRow value, string? dbTableName = null, bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)");
+        signatures.ShouldContain("public static bool CreateTable(IDbConnection dbConnection, string? dbTableName = null)");
+        signatures.ShouldContain("public static bool EnsureSchema(IDbConnection dbConnection, string? dbTableName = null, IDbTransaction? transaction = null)");
+        signatures.ShouldContain("public static DefaultRow Update(IDbConnection dbConnection, DefaultRow value, string? dbTableName = null, IDbTransaction? transaction = null, bool throwOnZeroRowsAffected = true)");
+        signatures.ShouldContain("public static void Delete(IDbConnection dbConnection, DefaultRow value, string? dbTableName = null, IDbTransaction? transaction = null, bool throwOnZeroRowsAffected = true)");
+        signatures.ShouldContain("public static void Upsert( IDbConnection dbConnection, DefaultRow value, string[]? conflictColumns = null, string[]? updateColumns = null, string[]? incrementColumns = null, string? dbTableName = null, IDbTransaction? transaction = null)");
+        signatures.ShouldContain("public static DefaultRow? InsertReturning(");
+        signatures.ShouldContain("public static DefaultRow? UpdateReturning(");
+        signatures.ShouldContain("public static DefaultRow? SelectSingle(");
+        signatures.ShouldContain("public static List<DefaultRow> SelectList(");
+        signatures.ShouldContain("public static IEnumerable<DefaultRow> SelectEnumerable(");
+        signatures.ShouldContain("public static Dictionary<int, DefaultRow> SelectDict(");
+        signatures.ShouldContain("public static int SelectCount(");
+        signatures.ShouldContain("public static void Insert(this IDbConnection dbCon, DefaultRow value, string? dbTableName = null, bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)");
+        signatures.ShouldContain("public static void Insert(this DefaultRow value, IDbConnection dbCon, string? dbTableName = null, bool ignoreDuplicates = false, bool insertPrimaryKey = false, IDbTransaction? transaction = null)");
+        table.ShouldContain("public static string DefaultTableName => \"order\";");
+        table.ShouldContain("public static IReadOnlyCollection<string> SQLiteColumnNames");
+        table.ShouldContain("\"Id\" INTEGER UNIQUE PRIMARY KEY NOT NULL");
+        table.ShouldContain("\"Select\" TEXT NOT NULL");
+        table.ShouldContain("""string _tableIdent = dbTableName is null ? "\"order\"" : dbTableName;""");
+        table.ShouldContain("""SELECT \"Id\", \"Select\" FROM {_tableIdent}""");
+        table.ShouldContain("\"Id\" = $Id");
+        table.ShouldContain("RETURNING \"Id\"");
+        table.ShouldContain("value.Id = Convert.ToInt32(commandResult);");
+        table.ShouldContain("public static int GetIndex(string? dbTableName = null)");
+        table.ShouldContain("public static void LoadMaxKey(");
+        table.ShouldNotContain("TrySerializeForDb");
+        table.ShouldNotContain("ParseFromDb<");
+        table.ShouldNotContain("ParseArrayFromDb<");
+        table.ShouldNotContain("JsonSerializerOptions");
+        table.ShouldNotContain("StripHtml(");
+        table.ShouldContain("if ((rowsAffected == 0) && throwOnZeroRowsAffected) throw new global::CsLightDbGen.SQLiteGenerator.LdgCommandFailedException(\"DefaultRow\", command.CommandText);");
+        table.ShouldContain("if (!ignoreDuplicates && (rowsAffected == 0)) throw new global::CsLightDbGen.SQLiteGenerator.LdgCommandFailedException(\"DefaultRow\", command.CommandText);");
+        table.ShouldContain("if (!ignoreDuplicates && (commandResult == null)) throw new global::CsLightDbGen.SQLiteGenerator.LdgCommandFailedException(\"DefaultRow\", command.CommandText);");
+
+        string composite = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "DefaultComposite.Table.g.cs");
+        composite.ShouldContain("\"PartA\" INTEGER NOT NULL");
+        composite.ShouldContain("\"PartB\" TEXT");
+        composite.ShouldNotContain("\"PartB\" TEXT NOT NULL");
+        composite.ShouldContain("PRIMARY KEY (\"PartA\", \"PartB\")");
+        composite.ShouldNotContain("UNIQUE PRIMARY KEY");
+        composite.ShouldContain("\"PartA\" = $PartA AND \"PartB\" = $PartB");
+        composite.ShouldContain("PartAParam.Value = value.PartA;");
+        composite.ShouldContain("PartBParam.Value = (value.PartB == null) ? DBNull.Value : value.PartB;");
+        composite.ShouldContain("conflictColumns = new string[] { \"PartA\", \"PartB\" };");
+        composite.ShouldContain("IEnumerable<int>? PartAValues = null");
+        composite.ShouldContain("IEnumerable<string>? PartBValues = null");
+        composite.ShouldNotContain("ALTER TABLE {_tableIdent} ADD COLUMN \"PartA\"");
+        composite.ShouldNotContain("ALTER TABLE {_tableIdent} ADD COLUMN \"PartB\"");
+        composite.ShouldContain("public static void Insert(");
+        composite.ShouldNotContain("SelectDict");
+        composite.ShouldNotContain("LoadMaxKey");
+        composite.ShouldNotContain("Interlocked.Increment");
+        composite.ShouldNotContain("Convert.ToInt32(commandResult)");
+
+        string keyless = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "DefaultKeyless.Table.g.cs");
+        keyless.ShouldContain("public static void Insert(");
+        keyless.ShouldContain("WHERE 1 = 0");
+        keyless.ShouldNotContain("throwOnZeroRowsAffected");
+        keyless.ShouldNotContain("UNIQUE PRIMARY KEY NOT NULL");
+        keyless.ShouldNotContain("PRIMARY KEY (");
+        keyless.ShouldNotContain("LoadMaxKey");
+        keyless.ShouldNotContain("JsonSerializerOptions");
+
+        string fts = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "DefaultSearch.Fts.g.cs");
+        string ftsSignatures = NormalizeWhitespace(fts);
+        ftsSignatures.ShouldContain("public static int Populate( IDbConnection dbConnection, string? dbTableName = null, string? sourceTableName = null, bool sanitizeText = false, IDbTransaction? transaction = null)");
+        ftsSignatures.ShouldContain("public static List<DefaultSearch> Select( IDbConnection dbConnection, List<string> matchTerms, string? dbTableName = null, string[]? orderByProperties = null, string? orderByDirection = null, IDbTransaction? transaction = null, string[]? orderByDirections = null)");
+        ftsSignatures.ShouldContain("public static int SelectCount( IDbConnection dbConnection, List<string> matchTerms, string? dbTableName = null, IDbTransaction? transaction = null)");
+        fts.ShouldContain("public static string DefaultTableName => \"DefaultSearch_fts\";");
+        fts.ShouldContain("public static string SourceTableName => \"default_json\";");
+        fts.ShouldContain("CREATE VIRTUAL TABLE IF NOT EXISTS {_tableIdent} using fts5");
+        fts.ShouldContain("\"OptionalDocument\" UNINDEXED");
+        fts.ShouldContain("MATCH $matchTerm{index}");
+        fts.ShouldContain("matchParam.ParameterName = $\"$matchTerm{index}\";");
+        fts.ShouldContain("if (sanitizeText == false)");
+        fts.ShouldContain("StripHtml(");
+        fts.ShouldContain("if (ra == 0) throw new global::CsLightDbGen.SQLiteGenerator.LdgCommandFailedException(\"DefaultSearch\", command.CommandText);");
+    }
+
+    [Fact]
+    public void Defaults_KeepJsonWrappersAndReaderSentinels()
+    {
+        GeneratorRunResult run = GeneratorTestHost.Run(DefaultContractSource);
+        AssertSuccessfulRun(run);
+        const string wrappers = """
+            private static readonly JsonSerializerOptions _options = new()
+            {
+                WriteIndented = false,
+            };
+
+            private static bool TrySerializeForDb<T>(T? instance, [NotNullWhen(true)]out string? json) where T : class
+            {
+                if (instance == null)
+                {
+                    json = null;
+                    return false;
+                }
+
+                json = JsonSerializer.Serialize(instance, _options);
+                return true;
+            }
+
+            private static bool TrySerializeForDb<T>(List<T>? instances, [NotNullWhen(true)] out string? json)
+            {
+                if ((instances == null) || (instances.Count == 0))
+                {
+                    json = null;
+                    return false;
+                }
+
+                json = JsonSerializer.Serialize(instances, _options);
+                return true;
+            }
+
+            private static T? ParseFromDb<T>(string json) where T : class
+            {
+                if (string.IsNullOrWhiteSpace(json))
+                {
+                    return null;
+                }
+
+                return JsonSerializer.Deserialize<T>(json, _options);
+            }
+
+            private static List<T> ParseArrayFromDb<T>(string json)
+            {
+                if (string.IsNullOrWhiteSpace(json))
+                {
+                    return [];
+                }
+
+                return JsonSerializer.Deserialize<List<T>>(json, _options) ?? [];
+            }
+            """;
+
+        string table = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "DefaultJson.Table.g.cs");
+        string fts = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "DefaultSearch.Fts.g.cs");
+        NormalizeWhitespace(table).ShouldContain(NormalizeWhitespace(wrappers));
+        NormalizeWhitespace(fts).ShouldContain(NormalizeWhitespace(wrappers));
+        table.ShouldContain("Document = ParseFromDb<Defaults.Payload>(reader.GetString(2)) ?? new Defaults.Payload()");
+        table.ShouldContain("OptionalDocument = reader.IsDBNull(3) ? null : ParseFromDb<Defaults.Payload>(reader.GetString(3))");
+        table.ShouldContain("Items = ParseArrayFromDb<Defaults.Payload>(reader.GetString(4)) ?? []");
+        table.ShouldContain("OptionalItems = reader.IsDBNull(5) ? null : ParseArrayFromDb<Defaults.Payload>(reader.GetString(5))");
+        table.ShouldContain("Values = ParseArrayFromDb<Defaults.Payload>(reader.GetString(6)).ToArray()");
+        table.ShouldContain("OptionalValues = reader.IsDBNull(7) ? null : ParseArrayFromDb<Defaults.Payload>(reader.GetString(7)).ToArray()");
+        table.ShouldContain("Sequence = ParseArrayFromDb<Defaults.Payload>(reader.GetString(8)) ?? []");
+        table.ShouldContain("DocumentParam.Value = TrySerializeForDb(value.Document, out dbJson) ? dbJson : string.Empty;");
+        table.ShouldContain("OptionalDocumentParam.Value = TrySerializeForDb(value.OptionalDocument, out dbJson) ? dbJson : DBNull.Value;");
+        table.ShouldContain("ItemsParam.Value = TrySerializeForDb(value.Items, out dbJson) ? dbJson : string.Empty;");
+        table.ShouldContain("OptionalItemsParam.Value = TrySerializeForDb(value.OptionalItems, out dbJson) ? dbJson : DBNull.Value;");
+        table.ShouldContain("ValuesParam.Value = TrySerializeForDb(value.Values, out dbJson) ? dbJson : string.Empty;");
+        table.ShouldContain("OptionalValuesParam.Value = TrySerializeForDb(value.OptionalValues, out dbJson) ? dbJson : DBNull.Value;");
+        table.ShouldContain("SequenceParam.Value = TrySerializeForDb(value.Sequence, out dbJson) ? dbJson : string.Empty;");
+        table.ShouldContain("if (Document != null)");
+        table.ShouldContain("if (OptionalDocument != null)");
+        table.ShouldContain("if (OptionalDocumentIsNull == true)");
+        table.ShouldContain("else if (OptionalDocumentIsNull == false)");
+        table.ShouldContain("""\"OptionalDocument\" IS NULL""");
+        table.ShouldContain("""\"OptionalDocument\" IS NOT NULL""");
+        fts.ShouldContain("OptionalDocument = reader.IsDBNull(1) ? null : ParseFromDb<Defaults.Payload>(reader.GetString(1))");
+        fts.ShouldContain("Items = ParseArrayFromDb<Defaults.Payload>(reader.GetString(2)) ?? []");
+        fts.ShouldContain("Values = ParseArrayFromDb<Defaults.Payload>(reader.GetString(3)).ToArray()");
+    }
+
+    [Fact]
+    public void CompilationHost_EmitsAndReferencesIndependentImages()
+    {
+        const string hostTemplate = """
+            using CsLightDbGen.SQLiteGenerator;
+            namespace HOST;
+            [LdgSQLiteTable("items")]
+            public partial class Item
+            {
+                [LdgSQLiteKey]
+                public int Id { get; set; }
+                public string Title { get; set; } = string.Empty;
+            }
+            """;
+        GeneratorRunResult hostA = GeneratorTestHost.Run(
+            new GeneratorTestOptions { AssemblyName = "IndependentHostA" },
+            hostTemplate.Replace("HOST", "HostA", StringComparison.Ordinal));
+        GeneratorRunResult hostB = GeneratorTestHost.Run(
+            new GeneratorTestOptions { AssemblyName = "IndependentHostB" },
+            hostTemplate.Replace("HOST", "HostB", StringComparison.Ordinal));
+        EmittedReferenceResult imageA = AssertSuccessfulRun(hostA);
+        EmittedReferenceResult imageB = AssertSuccessfulRun(hostB);
+        hostA.Diagnostics.Concat(imageA.Diagnostics).ShouldNotContain(static diagnostic => diagnostic.Id == "CS0436" || diagnostic.Id == "CS0433");
+        hostB.Diagnostics.Concat(imageB.Diagnostics).ShouldNotContain(static diagnostic => diagnostic.Id == "CS0436" || diagnostic.Id == "CS0433");
+
+        // Default hosts still export the same annotations/helper. This ordinary consumer names only
+        // their independently owned model APIs; distinct helper contracts belong to later phases.
+        CSharpCompilation consumer = GeneratorTestHost.CreateCompilation(
+            new GeneratorTestOptions
+            {
+                AssemblyName = "IndependentOrdinaryConsumer",
+                AdditionalReferences = [imageA.Reference, imageB.Reference],
+            },
+            """
+            using System.Data;
+            public static class BothHosts
+            {
+                public static bool Create(IDbConnection connection) =>
+                    HostA.Item.CreateTable(connection) && HostB.Item.CreateTable(connection);
+
+                public static int InsertA(IDbConnection connection, HostA.Item item) =>
+                    HostA.Item.Insert(connection, item);
+
+                public static int InsertB(IDbConnection connection, HostB.Item item) =>
+                    HostB.Item.Insert(connection, item);
+            }
+            """);
+        consumer.GetDiagnostics().ShouldNotContain(static diagnostic =>
+            diagnostic.Severity == DiagnosticSeverity.Error || diagnostic.Id == "CS0436" || diagnostic.Id == "CS0433");
+        consumer.SyntaxTrees.ShouldHaveSingleItem();
+        consumer.Assembly.GetTypeByMetadataName("CsLightDbGen.SQLiteGenerator.LdgSQLiteTable").ShouldBeNull();
+        INamedTypeSymbol? modelA = consumer.GetTypeByMetadataName("HostA.Item");
+        INamedTypeSymbol? modelB = consumer.GetTypeByMetadataName("HostB.Item");
+        modelA.ShouldNotBeNull();
+        modelB.ShouldNotBeNull();
+        modelA.ContainingAssembly.Name.ShouldBe("IndependentHostA");
+        modelB.ContainingAssembly.Name.ShouldBe("IndependentHostB");
+        EmittedReferenceResult consumerImage = GeneratorTestHost.EmitToReference(consumer);
+        consumerImage.Diagnostics.ShouldNotContain(static diagnostic =>
+            diagnostic.Severity == DiagnosticSeverity.Error || diagnostic.Id == "CS0436" || diagnostic.Id == "CS0433");
+    }
+
+    [Fact]
+    public void CompilationHost_UsesConsistentParseOptions()
+    {
+        const string model = """
+            using CsLightDbGen.SQLiteGenerator;
+            namespace ParseOptions;
+            #if HOST_FEATURE
+            [LdgSQLiteTable("enabled")]
+            #else
+            [LdgSQLiteTable("disabled")]
+            #endif
+            public partial class Item
+            {
+                [LdgSQLiteKey]
+                public int Id { get; set; }
+            }
+            """;
+        const string other = """
+            namespace ParseOptions;
+            public class Companion : External.Marker
+            {
+            #if HOST_FEATURE
+                public int Enabled { get; set; }
+            #else
+                public int Disabled { get; set; }
+            #endif
+            }
+            """;
+        CSharpParseOptions parseOptions = new CSharpParseOptions(
+            LanguageVersion.CSharp12,
+            DocumentationMode.Diagnose,
+            preprocessorSymbols: ["HOST_FEATURE"]);
+        CSharpCompilation dependency = GeneratorTestHost.CreateCompilation(
+            new GeneratorTestOptions { AssemblyName = "ParseOptionsDependency", ParseOptions = parseOptions },
+            "namespace External; public class Marker { }");
+        dependency.GetDiagnostics().ShouldNotContain(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        EmittedReferenceResult dependencyImage = GeneratorTestHost.EmitToReference(dependency);
+        dependencyImage.Diagnostics.ShouldNotContain(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        GeneratorRunResult first = GeneratorTestHost.Run(
+            new GeneratorTestOptions
+            {
+                AssemblyName = "ConsistentParseOptions",
+                ParseOptions = parseOptions,
+                AdditionalReferences = [dependencyImage.Reference],
+                TrackIncrementalSteps = true,
+            },
+            model, other);
+        AssertSuccessfulRun(first);
+        first.InputCompilation.SyntaxTrees.ShouldAllBe(tree => tree.Options.Equals(parseOptions));
+        first.OutputCompilation.SyntaxTrees.ShouldAllBe(tree => tree.Options.Equals(parseOptions));
+        GeneratorTestHost.GetGeneratedSourceByHintSuffix(first, "Item.Table.g.cs")
+            .ShouldContain("DefaultTableName => \"enabled\"");
+        INamedTypeSymbol? companion = first.OutputCompilation.GetTypeByMetadataName("ParseOptions.Companion");
+        companion.ShouldNotBeNull();
+        companion.GetMembers("Enabled").ShouldHaveSingleItem();
+
+        GeneratorRunResult unchanged = GeneratorTestHost.ReRun(
+            first,
+            sourceReplacements: new Dictionary<int, string> { [1] = other + "\n// unrelated edit" });
+        AssertSuccessfulRun(unchanged);
+        unchanged.InputCompilation.SyntaxTrees.First().ShouldBeSameAs(first.InputCompilation.SyntaxTrees.First());
+        unchanged.InputCompilation.SyntaxTrees.Last().ShouldNotBeSameAs(first.InputCompilation.SyntaxTrees.Last());
+        unchanged.GeneratedSources.OrderBy(static pair => pair.Key).ShouldBe(first.GeneratedSources.OrderBy(static pair => pair.Key));
+        unchanged.DriverRunResult.Results[0].TrackedSteps[LightSQLiteGenerator.TableModelTrackingName]
+            .SelectMany(static step => step.Outputs)
+            .Select(static output => output.Reason)
+            .ShouldAllBe(static reason => reason == IncrementalStepRunReason.Cached || reason == IncrementalStepRunReason.Unchanged);
+
+        CSharpParseOptions updatedOptions = parseOptions
+            .WithLanguageVersion(LanguageVersion.CSharp13)
+            .WithPreprocessorSymbols((string[])[]);
+        GeneratorRunResult updated = GeneratorTestHost.ReRun(unchanged, parseOptions: updatedOptions);
+        AssertSuccessfulRun(updated);
+        updated.InputCompilation.AssemblyName.ShouldBe("ConsistentParseOptions");
+        updated.InputCompilation.References.ShouldContain(dependencyImage.Reference);
+        updated.InputCompilation.SyntaxTrees.ShouldAllBe(tree => tree.Options.Equals(updatedOptions));
+        updated.OutputCompilation.SyntaxTrees.ShouldAllBe(tree => tree.Options.Equals(updatedOptions));
+        GeneratorTestHost.GetGeneratedSourceByHintSuffix(updated, "Item.Table.g.cs")
+            .ShouldContain("DefaultTableName => \"disabled\"");
+        INamedTypeSymbol? updatedCompanion = updated.OutputCompilation.GetTypeByMetadataName("ParseOptions.Companion");
+        updatedCompanion.ShouldNotBeNull();
+        updatedCompanion.GetMembers("Disabled").ShouldHaveSingleItem();
+        updatedCompanion.GetMembers("Enabled").ShouldBeEmpty();
+        updated.DriverRunResult.Results[0].TrackedSteps[LightSQLiteGenerator.TableModelTrackingName]
+            .SelectMany(static step => step.Outputs)
+            .Select(static output => output.Reason)
+            .ShouldContain(IncrementalStepRunReason.Modified);
+
+        GeneratorRunResult replaced = GeneratorTestHost.ReRun(
+            updated,
+            sourceReplacements: new Dictionary<int, string>
+            {
+                [0] = model.Replace("\"disabled\"", "\"replacement\"", StringComparison.Ordinal),
+            });
+        AssertSuccessfulRun(replaced);
+        GeneratorTestHost.GetGeneratedSourceByHintSuffix(replaced, "Item.Table.g.cs")
+            .ShouldContain("DefaultTableName => \"replacement\"");
+    }
+
+    [Fact]
+    public void CompilationHost_EmitFailureIncludesFullDiagnostics()
+    {
+        GeneratorRunResult run = GeneratorTestHost.Run(
+            new GeneratorTestOptions { AssemblyName = "InvalidImage" },
+            """
+            #warning emit sentinel
+            public class Invalid { public MissingType Value { get; set; } }
+            """);
+        run.OutputDiagnostics.ShouldBeEmpty();
+        run.Diagnostics.ShouldContain(static diagnostic => diagnostic.Id == "CS0246");
+        InvalidOperationException exception = Should.Throw<InvalidOperationException>(
+            () => GeneratorTestHost.EmitToReference(run.OutputCompilation));
+        exception.Message.ShouldContain("InvalidImage");
+        exception.Message.ShouldContain("CS0246");
+        exception.Message.ShouldContain("CS1030");
+        exception.Message.ShouldContain("emit sentinel");
+    }
+
+    private static EmittedReferenceResult AssertSuccessfulRun(GeneratorRunResult run)
+    {
+        Diagnostic[] errors = run.Diagnostics.Where(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error).ToArray();
+        errors.ShouldBeEmpty(string.Join(Environment.NewLine, errors.Select(static diagnostic => diagnostic.ToString())));
+        EmittedReferenceResult image = GeneratorTestHost.EmitToReference(run.OutputCompilation);
+        image.Diagnostics.ShouldNotContain(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        return image;
+    }
+
+    private static string NormalizeWhitespace(string source) =>
+        string.Join(" ", source.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
     [Fact]
     public void TablePath_Generates_ExpectedTableArtifacts()
     {
-        var run = GeneratorTestHost.Run(FixtureSources.BasicTableFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntity.Table.g.cs");
+        GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.BasicTableFixture);
+        string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "BasicEntity.Table.g.cs");
 
         source.ShouldContain("CREATE TABLE IF NOT EXISTS");
         source.ShouldContain("UNIQUE");
@@ -51,8 +752,8 @@ public class LightSQLiteGenerator_GenerationTests
     [Fact]
     public void IndexAttribute_Generates_CreateIndex_WithExpectedName()
     {
-        var run = GeneratorTestHost.Run(FixtureSources.TableWithIndexFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "IndexedEntity.Table.g.cs");
+        GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.TableWithIndexFixture);
+        string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "IndexedEntity.Table.g.cs");
 
         source.ShouldContain("CREATE INDEX IF NOT EXISTS");
         source.ShouldContain("IDX_{dbTableName}_");
@@ -63,8 +764,8 @@ public class LightSQLiteGenerator_GenerationTests
     [Fact]
     public void RecordPath_Generates_RecordClassPartial()
     {
-        var run = GeneratorTestHost.Run(FixtureSources.RecordTableFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "RecordEntity.Table.g.cs");
+        GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.RecordTableFixture);
+        string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "RecordEntity.Table.g.cs");
 
         source.ShouldContain("public partial record class RecordEntity");
         run.Errors.ShouldBeEmpty();
@@ -73,8 +774,8 @@ public class LightSQLiteGenerator_GenerationTests
     [Fact]
     public void Inheritance_Collects_BaseClassMembers()
     {
-        var run = GeneratorTestHost.Run(FixtureSources.InheritanceFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "DerivedEntity.Table.g.cs");
+        GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.InheritanceFixture);
+        string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "DerivedEntity.Table.g.cs");
 
         source.ShouldContain("BaseName");
         source.ShouldContain("DerivedName");
@@ -83,8 +784,8 @@ public class LightSQLiteGenerator_GenerationTests
     [Fact]
     public void JsonAndArrayProperties_UseJsonUtilityMethods()
     {
-        var run = GeneratorTestHost.Run(FixtureSources.TableWithJsonFixture);
-        var source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "JsonEntity.Table.g.cs");
+        GeneratorRunResult run = GeneratorTestHost.Run(FixtureSources.TableWithJsonFixture);
+        string source = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "JsonEntity.Table.g.cs");
 
         source.ShouldContain("TrySerializeForDb(Payload");
         source.ShouldContain("TrySerializeForDb(PayloadTags");
@@ -113,8 +814,8 @@ public class LightSQLiteGenerator_GenerationTests
             }
             """;
 
-        var run = GeneratorTestHost.Run(source);
-        var generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "ScalarOnly.Table.g.cs");
+        GeneratorRunResult run = GeneratorTestHost.Run(source);
+        string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "ScalarOnly.Table.g.cs");
 
         generated.ShouldNotContain("TrySerializeForDb");
         generated.ShouldNotContain("ParseFromDb<");
@@ -151,7 +852,7 @@ public class LightSQLiteGenerator_GenerationTests
             }
             """;
 
-        var run = GeneratorTestHost.Run(source);
+        GeneratorRunResult run = GeneratorTestHost.Run(source);
         string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "ArrayRoutingEntity.Table.g.cs");
 
         // Both the array and the List<T> route to the JSON-array read directive...
@@ -192,7 +893,7 @@ public class LightSQLiteGenerator_GenerationTests
             }
             """;
 
-        var run = GeneratorTestHost.Run(partOne, partTwo);
+        GeneratorRunResult run = GeneratorTestHost.Run(partOne, partTwo);
         string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "SplitEntity.Table.g.cs");
 
         generated.ShouldContain("\"FirstPart\"");
@@ -237,7 +938,7 @@ public class LightSQLiteGenerator_GenerationTests
             }
             """;
 
-        var run = GeneratorTestHost.Run(alpha, beta);
+        GeneratorRunResult run = GeneratorTestHost.Run(alpha, beta);
 
         List<string> widgetHints = run.GeneratedSources.Keys
             .Where(k => k.EndsWith("Widget.Table.g.cs", StringComparison.Ordinal))
@@ -282,7 +983,7 @@ public class LightSQLiteGenerator_GenerationTests
             }
             """;
 
-        var run = GeneratorTestHost.RunWithReference(referencedBase, derived);
+        GeneratorRunResult run = GeneratorTestHost.RunWithReference(referencedBase, derived);
         string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "DerivedExternalEntity.Table.g.cs");
 
         generated.ShouldContain("BaseName");
@@ -316,7 +1017,7 @@ public class LightSQLiteGenerator_GenerationTests
             }
             """;
 
-        var run = GeneratorTestHost.Run(source);
+        GeneratorRunResult run = GeneratorTestHost.Run(source);
 
         run.Errors.ShouldContain(static d => d.Id == "CSLDG001");
 
@@ -347,7 +1048,7 @@ public class LightSQLiteGenerator_GenerationTests
             }
             """;
 
-        var run = GeneratorTestHost.Run(source);
+        GeneratorRunResult run = GeneratorTestHost.Run(source);
 
         string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "SuppliedKeyEntity.Table.g.cs");
         generated.ShouldNotContain("Interlocked.Increment");
@@ -377,7 +1078,7 @@ public class LightSQLiteGenerator_GenerationTests
             }
             """;
 
-        var run = GeneratorTestHost.Run(source);
+        GeneratorRunResult run = GeneratorTestHost.Run(source);
 
         string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "PositionalFkChild.Table.g.cs");
         generated.ShouldContain("FOREIGN KEY (\"ParentRef\") REFERENCES \"fk_parents\"(\"Id\") ON DELETE CASCADE");
@@ -408,7 +1109,7 @@ public class LightSQLiteGenerator_GenerationTests
             }
             """;
 
-        var run = GeneratorTestHost.Run(source);
+        GeneratorRunResult run = GeneratorTestHost.Run(source);
 
         run.Errors.ShouldContain(static d => d.Id == "CSLDG003");
         // Generation still produces a coherent composite-key table (AutoIncrement simply ignored).
@@ -436,7 +1137,7 @@ public class LightSQLiteGenerator_GenerationTests
             }
             """;
 
-        var run = GeneratorTestHost.Run(source);
+        GeneratorRunResult run = GeneratorTestHost.Run(source);
 
         run.Errors.ShouldContain(static d => d.Id == "CSLDG005");
         run.CompilationErrors.ShouldBeEmpty();
@@ -463,7 +1164,7 @@ public class LightSQLiteGenerator_GenerationTests
             }
             """;
 
-        var run = GeneratorTestHost.Run(source);
+        GeneratorRunResult run = GeneratorTestHost.Run(source);
 
         string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MigRequiredEntity.Table.g.cs");
         generated.ShouldContain("SELECT EXISTS(SELECT 1 FROM {_tableIdent})");
@@ -493,7 +1194,7 @@ public class LightSQLiteGenerator_GenerationTests
             }
             """;
 
-        var run = GeneratorTestHost.Run(source);
+        GeneratorRunResult run = GeneratorTestHost.Run(source);
 
         string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MigRawEntity.Table.g.cs");
         generated.ShouldContain("EnsureSchema cannot add column 'MigRawStamp'");
@@ -526,7 +1227,7 @@ public class LightSQLiteGenerator_GenerationTests
             }
             """;
 
-        var run = GeneratorTestHost.Run(source);
+        GeneratorRunResult run = GeneratorTestHost.Run(source);
 
         string generated = GeneratorTestHost.GetGeneratedSourceByHintSuffix(run, "MigSafeEntity.Table.g.cs");
         generated.ShouldNotContain("EnsureSchema cannot add column");
@@ -553,9 +1254,9 @@ public class LightSQLiteGenerator_GenerationTests
 
         string source = (string)field!.GetRawConstantValue()!;
 
-        var run = GeneratorTestHost.Run(source);
+        GeneratorRunResult run = GeneratorTestHost.Run(source);
 
-        var errors = run.CompilationErrors.ToList();
+        List<Diagnostic> errors = run.CompilationErrors.ToList();
         errors.ShouldBeEmpty(
             $"Fixture '{fixtureName}' produced {errors.Count} compilation error(s):\n" +
             string.Join("\n", errors.Select(static e => e.ToString())));

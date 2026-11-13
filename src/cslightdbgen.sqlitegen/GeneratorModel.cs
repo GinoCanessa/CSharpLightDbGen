@@ -17,6 +17,45 @@ internal enum LdGenCategory
     Record,
 }
 
+/// <summary>Resolved, value-equatable names shared by runtime-helper and DAL emission.</summary>
+internal record struct RuntimeHelperNames(string Namespace)
+{
+    public string CommandFailedExceptionName => $"global::{Namespace}.{GeneratorAttributes._ldgCommandFailedException}";
+}
+
+/// <summary>Project-wide parse settings, projected before entering semantic configuration.</summary>
+internal record struct GenerationParseOptions(bool MultiHost);
+
+/// <summary>A diagnostic description without compiler objects, reconstructed at ordinary output.</summary>
+internal record struct ConfigurationDiagnostic(string Reason, LocationInfo? Location);
+
+/// <summary>A validated direct call, with no consumer symbols retained by emission.</summary>
+internal record struct JsonOptionsBinding(string FactoryInvocation, string ModelName);
+
+/// <summary>Retains diagnostics even when a model's JSON configuration is rejected.</summary>
+internal record struct JsonOptionsResolution(
+    JsonOptionsBinding? Binding,
+    EquatableArray<ConfigurationDiagnostic> Diagnostics)
+{
+    public bool IsValid => Diagnostics.Count == 0;
+}
+
+/// <summary>Host configuration after semantic validation; no compilation or symbols escape resolution.</summary>
+internal record struct GenerationEnvironment(
+    RuntimeHelperNames RuntimeHelpers,
+    bool MultiHost,
+    EquatableArray<ConfigurationDiagnostic> Diagnostics)
+{
+    public bool IsValid => Diagnostics.Count == 0;
+}
+
+internal record struct TableEmissionInput(TableModel Model, RuntimeHelperNames? RuntimeHelpers);
+
+internal record struct FtsEmissionInput(
+    FtsModel Model,
+    EquatableArray<string> KnownTableNames,
+    RuntimeHelperNames? RuntimeHelpers);
+
 /// <summary>
 /// A value-equatable wrapper over <see cref="ImmutableArray{T}"/>. <see cref="ImmutableArray{T}"/>
 /// only offers reference equality, which defeats incremental-generator caching when it is embedded
@@ -119,11 +158,19 @@ internal record struct LocationInfo(string FilePath, TextSpan TextSpan, LinePosi
 /// declaration syntax during the incremental pipeline's transform step. Emission consumes only these
 /// fields, so it never touches a <see cref="ISymbol"/> or <see cref="Compilation"/>.
 /// </summary>
+internal enum KeyConstraintStyle
+{
+    None,
+    Default,
+    PrimaryKeyOnly,
+}
+
 internal record struct ColumnInput(
     string Name,
     string TypeName,
     bool Nullable,
-    bool IsKey,
+    KeyConstraintStyle KeyStyle,
+    bool HasConflictingKeyAttributes,
     bool KeyAutoIncrement,
     bool KeyAutoIncrementExplicit,
     bool IsUnique,
@@ -141,7 +188,30 @@ internal record struct ColumnInput(
     string? ForeignColumn,
     string? ForeignModelType,
     string FkActions,
-    LocationInfo? Location);
+    LocationInfo? Location)
+{
+    public bool IsKey => KeyStyle != KeyConstraintStyle.None;
+}
+
+/// <summary>Logical membership and DDL flags; SQL rendering remains in the emitter.</summary>
+internal record struct ColumnSchemaPlan(
+    ColumnInput Column,
+    bool IsKey,
+    bool IsIdentity,
+    bool InlinePrimaryKey,
+    bool InjectUnique,
+    bool InlineNotNull,
+    bool NotNull);
+
+internal record struct TableSchemaPlan(
+    EquatableArray<ColumnSchemaPlan> Columns,
+    EquatableArray<ColumnInput> Keys,
+    ColumnInput? SingleKey,
+    bool IsIdentity)
+{
+    public bool IsComposite => Keys.Count > 1;
+    public bool IsKeyless => Keys.Count == 0;
+}
 
 /// <summary>A value-equatable description of a class-level <c>[LdgSQLiteIndex]</c>.</summary>
 internal record struct IndexInfo(EquatableArray<string> Columns, bool Unique, string? Where);
@@ -160,7 +230,8 @@ internal record struct TableModel(
     EquatableArray<ColumnInput> Columns,
     EquatableArray<string> CompositeFkLines,
     EquatableArray<EquatableColumnSet> ClassUniqueColumnSets,
-    EquatableArray<IndexInfo> Indexes);
+    EquatableArray<IndexInfo> Indexes,
+    JsonOptionsResolution JsonOptions);
 
 /// <summary>
 /// A value-equatable set of column names (used for class-level composite UNIQUE constraints). A thin
@@ -182,4 +253,5 @@ internal record struct FtsModel(
     string? Tokenizer,
     LdGenCategory GenCategory,
     LocationInfo? Location,
-    EquatableArray<ColumnInput> Columns);
+    EquatableArray<ColumnInput> Columns,
+    JsonOptionsResolution JsonOptions);

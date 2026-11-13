@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<TargetFrameworks>net10.0;net9.0;net8.0</TargetFrameworks>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<IsTestProject>false</IsTestProject>
+		<IsPackable>false</IsPackable>
+		<DefineConstants>$(DefineConstants);CSLIGHTDBGEN_MULTI_HOST</DefineConstants>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\..\src\cslightdbgen.sqlitegen\cslightdbgen.sqlitegen.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+		<ProjectReference Include="..\cslightdbgen.sqlitegen.integration.host-a\cslightdbgen.sqlitegen.integration.host-a.csproj" />
+	</ItemGroup>
+</Project>

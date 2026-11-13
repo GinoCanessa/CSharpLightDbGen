@@ -11,6 +11,7 @@ This folder contains the developer onboarding and maintenance documentation for 
 - [Generated API Contract](./api-contracts.md)
 - [Commands and Options](./commands.md)
 - [Dependencies](./dependencies.md)
+- [Release Checklist](./releasing.md)
 
 ## Audience
 
@@ -39,3 +40,4 @@ This documentation is written for developers who need to:
 5. [Generated API Contract](./api-contracts.md)
 6. [Commands and Options](./commands.md)
 7. [Dependencies](./dependencies.md)
+8. [Release Checklist](./releasing.md)

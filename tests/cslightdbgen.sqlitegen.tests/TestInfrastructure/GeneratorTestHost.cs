@@ -2,8 +2,20 @@ using System.Collections.Immutable;
 using CsLightDbGen.SQLiteGenerator;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Emit;
 
 namespace cslightdbgen.sqlitegen.tests.TestInfrastructure;
+
+internal sealed record GeneratorTestOptions
+{
+    public string AssemblyName { get; init; } = "GeneratorTestsAssembly";
+
+    public CSharpParseOptions ParseOptions { get; init; } = CSharpParseOptions.Default;
+
+    public IReadOnlyList<MetadataReference> AdditionalReferences { get; init; } = [];
+
+    public bool TrackIncrementalSteps { get; init; }
+}
 
 internal sealed record GeneratorRunResult(
     CSharpCompilation InputCompilation,
@@ -12,15 +24,133 @@ internal sealed record GeneratorRunResult(
     ImmutableArray<Diagnostic> OutputDiagnostics,
     IReadOnlyDictionary<string, string> GeneratedSources)
 {
+    internal GeneratorDriver? Driver { get; init; }
+
+    public IEnumerable<Diagnostic> Diagnostics => DriverRunResult.Diagnostics
+        .Concat(OutputDiagnostics)
+        .Concat(OutputCompilation.GetDiagnostics())
+        .Distinct();
+
     public IEnumerable<Diagnostic> Errors => OutputDiagnostics.Where(d => d.Severity == DiagnosticSeverity.Error);
 
     public IEnumerable<Diagnostic> CompilationErrors => OutputCompilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error);
 }
 
+internal sealed record EmittedReferenceResult(
+    PortableExecutableReference Reference,
+    ImmutableArray<Diagnostic> Diagnostics);
+
 internal static class GeneratorTestHost
 {
     public static GeneratorRunResult Run(params string[] sourceTexts) =>
-        RunInternal([], sourceTexts);
+        Run(new GeneratorTestOptions(), sourceTexts);
+
+    public static GeneratorRunResult Run(GeneratorTestOptions options, params string[] sourceTexts)
+    {
+        CSharpCompilation compilation = CreateCompilation(options, sourceTexts);
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            generators: [new LightSQLiteGenerator().AsSourceGenerator()],
+            parseOptions: options.ParseOptions,
+            driverOptions: new GeneratorDriverOptions(
+                IncrementalGeneratorOutputKind.None,
+                trackIncrementalGeneratorSteps: options.TrackIncrementalSteps));
+
+        return RunInternal(driver, compilation);
+    }
+
+    /// <summary>
+    /// Creates an ordinary compilation without running the analyzer. Explicit assembly names let
+    /// image-composition tests keep each host and consumer's metadata identity distinct and stable.
+    /// </summary>
+    public static CSharpCompilation CreateCompilation(GeneratorTestOptions options, params string[] sourceTexts)
+    {
+        if (sourceTexts.Length == 0)
+        {
+            throw new ArgumentException("At least one source text is required.", nameof(sourceTexts));
+        }
+
+        SyntaxTree[] syntaxTrees = sourceTexts
+            .Select(text => CSharpSyntaxTree.ParseText(text, options.ParseOptions))
+            .ToArray();
+
+        return CSharpCompilation.Create(
+            assemblyName: options.AssemblyName,
+            syntaxTrees: syntaxTrees,
+            references: GetMetadataReferences().Concat(options.AdditionalReferences),
+            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+    }
+
+    /// <summary>
+    /// Emits a real assembly image entirely in memory. Report every emit diagnostic on failure,
+    /// including warnings; successful callers can inspect the same diagnostics alongside compilation
+    /// and generator diagnostics rather than treating a generator run as proof of a valid image.
+    /// </summary>
+    public static EmittedReferenceResult EmitToReference(CSharpCompilation compilation)
+    {
+        using MemoryStream image = new MemoryStream();
+        EmitResult result = compilation.Emit(image);
+        if (!result.Success)
+        {
+            throw new InvalidOperationException(
+                $"Could not emit assembly '{compilation.AssemblyName}':{Environment.NewLine}" +
+                string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        }
+
+        return new EmittedReferenceResult(
+            MetadataReference.CreateFromImage(image.ToArray()),
+            result.Diagnostics);
+    }
+
+    /// <summary>
+    /// Reuses a host run's driver and original input compilation (never its generated trees).
+    /// Replacement keys are zero-based input-tree indexes. Unchanged trees retain their identity;
+    /// parse-option changes reparse every input so conditional directives are evaluated again.
+    /// </summary>
+    public static GeneratorRunResult ReRun(
+        GeneratorRunResult previousRun,
+        IReadOnlyDictionary<int, string>? sourceReplacements = null,
+        CSharpParseOptions? parseOptions = null)
+    {
+        GeneratorDriver driver = previousRun.Driver
+            ?? throw new ArgumentException("The previous run must come from GeneratorTestHost.", nameof(previousRun));
+        SyntaxTree[] originalTrees = previousRun.InputCompilation.SyntaxTrees.ToArray();
+        CSharpParseOptions effectiveParseOptions = parseOptions ?? (CSharpParseOptions)originalTrees[0].Options;
+        bool updateParseOptions = !effectiveParseOptions.Equals(originalTrees[0].Options);
+
+        if (sourceReplacements != null && sourceReplacements.Keys.Any(index => index < 0 || index >= originalTrees.Length))
+        {
+            throw new ArgumentOutOfRangeException(nameof(sourceReplacements), "Replacement indexes must identify an input syntax tree.");
+        }
+
+        // Remove the old trees together before changing language version: Roslyn rejects even a
+        // transient compilation containing trees from two different language versions.
+        CSharpCompilation compilation = updateParseOptions
+            ? previousRun.InputCompilation.RemoveAllSyntaxTrees()
+            : previousRun.InputCompilation;
+        for (int index = 0; index < originalTrees.Length; index++)
+        {
+            SyntaxTree originalTree = originalTrees[index];
+            string? replacement = null;
+            bool replaceSource = sourceReplacements != null && sourceReplacements.TryGetValue(index, out replacement);
+            if (replaceSource || updateParseOptions)
+            {
+                SyntaxTree updatedTree = CSharpSyntaxTree.ParseText(
+                    replaceSource ? replacement! : originalTree.GetText().ToString(),
+                    effectiveParseOptions,
+                    originalTree.FilePath);
+                compilation = updateParseOptions
+                    ? compilation.AddSyntaxTrees(updatedTree)
+                    : compilation.ReplaceSyntaxTree(originalTree, updatedTree);
+            }
+        }
+
+        if (updateParseOptions)
+        {
+            driver = driver.WithUpdatedParseOptions(effectiveParseOptions);
+        }
+
+        return RunInternal(driver, compilation);
+    }
 
     /// <summary>
     /// Runs the generator against <paramref name="sourceTexts"/> with an additional referenced
@@ -32,40 +162,21 @@ internal static class GeneratorTestHost
     /// </summary>
     public static GeneratorRunResult RunWithReference(string referencedSource, params string[] sourceTexts)
     {
-        var referencedCompilation = CSharpCompilation.Create(
-            assemblyName: "ReferencedAssembly",
-            syntaxTrees: [CSharpSyntaxTree.ParseText(referencedSource)],
-            references: GetMetadataReferences(),
-            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+        GeneratorRunResult referencedRun = Run(
+            new GeneratorTestOptions { AssemblyName = "ReferencedAssembly" },
+            referencedSource);
 
-        CSharpGeneratorDriver.Create(new LightSQLiteGenerator())
-            .RunGeneratorsAndUpdateCompilation(referencedCompilation, out var referencedOutput, out _);
-
-        return RunInternal([((CSharpCompilation)referencedOutput).ToMetadataReference()], sourceTexts);
+        return Run(
+            new GeneratorTestOptions { AdditionalReferences = [referencedRun.OutputCompilation.ToMetadataReference()] },
+            sourceTexts);
     }
 
-    private static GeneratorRunResult RunInternal(IReadOnlyList<MetadataReference> additionalReferences, string[] sourceTexts)
+    private static GeneratorRunResult RunInternal(GeneratorDriver driver, CSharpCompilation compilation)
     {
-        if (sourceTexts.Length == 0)
-        {
-            throw new ArgumentException("At least one source text is required.", nameof(sourceTexts));
-        }
+        driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out Compilation outputCompilation, out ImmutableArray<Diagnostic> outputDiagnostics);
+        GeneratorDriverRunResult runResult = driver.GetRunResult();
 
-        var syntaxTrees = sourceTexts
-            .Select(static text => CSharpSyntaxTree.ParseText(text))
-            .ToArray();
-
-        var compilation = CSharpCompilation.Create(
-            assemblyName: "GeneratorTestsAssembly",
-            syntaxTrees: syntaxTrees,
-            references: GetMetadataReferences().Concat(additionalReferences),
-            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
-
-        GeneratorDriver driver = CSharpGeneratorDriver.Create(new LightSQLiteGenerator());
-        driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out var outputCompilation, out var outputDiagnostics);
-        var runResult = driver.GetRunResult();
-
-        var generated = runResult.Results
+        Dictionary<string, string> generated = runResult.Results
             .SelectMany(static r => r.GeneratedSources)
             .GroupBy(static g => g.HintName)
             .ToDictionary(static g => g.Key, static g => g.Last().SourceText.ToString());
@@ -75,7 +186,10 @@ internal static class GeneratorTestHost
             (CSharpCompilation)outputCompilation,
             runResult,
             outputDiagnostics,
-            generated);
+            generated)
+        {
+            Driver = driver,
+        };
     }
 
     /// <summary>
@@ -87,31 +201,16 @@ internal static class GeneratorTestHost
     /// </summary>
     public static GeneratorDriverRunResult RunAndReRunWithUnrelatedTree(string unrelatedSource, params string[] sourceTexts)
     {
-        if (sourceTexts.Length == 0)
+        GeneratorTestOptions options = new GeneratorTestOptions
         {
-            throw new ArgumentException("At least one source text is required.", nameof(sourceTexts));
-        }
+            AssemblyName = "GeneratorCachingTestsAssembly",
+            TrackIncrementalSteps = true,
+        };
+        GeneratorRunResult firstRun = Run(options, sourceTexts);
+        CSharpCompilation compilation = firstRun.InputCompilation
+            .AddSyntaxTrees(CSharpSyntaxTree.ParseText(unrelatedSource, options.ParseOptions));
 
-        SyntaxTree[] syntaxTrees = sourceTexts
-            .Select(static text => CSharpSyntaxTree.ParseText(text))
-            .ToArray();
-
-        CSharpCompilation compilation = CSharpCompilation.Create(
-            assemblyName: "GeneratorCachingTestsAssembly",
-            syntaxTrees: syntaxTrees,
-            references: GetMetadataReferences(),
-            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
-
-        GeneratorDriver driver = CSharpGeneratorDriver.Create(
-            generators: [new LightSQLiteGenerator().AsSourceGenerator()],
-            driverOptions: new GeneratorDriverOptions(IncrementalGeneratorOutputKind.None, trackIncrementalGeneratorSteps: true));
-
-        driver = driver.RunGenerators(compilation);
-
-        Compilation updatedCompilation = compilation.AddSyntaxTrees(CSharpSyntaxTree.ParseText(unrelatedSource));
-        driver = driver.RunGenerators(updatedCompilation);
-
-        return driver.GetRunResult();
+        return RunInternal(firstRun.Driver!, compilation).DriverRunResult;
     }
 
     /// <summary>
@@ -125,27 +224,23 @@ internal static class GeneratorTestHost
     public static (CSharpCompilation AnalyzerHost, CSharpCompilation Consumer) CompileConsumerReferencingGeneratedProject(
         string analyzerHostSource, string consumerSource)
     {
-        CSharpCompilation hostCompilation = CSharpCompilation.Create(
-            assemblyName: "AnalyzerHostProject",
-            syntaxTrees: [CSharpSyntaxTree.ParseText(analyzerHostSource)],
-            references: GetMetadataReferences(),
-            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+        GeneratorRunResult hostRun = Run(
+            new GeneratorTestOptions { AssemblyName = "AnalyzerHostProject" },
+            analyzerHostSource);
+        CSharpCompilation consumerCompilation = CreateCompilation(
+            new GeneratorTestOptions
+            {
+                AssemblyName = "ConsumerProject",
+                AdditionalReferences = [hostRun.OutputCompilation.ToMetadataReference()],
+            },
+            consumerSource);
 
-        CSharpGeneratorDriver.Create(new LightSQLiteGenerator())
-            .RunGeneratorsAndUpdateCompilation(hostCompilation, out Compilation hostOutput, out _);
-
-        CSharpCompilation consumerCompilation = CSharpCompilation.Create(
-            assemblyName: "ConsumerProject",
-            syntaxTrees: [CSharpSyntaxTree.ParseText(consumerSource)],
-            references: GetMetadataReferences().Append(((CSharpCompilation)hostOutput).ToMetadataReference()),
-            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
-
-        return ((CSharpCompilation)hostOutput, consumerCompilation);
+        return (hostRun.OutputCompilation, consumerCompilation);
     }
 
     public static string GetGeneratedSourceByHintSuffix(GeneratorRunResult runResult, string suffix)
     {
-        var match = runResult.GeneratedSources
+        KeyValuePair<string, string> match = runResult.GeneratedSources
             .FirstOrDefault(kvp => kvp.Key.EndsWith(suffix, StringComparison.Ordinal));
 
         if (string.IsNullOrEmpty(match.Key))
@@ -158,7 +253,7 @@ internal static class GeneratorTestHost
 
     private static IEnumerable<MetadataReference> GetMetadataReferences()
     {
-        var tpa = (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string)
+        string[] tpa = (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string)
             ?.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
             ?? [];
 
