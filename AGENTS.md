@@ -67,7 +67,7 @@ file to edit; it is build output.
   This is a Roslyn requirement, not a preference — see invariants.
 - **Language version: C# `14.0`**, with `Nullable` and `ImplicitUsings`
   enabled, all set in `src/common.props`.
-- **Test target frameworks: `net10.0;net9.0;net8.0`** (both test projects).
+- **Test target frameworks: `net11.0;net10.0`** (both test projects).
   `tests/cslightdbgen.performance` is `net10.0` only and is an `Exe`.
 - **Roslyn: `Microsoft.CodeAnalysis.Common` / `.CSharp` 5.6.0**, referenced
   with `PrivateAssets="all"`. The same 5.6.0 version is referenced by the unit

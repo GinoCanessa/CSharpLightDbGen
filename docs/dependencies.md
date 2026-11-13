@@ -29,7 +29,7 @@ compiler, not at runtime.
 
 ## Project: `tests/cslightdbgen.sqlitegen.tests`
 
-Unit tests (generator contract verification). Multi-targets `net10.0;net9.0;net8.0`.
+Unit tests (generator contract verification). Multi-targets `net11.0;net10.0`.
 
 ### NuGet Packages
 
@@ -47,7 +47,7 @@ the Roslyn APIs).
 
 ## Project: `tests/cslightdbgen.sqlitegen.integration`
 
-Integration tests (runtime SQLite behavior). Multi-targets `net10.0;net9.0;net8.0`.
+Integration tests (runtime SQLite behavior). Multi-targets `net11.0;net10.0`.
 
 ### NuGet Packages
 

@@ -12,6 +12,18 @@ collects user-visible changes newer than the latest published version.
 
 ### Changed
 
+- **Test target frameworks.** Unit and integration tests, including the
+  independent analyzer-host fixtures, now target .NET 11 first and .NET 10,
+  replacing .NET 8 and .NET 9. The generator remains on `netstandard2.0` and
+  benchmarks remain on .NET 10.
+- **Roslyn compiler dependencies.** The generator and unit-test driver now
+  use `Microsoft.CodeAnalysis` 5.9.0, requiring a compatible compiler host.
+- **SQLite and benchmark dependencies.** Updated `Microsoft.Data.Sqlite.Core`
+  to 11.0.0, `SQLitePCLRaw.provider.e_sqlite3` to 3.0.5, `SourceGear.sqlite3`
+  to 3.53.4, Dapper and `Dapper.SqlBuilder` to 2.1.89, and EF Core packages
+  to 10.0.15.
+- **Test tooling.** Updated `Microsoft.NET.Test.Sdk` to 18.12.0 and
+  `xunit.runner.visualstudio` to 4.0.1.
 - **Tagged release publication.** Publishing a GitHub Release for `v<version>`
   now qualifies and publishes one exact-version analyzer package; merges and
   tag pushes no longer publish automatically. Manual runs are validation-only,
