@@ -72,9 +72,23 @@ file to edit; it is build output.
 - **Roslyn: `Microsoft.CodeAnalysis.Common` / `.CSharp` 5.6.0**, referenced
   with `PrivateAssets="all"`. The same 5.6.0 version is referenced by the unit
   test project so the driver matches the generator.
-- **Versioning is date-based**, not SemVer: `VersionPrefix` is computed as
-  `yyyy.MMdd.HHmm` at build time in `src/common.props`. Do not hand-edit a
-  version number.
+- **Versioning is date-based**, not SemVer: local builds compute
+  `yyyy.MMdd.HHmm` in `src/common.props`. Releases use canonical numeric
+  versions from `v<version>` through explicit MSBuild overrides, including
+  assembly/file versions. Do not hand-edit project version numbers.
+- **Publication is release-driven.** Only a published GitHub Release starts
+  NuGet publication; merges and tag pushes do not. Manual dispatch is
+  validation-only. The protected `nuget.org` environment holds `NUGET_USER`
+  and `NUGET_PUBLISH_ENVIRONMENT_READY=true`. Only the publishing job has
+  `id-token: write`; `NuGet/login@v1` exchanges GitHub OIDC for a temporary
+  API key under a matching NuGet trusted-publishing policy. No long-lived
+  API key is used for new releases. Agents must not dispatch the release
+  workflow or publish packages locally; see `docs/releasing.md`.
+- **CI actions use Node 24** (`checkout@v6`, `setup-dotnet@v5`,
+  `upload-artifact@v7`, `download-artifact@v8`) on current `ubuntu-latest`,
+  `windows-latest`, and `macos-latest` images, with .NET `10.0.x`, `9.0.x`,
+  and `8.0.x` SDKs. Release qualification tests the exact NuGet artifact
+  on all nine OS/framework combinations.
 - Dependency versions are declared per-`csproj`; there is no central package
   management and no lock file. `docs/dependencies.md` mirrors the `csproj`
   versions and must be regenerated when they change.
@@ -168,6 +182,23 @@ deliberately, in Release:
 ```powershell
 dotnet run --project tests\cslightdbgen.performance -c Release
 ```
+
+### Release script validation (no publication)
+
+The release workflow uses these PowerShell scripts. Identity validation
+fetches the existing tag and `origin/main`; it never creates or pushes a tag.
+
+```powershell
+pwsh -File .github\scripts\Test-ReleaseIdentity.ps1 -Version <version> -Tag v<version>
+pwsh -File .github\scripts\Test-ReleasePackage.ps1 -CandidateDirectory <directory> -Version <version> -Commit <full-sha>
+pwsh -File .github\scripts\Test-PackageConsumer.ps1 -CandidateDirectory <directory> -Version <version> -Framework net10.0 -WorkingDirectory <fresh-directory>
+```
+
+For package qualification, build and pack the generator with the same
+`VersionPrefix`, `Version`, `PackageVersion`, `AssemblyVersion`, `FileVersion`,
+and `RepositoryCommit` command-line properties used by the release workflow.
+Build in Release, then pack with `--no-build` into a fresh candidate directory.
+These local checks do not authorize a workflow dispatch or publication.
 
 ---
 
@@ -319,11 +350,10 @@ Rules for the block:
 - When `Enabled` is `no`, every other row is `n/a`.
 
 Note on the changelog: `CHANGELOG.md` groups entries by the date-based version
-actually published to nuget.org, and `[Unreleased]` collects everything newer
-than the latest published version. Entries always go under `[Unreleased]`, and
-a version header is never invented for unpublished work. The one time a version
-header is created is the publish-time roll of `[Unreleased]` into the version
-that was actually pushed — a defined step in `docs/releasing.md`.
+actually published to nuget.org, and `[Unreleased]` collects pending changes.
+Development entries go under `[Unreleased]`. Release preparation rolls them
+into the approved version before its tag is created; a prepared header is not
+proof of publication. That procedure is defined in `docs/releasing.md`.
 
 ---
 
@@ -388,9 +418,9 @@ An exploration carries no `Issue` binding.
 - **Adding or changing a `CSLDG###` diagnostic requires updating
   `AnalyzerReleases.Unshipped.md`** in the same change. Both ledgers are
   `AdditionalFiles` and the release-tracking analyzer fails the build when a
-  descriptor is missing from them. On publish, rules move from `Unshipped` to
-  `AnalyzerReleases.Shipped.md` under the released version header — that move,
-  and the rest of the post-publish bookkeeping, is written down in
+  descriptor is missing from them. Before tagging a release, rules move from
+  `Unshipped` to `AnalyzerReleases.Shipped.md` under the approved release version
+  header — that move, and the rest of the release bookkeeping, is written down in
   `docs/releasing.md`.
 - **`docs/` is expected to stay true.** `docs/dependencies.md` mirrors the
   `csproj` package versions; `docs/api-contracts.md`, `docs/commands.md`, and
@@ -399,7 +429,8 @@ An exploration carries no `Issue` binding.
   A change to any of those must update the corresponding doc.
 - **`obj/` and `bin/` are off-limits for editing.** Generated `*.g.cs` under
   `obj/` is build output; to change it, change the generator.
-- Do not hand-edit version numbers — they are computed from the build date.
+- Do not hand-edit project version numbers; local builds use the clock and
+  release builds pass the approved tag version through MSBuild properties.
 
 ### Subagent model policy
 
